@@ -11,6 +11,7 @@ import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -35,6 +36,9 @@ import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.RecoveryPlacementReconcileUseCase
+import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
@@ -187,11 +191,22 @@ class SteamSyncWorker @AssistedInject constructor(
     private val committer: PlaytimeObservationCommitter,
     private val cloudPresencePlacementReader: CloudPresencePlacementReader,
     private val sharedGameConverter: SharedGameConverter,
+    private val unknownTimeMaterializer: UnknownTimeMaterializer,
+    private val recoveryDerivedFinalizer: RecoveryDerivedFinalizer,
+    private val recoveryPlacementReconciler: RecoveryPlacementReconcileUseCase,
+    private val recoveryReadStatus: RecoveryReadStatusStore,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
         val lastSyncAt: Long,
         val diff: SessionDiffer.DiffResult,
+    )
+
+    private data class RawCommitResult(
+        val arrivedAppIds: Set<Long>,
+        val finalizationOperationId: String?,
+        val creditedIncreaseAppIds: Set<Long>,
+        val baselineEstablishedAppIds: Set<Long>,
     )
 
     override suspend fun doWork(): Result {
@@ -232,6 +247,20 @@ class SteamSyncWorker @AssistedInject constructor(
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return Result.success()
             }
+            val recoveryReady = syncCoordinator.withLock {
+                if (!isAccountActive(steamId)) {
+                    false
+                } else {
+                    val resumeAt = time.nowMillis()
+                    unknownTimeMaterializer.materializeAll(steamId, resumeAt)
+                    recoveryDerivedFinalizer.resumePending(steamId, resumeAt)
+                    true
+                }
+            }
+            if (!recoveryReady) {
+                outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
+                return Result.success()
+            }
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
@@ -257,7 +286,18 @@ class SteamSyncWorker @AssistedInject constructor(
                     Unit
                 },
                 fetchOwnedGames = {
-                    steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+                    try {
+                        steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        syncCoordinator.withLock {
+                            if (isAccountActive(steamId)) {
+                                recoveryReadStatus.unavailable(steamId, time.nowMillis())
+                            }
+                        }
+                        throw failure
+                    }
                 },
             ).getOrThrow()
             val games = owned.response.games
@@ -270,6 +310,9 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamId,
                     "No games returned — your Steam profile may be private",
                 )
+                syncCoordinator.withLock {
+                    if (isAccountActive(steamId)) recoveryReadStatus.unavailable(steamId, time.nowMillis())
+                }
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
                 return Result.success()
             }
@@ -398,12 +441,28 @@ class SteamSyncWorker @AssistedInject constructor(
             never = achievementFetch.selection.never.size,
         )
 
-        val arrivedAppIds = withContext(NonCancellable) {
+        val rawCommit = withContext(NonCancellable) {
             syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
                     null
                 } else {
                     committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                        val lateEvidence = committer.recoveryEvidenceForReconciliation(
+                            account = steamId,
+                            placement = validatedPlacement,
+                            activeReaderIdentity = pruningIdentity,
+                            observedAt = now,
+                        )
+                        if (lateEvidence.isNotEmpty()) {
+                            games.map { it.appid }.distinct().forEach { appId ->
+                                recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
+                                    account = steamId,
+                                    appId = appId,
+                                    evidence = lateEvidence,
+                                    activeReaderIdentity = pruningIdentity,
+                                )
+                            }
+                        }
                         database.withTransaction {
                             commitRawPoll(
                                 games = games,
@@ -414,6 +473,8 @@ class SteamSyncWorker @AssistedInject constructor(
                                 placement = validatedPlacement,
                                 pruningIdentity = pruningIdentity,
                                 achievementFetch = achievementFetch,
+                                ruleConfig = configAtCompute.config,
+                                ruleConfigVersion = configAtCompute.version,
                                 scope = scope,
                             )
                         }
@@ -434,8 +495,16 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (!isAccountActive(steamId)) {
                     false
                 } else {
-                    if (arrivedAppIds.isNotEmpty()) {
-                        runCatching { settings.setAcquiredGames(arrivedAppIds, now) }
+                    if (rawCommit.arrivedAppIds.isNotEmpty()) {
+                        runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
+                    }
+                    runCatching {
+                        recoveryReadStatus.successfulRead(
+                            account = steamId,
+                            observedAt = now,
+                            creditedIncreaseAppIds = rawCommit.creditedIncreaseAppIds,
+                            baselineEstablishedAppIds = rawCommit.baselineEstablishedAppIds,
+                        )
                     }
 
                     // Store metadata is a separately scheduled best-effort concern: never await it
@@ -449,7 +518,14 @@ class SteamSyncWorker @AssistedInject constructor(
                     // write-ahead protocol, after a version check against the configuration read
                     // before compute. If rules moved, the stale candidate is refused and recomputed
                     // under the current version instead of being silently stamped as current.
-                    persistDerived(today, configAtCompute)
+                    // Recipe pages and staged corrective/earned state are durable per account.
+                    // Finish them before a newer sync can change inputs or persist a derived state
+                    // across an unfinished operation.
+                    unknownTimeMaterializer.materializeAll(steamId, now)
+                    recoveryDerivedFinalizer.resumePending(steamId, now)
+                    if (rawCommit.finalizationOperationId == null) {
+                        persistDerived(today, configAtCompute)
+                    }
                     // Best-effort: a snapshot-write failure must never fail an otherwise-successful
                     // poll.
                     runCatching { backupRepository.writeAutoSnapshotIfDue() }
@@ -514,9 +590,25 @@ class SteamSyncWorker @AssistedInject constructor(
         placement: CloudPresencePlaytimePlacement.Input?,
         pruningIdentity: CloudReaderIdentity?,
         achievementFetch: AchievementLibraryFetch,
+        ruleConfig: com.example.backlogium.gamification.RuleConfig,
+        ruleConfigVersion: Long,
         scope: SyncRunRecorder.RunScope,
-    ): Set<Long> {
+    ): RawCommitResult {
         val profileBefore = profileDao.get()
+        // Admit the identity in this same raw transaction before any account-scoped baseline
+        // writes. The outer credential/account fence still owns admission; rollback is atomic.
+        if (profileBefore == null) profileDao.insertIfMissing()
+        val identityBeforeCommit = profileDao.get() ?: PlayerProfile()
+        val admittedIdentity = mergePlayerIdentity(
+            summary,
+            PlayerIdentity(identityBeforeCommit.personaName, identityBeforeCommit.avatarUrl,
+                identityBeforeCommit.storeRegion),
+        )
+        profileDao.updateSteamIdentity(
+            steamId = steamId, steamLevel = steamLevel,
+            personaName = admittedIdentity.personaName, avatarUrl = admittedIdentity.avatarUrl,
+            storeRegion = admittedIdentity.storeRegion,
+        )
         // A shared game the player has since bought converts before the diff reads its baseline,
         // so the poll that first reports it as owned already sees the fresh baseline and produces
         // no session from a lifetime total that was earned while borrowing.
@@ -565,6 +657,10 @@ class SteamSyncWorker @AssistedInject constructor(
             syncedAt = now,
             placement = placement,
             pruningIdentity = pruningIdentity,
+            expectedAccount = steamId,
+            ruleConfig = ruleConfig,
+            ruleConfigVersion = ruleConfigVersion,
+            earnedAchievements = achievementRepository.freshUnlockSnapshots(achievementFetch.refreshes),
         )
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 
@@ -622,7 +718,14 @@ class SteamSyncWorker @AssistedInject constructor(
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
 
-        return arrivedAppIds
+        return RawCommitResult(
+            arrivedAppIds = arrivedAppIds,
+            finalizationOperationId = committed.finalizationOperationId,
+            creditedIncreaseAppIds = committed.playedDeltaByAppId
+                .filterValues { it > 0 }
+                .keys,
+            baselineEstablishedAppIds = committed.baselineEstablishedAppIds,
+        )
     }
 
     private fun diffAgainst(

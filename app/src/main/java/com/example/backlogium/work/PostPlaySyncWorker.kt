@@ -11,6 +11,7 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.PlaytimeObservation
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
@@ -20,6 +21,10 @@ import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.domain.SyncDerivedStateWriter
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.RecoveryPlacementReconcileUseCase
+import com.example.backlogium.domain.UnknownTimeMaterializer
+import com.example.backlogium.domain.VersionedRuleConfig
 import com.example.backlogium.domain.TimeProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -62,6 +67,10 @@ class PostPlaySyncWorker @AssistedInject constructor(
     private val credentials: CredentialsProvider,
     private val accountChangeMarker: AccountChangeMarkerStore,
     private val cloudPresencePlacementReader: CloudPresencePlacementReader,
+    private val unknownTimeMaterializer: UnknownTimeMaterializer,
+    private val recoveryDerivedFinalizer: RecoveryDerivedFinalizer,
+    private val recoveryPlacementReconciler: RecoveryPlacementReconcileUseCase,
+    private val recoveryReadStatus: RecoveryReadStatusStore,
 ) : CoroutineWorker(appContext, params) {
 
     /** What one attempt's request turned out to be, before it is compared to the baseline. */
@@ -116,6 +125,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
                     outcome = SyncOutcome.SKIPPED_SUPERSEDED
                     return@withLock null
                 }
+                val resumeAt = time.nowMillis()
+                unknownTimeMaterializer.materializeAll(steamId, resumeAt)
+                recoveryDerivedFinalizer.resumePending(steamId, resumeAt)
                 fetch(scope)
             } ?: return Result.success()
 
@@ -123,6 +135,11 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 is Attempt.Failed -> {
                     outcome = SyncOutcome.FAILED
                     error = result.message
+                    syncCoordinator.withLock {
+                        if (isAccountActive(steamId)) {
+                            recoveryReadStatus.unavailable(steamId, time.nowMillis())
+                        }
+                    }
                     null
                 }
 
@@ -142,14 +159,19 @@ class PostPlaySyncWorker @AssistedInject constructor(
                 }
             }
 
-            // A game with no stored baseline cannot be diffed: there is no increase to observe,
-            // only a first reading, and baselining the library is the periodic poll's job.
+            if (observation != null && baseline != null) {
+                runCatching { recoveryReadStatus.observedPlay(steamId, appId, sessionEndAt, force = true) }
+            }
+
+            // A trustworthy first/unchanged read still goes through the committer: it establishes
+            // this game's durable observation boundary and can place retained pending quantity.
             val increased = observation != null &&
                 baseline != null &&
                 observation.playtimeForever > baseline
 
-            if (increased) {
-                val placementSnapshot = if (
+            if (observation != null) {
+                val configAtCompute = derivedStateWriter.configuration()
+                val placementSnapshot = if (increased &&
                     CloudPresencePlaytimePlacement.shouldConsult(previousPollAt, sessionEndAt)
                 ) {
                     cloudPresencePlacementReader.readOrNull(CloudReadTrigger.POST_PLAY, previousPollAt, sessionEndAt)
@@ -162,26 +184,29 @@ class PostPlaySyncWorker @AssistedInject constructor(
                     sessionEndAt = sessionEndAt,
                     steamId = steamId,
                     observed = observation,
+                    baselineBeforeFetch = baseline,
                     scope = scope,
                     placement = placementSnapshot?.let {
                         CloudPresencePlaytimePlacement.Input(it.intervals, it.readerIdentity)
                     },
+                    configAtCompute = configAtCompute,
                 )
-                outcome = if (recorded == null) {
+                if (recorded == null) {
                     // Refused: a newer session end took this game over while the fetch was in
                     // flight, and a superseded attempt commits nothing.
-                    SyncOutcome.SKIPPED_SUPERSEDED
-                } else {
-                    // `false` means the transaction found the baseline already advanced — a
-                    // periodic poll committed the same increase first. Exactly-once crediting is
-                    // the transaction's doing, not this worker's, and the schedule is over either
-                    // way: there is nothing left to observe.
-                    if (recorded) updated = 1
-                    SyncOutcome.SUCCESS
+                    outcome = SyncOutcome.SKIPPED_SUPERSEDED
+                    return Result.success()
                 }
-                // Terminating the schedule is the absence of an action: no successor is enqueued,
-                // so there is nothing to cancel and no race to lose.
-                return Result.success()
+                if (recorded.recordedPlay || recorded.alreadyCommittedIncrease) {
+                    if (recorded.recordedPlay) updated = 1
+                    outcome = SyncOutcome.SUCCESS
+                    return Result.success()
+                }
+                // A successful unchanged (or first-baseline) targeted read still advances this
+                // game's durable observation boundary and can place prior pending date-unknown
+                // credit. It is unproductive only for this schedule attempt, so later configured
+                // attempts may observe Steam's delayed publication.
+                outcome = SyncOutcome.SUCCESS
             }
 
             // Nothing to record. Continue the schedule, or let it end: an exhausted schedule is an
@@ -256,17 +281,57 @@ class PostPlaySyncWorker @AssistedInject constructor(
         sessionEndAt: Long,
         steamId: String,
         observed: PlaytimeObservation,
+        baselineBeforeFetch: Int?,
         scope: SyncRunRecorder.RunScope,
         placement: CloudPresencePlaytimePlacement.Input?,
-    ): Boolean? {
-        val recordedPlay = syncCoordinator.withLock {
+        configAtCompute: VersionedRuleConfig,
+    ): PostPlayCommitResult? {
+        val rawCommit = syncCoordinator.withLock {
             if (!isAccountActive(steamId)) {
                 null
             } else {
                 generations.ifActive(appId, generation) {
                     withContext(NonCancellable) {
                         committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
-                            database.withTransaction {
+                            val observedAt = time.nowMillis()
+                            val lateEvidence = committer.recoveryEvidenceForReconciliation(
+                                account = steamId,
+                                placement = validatedPlacement,
+                                activeReaderIdentity = pruningIdentity,
+                                observedAt = observedAt,
+                            )
+                            if (lateEvidence.isNotEmpty()) {
+                                recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
+                                    account = steamId,
+                                    appId = appId,
+                                    evidence = lateEvidence,
+                                    activeReaderIdentity = pruningIdentity,
+                                )
+                            }
+                             database.withTransaction {
+                                // Targeted work is admitted only for the active credential pair.
+                                // Persist that identity before account-scoped recovery writes so a
+                                // blank-profile fresh install can establish its first baseline;
+                                // a nonblank foreign profile is never overwritten.
+                                var admittedProfile = profileDao.get()
+                                if (admittedProfile == null) {
+                                    profileDao.insertIfMissing()
+                                    admittedProfile = profileDao.get()
+                                }
+                                val existingAccount = admittedProfile?.steamId?.trim().orEmpty()
+                                if (existingAccount.isNotEmpty() && existingAccount != steamId) {
+                                    return@withTransaction null
+                                }
+                                if (existingAccount.isEmpty()) {
+                                    val profile = admittedProfile ?: com.example.backlogium.data.local.entity.PlayerProfile()
+                                    profileDao.updateSteamIdentity(
+                                        steamId = steamId,
+                                        steamLevel = profile.steamLevel,
+                                        personaName = profile.personaName,
+                                        avatarUrl = profile.avatarUrl,
+                                        storeRegion = profile.storeRegion,
+                                    )
+                                }
                                 val commit = committer.commit(
                                     observed = listOf(
                                         PlaytimeObservationCommitter.ObservedGame(
@@ -286,12 +351,24 @@ class PostPlaySyncWorker @AssistedInject constructor(
                                     // eight minutes late would make one game's history disagree with itself
                                     // depending on which attempt happened to see the increase.
                                     observedPlayAt = sessionEndAt,
-                                    syncedAt = time.nowMillis(),
+                                    syncedAt = observedAt,
                                     placement = validatedPlacement,
                                     pruningIdentity = pruningIdentity,
+                                    expectedAccount = steamId,
+                                    knownPlayInstantAt = sessionEndAt,
+                                    ruleConfig = configAtCompute.config,
+                                    ruleConfigVersion = configAtCompute.version,
                                 )
                                 commit.clockRollbacks.forEach { scope.recordClockRollback() }
-                                commit.recordedPlay
+                                PostPlayCommitResult(
+                                    creditedIncreaseAppIds = commit.playedDeltaByAppId
+                                        .filterValues { it > 0 }.keys,
+                                    finalizationOperationId = commit.finalizationOperationId,
+                                    alreadyCommittedIncrease = baselineBeforeFetch != null &&
+                                        observed.playtimeForever > baselineBeforeFetch &&
+                                        !commit.recordedPlay,
+                                    baselineEstablishedAppIds = commit.baselineEstablishedAppIds,
+                                )
                             }
                         }
                     }
@@ -299,11 +376,39 @@ class PostPlaySyncWorker @AssistedInject constructor(
             }
         } ?: return null
 
-        // Derived values follow the raw commit through their existing single author, exactly as
-        // they do after a periodic poll. Outside the generation lock: the commit is durable, and
-        // nothing about this write depends on the schedule still being live.
-        if (recordedPlay) derivedStateWriter.persist(time.today(), derivedStateWriter.configuration())
-        return recordedPlay
+        // Finish durable recipe and journaled derived stages before another sync can re-base this
+        // operation. The account lock remains the reset barrier; generation need not remain live
+        // once its raw commit has succeeded.
+        syncCoordinator.withLock {
+            if (isAccountActive(steamId)) {
+                val now = time.nowMillis()
+                runCatching {
+                    recoveryReadStatus.successfulRead(
+                        account = steamId,
+                        observedAt = now,
+                        creditedIncreaseAppIds = rawCommit.creditedIncreaseAppIds,
+                        baselineEstablishedAppIds = rawCommit.baselineEstablishedAppIds,
+                    )
+                }
+                if (rawCommit.recordedPlay || rawCommit.finalizationOperationId != null) {
+                    unknownTimeMaterializer.materializeAll(steamId, now)
+                    recoveryDerivedFinalizer.resumePending(steamId, now)
+                    if (rawCommit.recordedPlay && rawCommit.finalizationOperationId == null) {
+                        derivedStateWriter.persist(time.today(), configAtCompute)
+                    }
+                }
+            }
+        }
+        return rawCommit
+    }
+
+    private data class PostPlayCommitResult(
+        val creditedIncreaseAppIds: Set<Long>,
+        val finalizationOperationId: String?,
+        val alreadyCommittedIncrease: Boolean,
+        val baselineEstablishedAppIds: Set<Long>,
+    ) {
+        val recordedPlay: Boolean get() = creditedIncreaseAppIds.isNotEmpty()
     }
 
     /** Must be called while holding [syncCoordinator], which is the account-change barrier lock. */

@@ -5,10 +5,19 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
-import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.PlaytimeContribution
 import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
+import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.TimedContributionPlacement
 import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
+import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.domain.ContributionCredit
+import com.example.backlogium.domain.PlaytimeReadProjector
+import com.example.backlogium.domain.SessionCredit
+import com.example.backlogium.domain.TimedShareCredit
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 @Dao
 interface SessionDao {
@@ -114,6 +123,10 @@ interface SessionDao {
     )
     fun observeClosedSince(cutoff: Long): Flow<List<Session>>
 
+    /** All currently open rows; history before the current lookback can still span into it. */
+    @Query("SELECT * FROM sessions WHERE open = 1")
+    fun observeAllOpenSessions(): Flow<List<Session>>
+
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
@@ -213,6 +226,127 @@ interface SessionDao {
      */
     @Query("SELECT appId, MAX(COALESCE(endAt, startAt)) AS at FROM sessions GROUP BY appId")
     suspend fun latestSessionInstantByGame(): List<GameSessionInstant>
+
+    // ------------------------------------------------------------------ canonical recovery reads
+    //
+    // Recovery storage tables are owned by PlaytimeRecoveryDao's write surface; these are the
+    // read-model projections the canonical repository boundary needs (recover-missed-playtime,
+    // design.md Decision 7). Each is scoped to the active account from the singleton profile, and
+    // Room re-emits when `player_profile` changes so an account switch retargets every flow.
+
+    /** Active (non-superseded) unknown-time allocations for the active account. */
+    @Query(
+        "SELECT * FROM recovery_unknown_allocations " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) AND superseded = 0",
+    )
+    fun observeActiveRecoveryAllocations(): Flow<List<UnknownTimeAllocation>>
+
+    /** Active (non-superseded) funded timed shares for the active account. */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) AND superseded = 0",
+    )
+    fun observeActiveRecoveryTimedPlacements(): Flow<List<TimedContributionPlacement>>
+
+    // ---- bounded window scans (recover-missed-playtime Decision 7) -------------------------
+    // Windowed projections must not load the whole history or the whole recovery ledger: date-keyed
+    // reads below scope every dated row to the asked window, and host-session reads fetch only the
+    // sessions that actually hold a funded share inside the window.
+
+    /** Dated (non-pending) allocation rows whose frozen date is inside the half-open window. */
+    @Query(
+        "SELECT * FROM recovery_unknown_allocations " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND pendingDate = 0 AND date >= :fromDate AND date < :toDateExclusive",
+    )
+    fun observeDatedAllocationsBetween(fromDate: String, toDateExclusive: String): Flow<List<UnknownTimeAllocation>>
+
+    /** Funded timed shares whose frozen credited date is inside the half-open window. */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND creditedDate >= :fromDate AND creditedDate < :toDateExclusive",
+    )
+    fun observeTimedPlacementsByDate(fromDate: String, toDateExclusive: String): Flow<List<TimedContributionPlacement>>
+
+    /** The sessions hosting a funded share frozen inside the window — bounded targeted validation. */
+    @Query(
+        "SELECT * FROM sessions WHERE id IN (" +
+            "SELECT sessionId FROM recovery_timed_placements " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND sessionId IS NOT NULL " +
+            "AND creditedDate >= :fromDate AND creditedDate < :toDateExclusive)",
+    )
+    fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>>
+
+    /** Earliest dated allocation date among visible games; the canonical-history anchor input. */
+    @Query(
+        "SELECT MIN(date) FROM recovery_unknown_allocations " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND pendingDate = 0 " +
+            "AND appId NOT IN (SELECT appId FROM hidden_games)",
+    )
+    fun observeEarliestDatedAllocationDate(): Flow<String?>
+
+    /** Earliest detached funded-share frozen date among visible games; the canonical-history anchor input. */
+    @Query(
+        "SELECT MIN(creditedDate) FROM recovery_timed_placements " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND sessionId IS NULL " +
+            "AND appId NOT IN (SELECT appId FROM hidden_games)",
+    )
+    fun observeEarliestDetachedShareDate(): Flow<String?>
+
+    /** Current-revision allocation recipes for the active account. */
+    @Query(
+        "SELECT * FROM recovery_allocation_recipes " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0)",
+    )
+    fun observeActiveRecoveryRecipes(): Flow<List<UnknownTimeAllocationRecipe>>
+
+    /** Funded contributions for the active account. */
+    @Query(
+        "SELECT * FROM playtime_contributions " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0)",
+    )
+    fun observeActiveRecoveryContributions(): Flow<List<PlaytimeContribution>>
+
+    /**
+     * Canonical per-game credited minutes for the active account (design.md Decision 7): each
+     * funded contribution counts once and each session contributes its unlinked legacy remainder
+     * (session minutes minus its active funded timed shares). Pending date-unknown quantity is
+     * included — it feeds cumulative XP. An overfunded mapping (funded shares exceeding a
+     * session's minutes) is rejected, never silently erased.
+     *
+     * This is the shared quantity read for `GamificationUpdater.compute` and the frozen
+     * lifetime-backfill subtraction; it supersedes raw session sums so a recovery bucket is never
+     * double-counted against a manual estimate or lifetime offset.
+     */
+    suspend fun creditedMinutesByGame(): List<GameTrackedMinutes> {
+        val creditedByGame = PlaytimeReadProjector.creditedMinutesByGame(
+            contributions = observeActiveRecoveryContributions().first().map {
+                ContributionCredit(it.appId, it.authorizedMinutes)
+            },
+            sessions = getAll().map {
+                SessionCredit(it.id, it.appId, it.startAt, it.minutes, it.open, it.endAt)
+            },
+            timedShares = observeActiveRecoveryTimedPlacements().first().map {
+                TimedShareCredit(
+                    placementId = it.placementId,
+                    contributionId = it.contributionId,
+                    appId = it.appId,
+                    sessionId = it.sessionId,
+                    minutes = it.minutes,
+                    creditedDate = it.creditedDate.toLocalDateOrNull(),
+                    frozenZone = it.zone,
+                    goalAtCredit = it.goalAtCredit,
+                )
+            },
+        )
+        return creditedByGame.map { (appId, minutes) ->
+            GameTrackedMinutes(appId, minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        }
+    }
 }
 
 /** Per-game tracked-minutes projection for [SessionDao.trackedMinutesByGame]. */
@@ -227,3 +361,6 @@ data class GameSessionInstant(val appId: Long, val at: Long)
 
 /** Per-game session-count projection for collection overview metrics. */
 data class GameSessionCounts(val appId: Long, val sessions: Int)
+
+private fun String.toLocalDateOrNull(): java.time.LocalDate? =
+    runCatching { java.time.LocalDate.parse(this) }.getOrNull()

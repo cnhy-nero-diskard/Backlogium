@@ -16,11 +16,15 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.work.PostPlaySyncScheduler
 import com.example.backlogium.work.CloudRoutineScheduler
 import com.example.backlogium.work.PresenceServiceStarter
@@ -122,6 +126,18 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var cloudPresence: CloudPresenceRepository
 
     @Inject
+    lateinit var playerProfileDao: PlayerProfileDao
+
+    @Inject
+    lateinit var unknownTimeMaterializer: UnknownTimeMaterializer
+
+    @Inject
+    lateinit var recoveryDerivedFinalizer: RecoveryDerivedFinalizer
+
+    @Inject
+    lateinit var timeProvider: TimeProvider
+
+    @Inject
     @ApplicationScope
     lateinit var scope: CoroutineScope
 
@@ -157,6 +173,22 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .isSuccess
             if (!ready) return@launch
 
+            // Resume recipe materialization and staged derived writes before any fresh sync can
+            // compute over their incomplete baseline. Account-change recovery above has completed;
+            // the durable profile identity scopes this offline local work even when credentials
+            // are absent or temporarily mismatched.
+            val recoveryReady = runCatching {
+                val admittedAccount = playerProfileDao.get()?.steamId?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                if (admittedAccount != null) {
+                    val now = timeProvider.nowMillis()
+                    unknownTimeMaterializer.materializeAll(admittedAccount, now)
+                    recoveryDerivedFinalizer.resumePending(admittedAccount, now)
+                }
+            }.onFailure { Timber.e(it, "Playtime recovery startup resume failed; sync remains unscheduled") }
+                .isSuccess
+            if (!recoveryReady) return@launch
+
             // Routine work must not be exposed until promotion/removal recovery has
             // succeeded: a job admitted against the pre-promotion generation before recovery
             // commits would consume the new reader's cooldown without reading a page. On
@@ -176,7 +208,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()
-            resolvePendingImportRecompute()
+            if (!resolvePendingImportRecompute()) return@launch
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()
             syncScheduler.ensurePeriodicWishlistSampling()
@@ -189,12 +221,10 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
      * follow-up recompute ran (auditfix-backup-integrity). A no-op on every launch where no merge
      * is mid-flight, which is the common case.
      */
-    private fun resolvePendingImportRecompute() {
-        scope.launch {
-            runCatching { pendingImportRecompute() }
-                .onFailure { Timber.e(it, "Pending import recompute failed") }
-        }
-    }
+    private suspend fun resolvePendingImportRecompute(): Boolean =
+        runCatching { pendingImportRecompute() }
+            .onFailure { Timber.e(it, "Pending import recompute failed") }
+            .isSuccess
 
     /**
      * One-time correction of per-day totals recorded under the superseded poll-time attribution

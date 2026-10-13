@@ -61,6 +61,7 @@ class HiddenGamesExclusionTest {
         sessions = SessionRepository(
             sessionDao = db.sessionDao(),
             hiddenGamesRepository = hidden,
+            time = HiddenGamesTestTime,
         )
         games = GameRepository(
             gameDao = db.gameDao(),
