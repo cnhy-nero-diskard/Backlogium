@@ -124,7 +124,7 @@ A backup containing session history SHALL also carry both independent session cl
 - **THEN** the backup is rejected as mixed-version input before any data is modified
 
 #### Scenario: Unsupported backup format version
-- **WHEN** a backup declares a format version other than 1 or 2
+- **WHEN** a backup declares a format version other than 1, 2, or 3
 - **THEN** the backup is rejected before any data is modified
 
 #### Scenario: Reader credentials stay on the device
