@@ -279,3 +279,24 @@ Tests that lock in the superseded behavior (audited on the implementation base):
   planning-only (all task boxes unchecked) and are not dependencies; the read models this note
   names are the shared targets so those changes can land independently.
 - **Fixtures**: task 1.1 fixtures are implemented by the parent independently of this note.
+
+## Autoship validation (2026-10-14)
+
+- Passed: `:gamification:test`; serialized recovery-only unit run (212 tests, 0 failures); the API 35
+  emulator `MigrationTest` suite (30/30); History instrumentation (17/17); Analytics
+  instrumentation (7/7); strict OpenSpec validation; and `git diff --check`.
+- Roborazzi verification passed with 50 baselines unchanged. The 20 added History/Analytics
+  baselines (light/dark, narrow/standard) were visually reviewed.
+- The full `:gamification:test :app:testDebugUnitTest` run completed 2,208 tests with two
+  `CloudRoutineSettingsTest` failures from `AccessDeniedException` while accessing Robolectric
+  DataStore temporary files. The isolated `CloudRoutineSettingsTest` class passed. A parallel
+  focused recovery run also hit one transient `AccessDeniedException` in
+  `CloudPresencePlaytimeRefilingRecoveryIntegrationTest`; that class passed in isolation, and the
+  serialized recovery-only run passed all 212 selected tests.
+- The UI storage-boundary scan found existing imports in `HomeViewModel` and the cloud historical
+  settings UI; no such imports were added by this change. `HomeViewModel` is the known collection
+  boundary breach documented in `CLAUDE.md`; the settings imports also predate this branch.
+  Diagnostics imports were excluded as documented.
+- Controlled #181/offline cases and deterministic cloud re-filing/reversal tests passed. No separate
+  live recovery was performed because no real Steam playtime increase was observed in this session;
+  task 10.4 remains open.

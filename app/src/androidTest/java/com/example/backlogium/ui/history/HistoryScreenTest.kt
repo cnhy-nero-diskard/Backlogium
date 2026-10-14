@@ -445,8 +445,8 @@ class HistoryScreenTest {
         // description carries no approximate start marker, AM/PM clock text or open/live status.
         val leafDescription = composeRule.onNodeWithTag(historyAllocationTestTag("leaf-1"))
             .fetchSemanticsNode()
-            .config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
-            .joinToString { it.text }
+            .config[SemanticsProperties.ContentDescription]
+            .joinToString()
         assertFalse(leafDescription.contains("~"))
         assertFalse(leafDescription.contains("AM") || leafDescription.contains("PM"))
         assertFalse(leafDescription.contains("live"))

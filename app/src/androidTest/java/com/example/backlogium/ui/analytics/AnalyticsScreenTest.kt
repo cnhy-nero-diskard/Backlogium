@@ -2,8 +2,10 @@ package com.example.backlogium.ui.analytics
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -59,7 +61,8 @@ class AnalyticsScreenTest {
             .performClick()
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Game X").performScrollTo().assertIsDisplayed()
+        // The same game is present in the window's leading-game card and the selected-day list.
+        composeRule.onAllNodesWithText("Game X").assertCountEquals(2)
         composeRule.onNodeWithText("Games played").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(TAG_ANALYTICS_NEXT_DAY)
@@ -92,9 +95,9 @@ class AnalyticsScreenTest {
     fun allocationsOnlyWindowShowsPlayedMinutesAndDeclaresSessionTimingUnavailable() {
         setContent(allocationsOnlyState())
 
-        // The window's played minutes and leading game are real even without any session.
-        composeRule.onNodeWithText("Hades II led this window with 1 hr 45 mins")
-            .performScrollTo().assertIsDisplayed()
+        // The visible card separates the game and minutes; TalkBack receives the full sentence.
+        composeRule.onNode(hasContentDescription("Hades II led this window with 1 hr 45 mins"))
+            .assertIsDisplayed()
 
         // Session-shape and time-of-day insights state that timing is unavailable rather than
         // presenting measured zeros.
