@@ -415,23 +415,12 @@ private fun LazyListScope.dayItems(
     val expandable = day.games.isNotEmpty()
 
     item(key = historyDayItemKey(day.date)) {
-        Row(verticalAlignment = Alignment.Top) {
-            DayHeaderRow(
-                day = day,
-                expanded = dayExpanded,
-                expandable = expandable,
-                onClick = { onToggleDay(day.date) },
-                modifier = Modifier.weight(1f),
-            )
-            if (day.estimatedMinutes > 0) {
-                RecoveryExplanationControl(
-                    shares = recoveryShares(day.games.flatMap { it.allocations }),
-                    modifier = Modifier
-                        .padding(start = 8.dp, top = 10.dp)
-                        .testTag(TAG_HISTORY_DAY_ESTIMATE_HELP),
-                )
-            }
-        }
+        DayHeaderRow(
+            day = day,
+            expanded = dayExpanded,
+            expandable = expandable,
+            onClick = { onToggleDay(day.date) },
+        )
     }
 
     if (!dayExpanded || !expandable) return
@@ -565,6 +554,14 @@ private fun DayHeaderRow(
                             modifier = Modifier.padding(start = 4.dp),
                         )
                     }
+                }
+                if (day.estimatedMinutes > 0) {
+                    RecoveryExplanationControl(
+                        shares = recoveryShares(day.games.flatMap { it.allocations }),
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .testTag(TAG_HISTORY_DAY_ESTIMATE_HELP),
+                    )
                 }
                 if (expandable) {
                     Icon(
