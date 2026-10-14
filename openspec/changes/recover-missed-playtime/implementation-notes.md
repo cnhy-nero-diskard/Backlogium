@@ -297,6 +297,7 @@ Tests that lock in the superseded behavior (audited on the implementation base):
   settings UI; no such imports were added by this change. `HomeViewModel` is the known collection
   boundary breach documented in `CLAUDE.md`; the settings imports also predate this branch.
   Diagnostics imports were excluded as documented.
-- Controlled #181/offline cases and deterministic cloud re-filing/reversal tests passed. No separate
-  live recovery was performed because no real Steam playtime increase was observed in this session;
-  task 10.4 remains open.
+- Controlled #181/offline cases and deterministic cloud re-filing/reversal tests passed. A live
+  Steam owned-games read on the read-only API 35 AVD succeeded with no increase above stored
+  recovery high-waters; no cloud reader was configured, and the probe did not enqueue a manual
+  sync or retry. No separate live recovery was verified, so task 10.4 remains open.
