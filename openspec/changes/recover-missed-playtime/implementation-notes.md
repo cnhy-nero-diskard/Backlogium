@@ -300,4 +300,7 @@ Tests that lock in the superseded behavior (audited on the implementation base):
 - Controlled #181/offline cases and deterministic cloud re-filing/reversal tests passed. A live
   Steam owned-games read on the read-only API 35 AVD succeeded with no increase above stored
   recovery high-waters; no cloud reader was configured, and the probe did not enqueue a manual
-  sync or retry. No separate live recovery was verified, so task 10.4 remains open.
+  sync or retry.
+- User-reported live non-cloud acceptance on 2026-10-14: played Space Marine for 55 minutes
+  while Steam was in Invisible mode and verified the resulting live recovery. This supplies the
+  real-increase leg that remained outstanding for task 10.4.
