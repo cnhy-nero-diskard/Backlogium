@@ -47,7 +47,6 @@ import java.util.LinkedHashSet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -58,30 +57,21 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 // The app uses one stable settings file, but Robolectric switches data directories between tests
-// within a worker. Rebind only when the backing file changes and cancel its old test scope.
+// within a worker. Keep one live store per backing file: cancelling the previous scope on a path
+// change can abort a DataStore read or write that is still active in another test.
 private object SettingsDataStoreInstance {
-    private data class Entry(
-        val path: String,
-        val scope: CoroutineScope,
-        val store: DataStore<Preferences>,
-    )
-
-    @Volatile
-    private var current: Entry? = null
+    private val stores = mutableMapOf<String, DataStore<Preferences>>()
 
     fun get(context: Context): DataStore<Preferences> {
         val appContext = context.applicationContext
         val file = appContext.preferencesDataStoreFile("settings")
         val path = file.canonicalPath
-        current?.takeIf { it.path == path }?.let { return it.store }
 
         return synchronized(this) {
-            current?.takeIf { it.path == path }?.let { return@synchronized it.store }
-            current?.scope?.cancel()
-            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            PreferenceDataStoreFactory.create(
-                scope = scope,
-            ) { file }.also { store -> current = Entry(path, scope, store) }
+            stores.getOrPut(path) {
+                val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                PreferenceDataStoreFactory.create(scope = scope) { file }
+            }
         }
     }
 }
