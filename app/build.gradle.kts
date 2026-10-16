@@ -218,8 +218,7 @@ dependencies {
 }
 
 // The Robolectric suite runs thousands of tests in one Windows worker by default.
-// Recycle the worker periodically so accumulated test state and open file handles do
-// not turn late DataStore tests into AccessDenied failures or exhaust the test heap.
+// Periodically recycle it to bound accumulated test state, open handles, and heap use.
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     maxHeapSize = "1g"
     forkEvery = 100

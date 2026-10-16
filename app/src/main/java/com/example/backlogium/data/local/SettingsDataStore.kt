@@ -1,7 +1,9 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -9,7 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.preferencesDataStoreFile
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.SmartCollectionId
@@ -42,6 +44,10 @@ import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.LocalDate
 import java.util.LinkedHashSet
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -51,7 +57,38 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.dataStore by preferencesDataStore(name = "settings")
+// The app uses one stable settings file, but Robolectric switches data directories between tests
+// within a worker. Rebind only when the backing file changes and cancel its old test scope.
+private object SettingsDataStoreInstance {
+    private data class Entry(
+        val path: String,
+        val scope: CoroutineScope,
+        val store: DataStore<Preferences>,
+    )
+
+    @Volatile
+    private var current: Entry? = null
+
+    fun get(context: Context): DataStore<Preferences> {
+        val appContext = context.applicationContext
+        val file = appContext.preferencesDataStoreFile("settings")
+        val path = file.canonicalPath
+        current?.takeIf { it.path == path }?.let { return it.store }
+
+        return synchronized(this) {
+            current?.takeIf { it.path == path }?.let { return@synchronized it.store }
+            current?.scope?.cancel()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            PreferenceDataStoreFactory.create(
+                scope = scope,
+            ) { file }.also { store -> current = Entry(path, scope, store) }
+        }
+    }
+}
+
+private val Context.dataStore: DataStore<Preferences>
+    get() = SettingsDataStoreInstance.get(this)
+
 private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
 
 /**
