@@ -188,7 +188,10 @@ class PlaytimeReadProjectorTest {
             startDateInclusive = day, endDateExclusive = day.plusDays(2),
         )
         val sessionActivity = activities.filterIsInstance<PlaytimeActivity.TimestampedSession>().single()
-        assertEquals(listOf(SessionFundedShare("c1", 20L, day.plusDays(1))), sessionActivity.fundedShares)
+        assertEquals(
+            listOf(SessionFundedShare("c1", 20L, day.plusDays(1), "UTC", null)),
+            sessionActivity.fundedShares,
+        )
         assertEquals(20L, sessionActivity.fundedMinutes)
         assertEquals(40L, sessionActivity.unlinkedMinutes)
         val allocationActivity = activities.filterIsInstance<PlaytimeActivity.DatedAllocation>().single()
@@ -244,6 +247,20 @@ class PlaytimeReadProjectorTest {
             zone = zone,
         )
         assertEquals(day, earliest)
+    }
+
+    @Test
+    fun `earliest canonical date includes a hosted share earlier than its host start date`() {
+        val frozenDate = day.minusDays(2)
+        val earliest = PlaytimeReadProjector.earliestCanonicalDate(
+            sessions = listOf(session(id = 5, appId = 1L, minutes = 60, startAt = at(day))),
+            timedShares = listOf(share("hosted", 1L, sessionId = 5, minutes = 20, date = frozenDate)),
+            allocations = emptyList(),
+            recipes = emptyList(),
+            zone = zone,
+        )
+
+        assertEquals(frozenDate, earliest)
     }
 
     @Test

@@ -56,6 +56,11 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
     data class PendingPlacement(
         val minutes: Long,
         val contributionId: PlaytimeContributionId,
+        val windowStartAt: Long?,
+        val windowEndAt: Long,
+        val zone: ZoneId?,
+        val hiddenAtCredit: Boolean,
+        val goalAtCredit: Boolean,
     )
 
     /** A session natural key maps to its persisted row id for funded-share linking. */
@@ -116,6 +121,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             if (minutes <= 0L) {
                 null
             } else {
+                val creditFlags = pending.first()
                 PendingPlacement(
                     minutes = minutes,
                     contributionId = PlaytimeContributionId(
@@ -127,6 +133,12 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
                             contribution.toMinutes.toInt(),
                         ),
                     ),
+                    windowStartAt = contribution.windowStartAt,
+                    windowEndAt = contribution.windowEndAt,
+                    zone = contribution.zone?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+                        ?: creditFlags.zone?.let { runCatching { ZoneId.of(it) }.getOrNull() },
+                    hiddenAtCredit = creditFlags.hiddenAtCredit,
+                    goalAtCredit = creditFlags.goalAtCredit,
                 )
             }
         }
@@ -219,11 +231,31 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             plan.provenance == PlaytimePlacementProvenance.RETROACTIVE_PLAY
 
         // Capture the superseded rows before marking them, so the journal can name them.
-        val replacedPlacementIds = if (replaceExisting && existing != null) {
-            (recoveryDao.activeTimedPlacements(storageId).map { it.placementId } +
-                recoveryDao.activeAllocations(storageId).map { it.placementId }).distinct()
+        val previousTimedPlacements = if (replaceExisting && existing != null) {
+            recoveryDao.activeTimedPlacements(storageId)
         } else {
             emptyList()
+        }
+        val previousAllocations = if (replaceExisting && existing != null) {
+            recoveryDao.activeAllocations(storageId)
+        } else {
+            emptyList()
+        }
+        val replacedPlacementIds = (previousTimedPlacements.map { it.placementId } +
+            previousAllocations.map { it.placementId }).distinct()
+        val retainedHiddenAtCredit = previousAllocations.firstOrNull()?.hiddenAtCredit
+            ?: previousTimedPlacements.firstOrNull()?.hiddenAtCredit
+        val retainedGoalAtCredit = previousAllocations.firstOrNull()?.goalAtCredit
+            ?: previousTimedPlacements.firstOrNull()?.goalAtCredit
+        val placementContext = if (replaceExisting && existing != null) {
+            context.copy(
+                windowStartAt = existing.windowStartAt,
+                windowEndAt = existing.windowEndAt,
+                hiddenAtCredit = retainedHiddenAtCredit ?: context.hiddenAtCredit,
+                goalAtCredit = retainedGoalAtCredit ?: context.goalAtCredit,
+            )
+        } else {
+            context
         }
         if (replaceExisting && existing != null) {
             recoveryDao.supersedeTimedPlacementsUpTo(storageId, revision)
@@ -235,12 +267,12 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             sessionIds[SessionKey(plan.appId, startAt, endAt)]
         }
         val timed = PlaytimeRecoveryCommitMapper.evidenceTimedRows(
-            plan, contribution, revision, context, sessionLookup,
+            plan, contribution, revision, placementContext, sessionLookup,
         ) + PlaytimeRecoveryCommitMapper.sessionShareRows(
-            plan, contribution, revision, context, sessionLookup,
+            plan, contribution, revision, placementContext, sessionLookup,
         )
         val (allocations, recipe) = PlaytimeRecoveryCommitMapper.allocationsAndRecipe(
-            plan, contribution, revision, context,
+            plan, contribution, revision, placementContext,
         )
         // Structural validation, rank-exact recipe materialization, session bounds, graph
         // conservation and overlap rejection all happen here.
@@ -278,15 +310,15 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             committed = committed,
             timedSessionKeys = PlaytimeRecoveryCommitMapper.timedSessionKeys(plan),
             allocationCreditByDate = PlaytimeRecoveryCommitMapper.allocationDailyCredit(
-                plan, context.hiddenAtCredit, context.goalAtCredit,
+                plan, placementContext.hiddenAtCredit, placementContext.goalAtCredit,
             ),
             earnedCreditByDate = if (
                 committed && !needsDerivedWork && plan.provenance == PlaytimePlacementProvenance.SYNC
             ) {
                 PlaytimeRecoveryCommitMapper.datedCreditByDate(
                     plan,
-                    context.hiddenAtCredit,
-                    context.goalAtCredit,
+                    placementContext.hiddenAtCredit,
+                    placementContext.goalAtCredit,
                     appliedSessionActions,
                 )
             } else {

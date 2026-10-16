@@ -279,6 +279,14 @@ interface SessionDao {
     )
     fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>>
 
+    /** All active funded shares hosted by the selected sessions, regardless of frozen date. */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
+            "AND superseded = 0 AND sessionId IN (:sessionIds)",
+    )
+    fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<TimedContributionPlacement>>
+
     /** Earliest dated allocation date among visible games; the canonical-history anchor input. */
     @Query(
         "SELECT MIN(date) FROM recovery_unknown_allocations " +
@@ -288,14 +296,14 @@ interface SessionDao {
     )
     fun observeEarliestDatedAllocationDate(): Flow<String?>
 
-    /** Earliest detached funded-share frozen date among visible games; the canonical-history anchor input. */
+    /** Earliest funded-share frozen date (hosted or detached) among visible games; history anchor. */
     @Query(
         "SELECT MIN(creditedDate) FROM recovery_timed_placements " +
             "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
-            "AND superseded = 0 AND sessionId IS NULL " +
+            "AND superseded = 0 " +
             "AND appId NOT IN (SELECT appId FROM hidden_games)",
     )
-    fun observeEarliestDetachedShareDate(): Flow<String?>
+    fun observeEarliestTimedShareDate(): Flow<String?>
 
     /** Current-revision allocation recipes for the active account. */
     @Query(

@@ -86,6 +86,32 @@ class PlaytimeRecoveryCommitMapperTest {
         assertEquals(stored.windowEndAt, replaced.windowEndAt)
         assertEquals(stored.zone, replaced.zone)
         assertEquals(2L, replaced.revision)
+
+        val replacementPlan = plan(
+            authorizedDeltaMinutes = 70,
+            previousObservationAt = stored.windowStartAt,
+            recoveryObservedAt = stored.windowEndAt,
+            priorHighWaterMinutes = 500,
+        )
+        val (rows, recipe) = PlaytimeRecoveryCommitMapper.allocationsAndRecipe(
+            replacementPlan,
+            stored,
+            revision = 3L,
+            context(
+                windowStartAt = ts("2024-01-12T00:00:00"),
+                windowEndAt = ts("2024-01-13T00:00:00"),
+                hidden = true,
+                goal = false,
+            ),
+        )
+        assertTrue(rows.isNotEmpty())
+        assertTrue(rows.all {
+            it.windowStartAt == stored.windowStartAt && it.windowEndAt == stored.windowEndAt &&
+                it.zone == stored.zone
+        })
+        assertEquals(stored.windowStartAt, recipe!!.windowStartAt)
+        assertEquals(stored.windowEndAt, recipe.windowEndAt)
+        assertEquals(stored.zone, recipe.zone)
     }
 
     @Test

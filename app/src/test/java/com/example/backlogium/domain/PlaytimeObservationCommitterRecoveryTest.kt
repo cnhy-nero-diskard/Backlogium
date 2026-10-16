@@ -5,6 +5,7 @@ import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -28,6 +29,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 
 /**
@@ -151,12 +153,14 @@ class PlaytimeObservationCommitterRecoveryTest {
     }
 
     @Test
-    fun staleOlderResponseWithNewHighWaterIsPendingAndNeverRewindsTheBoundary() = runTest {
-        seedGame(appId, playtime = 500, lastSyncAt = friday) // boundary at Friday
+    fun staleOlderResponseStaysPendingAfterLaterUnchangedReadAcrossZoneAndEligibilityChanges() = runTest {
+        seedGame(appId, playtime = 500, lastSyncAt = friday, isGoal = true) // boundary at Friday
+        val time = MutableTimeProvider()
+        val committer = committer(time = time)
 
         // Thursday is behind the usable boundary, yet Steamed published 570 by then: the truthful
         // total advances, the boundary does not rewind, and the minutes wait conservatively.
-        db.withTransaction { committer().commit(obs(570), thursday, thursday) }
+        db.withTransaction { committer.commit(obs(570), thursday, thursday) }
 
         val state = db.playtimeRecoveryDao().state(account, appId)!!
         assertEquals(570L, state.highWaterMinutes)
@@ -166,14 +170,34 @@ class PlaytimeObservationCommitterRecoveryTest {
         assertEquals(70L, contributions.single().authorizedMinutes)
         assertEquals(70L, db.playtimeRecoveryDao().sumActivePendingMinutes(account, appId))
         assertEquals(0, allocatedMinutes(appId)) // pending is not dated credit nor a session
+        val originalPending = db.playtimeRecoveryDao()
+            .activeAllocations(contributions.single().contributionId).single()
+        assertEquals(friday, originalPending.windowStartAt)
+        assertEquals(thursday, originalPending.windowEndAt)
+        assertEquals(ZoneOffset.UTC.id, originalPending.zone)
+        assertFalse(originalPending.hiddenAtCredit)
+        assertTrue(originalPending.goalAtCredit)
 
-        // A later valid reading — even with a zero new delta — places the retained pending under
-        // its existing contribution, never a new identity.
-        db.withTransaction { committer().commit(obs(570), saturday, saturday) }
-        assertEquals(0L, db.playtimeRecoveryDao().sumActivePendingMinutes(account, appId))
-        assertEquals(70, allocatedMinutes(appId))
+        // A later unchanged read cannot claim that Thursday's already-reported quantity occurred
+        // in Friday-Saturday. Current timezone/hidden/Focus settings do not rewrite its frozen facts.
+        time.currentZone = ZoneId.of("Asia/Tokyo")
+        db.gameDao().upsert(db.gameDao().getById(appId)!!.copy(isGoal = false))
+        db.hiddenGameDao().upsertAll(listOf(HiddenGame(appId, hiddenAt = saturday, fromBulkAction = false)))
+        val laterRead = db.withTransaction { committer.commit(obs(570), saturday, saturday) }
+        assertEquals(0, laterRead.recoveredContributions)
+        assertEquals(70L, db.playtimeRecoveryDao().sumActivePendingMinutes(account, appId))
+        assertEquals(0, allocatedMinutes(appId))
         assertEquals(1, db.playtimeRecoveryDao().contributionsForGame(account, appId).size)
         assertTrue(db.playtimeRecoveryDao().validateGraph(contributions.single().contributionId))
+        val retainedPending = db.playtimeRecoveryDao()
+            .activeAllocations(contributions.single().contributionId).single()
+        assertEquals(originalPending.placementId, retainedPending.placementId)
+        assertEquals(originalPending.windowStartAt, retainedPending.windowStartAt)
+        assertEquals(originalPending.windowEndAt, retainedPending.windowEndAt)
+        assertEquals(originalPending.zone, retainedPending.zone)
+        assertFalse(retainedPending.hiddenAtCredit)
+        assertTrue(retainedPending.goalAtCredit)
+        assertNull(db.dailyProgressDao().getByDate("2026-07-25"))
     }
 
     // ----------------------------------------------------------------- 4.5 stale open sessions
@@ -372,11 +396,11 @@ class PlaytimeObservationCommitterRecoveryTest {
 
     // ----------------------------------------------------------------- helpers
 
-    private suspend fun seedGame(appId: Long, playtime: Int, lastSyncAt: Long) {
+    private suspend fun seedGame(appId: Long, playtime: Int, lastSyncAt: Long, isGoal: Boolean = false) {
         db.gameDao().upsert(
             Game(
                 appId = appId, name = "Owned", iconUrl = "",
-                playtimeForever = playtime, playtime2Weeks = 0,
+                playtimeForever = playtime, playtime2Weeks = 0, isGoal = isGoal,
                 lastPlaytime = playtime, source = GameSource.STEAM_OWNED,
                 lastSyncedAt = lastSyncAt,
             ),
@@ -396,12 +420,8 @@ class PlaytimeObservationCommitterRecoveryTest {
             db.playtimeRecoveryDao(), db.sessionDao(),
         ),
         pruner: CloudPendingEvidencePruner? = null,
+        time: TimeProvider = MutableTimeProvider(),
     ): PlaytimeObservationCommitter {
-        val time = object : TimeProvider {
-            override fun nowMillis() = friday
-            override fun zone() = ZoneOffset.UTC
-            override fun today() = LocalDate.of(2026, 7, 27)
-        }
         return PlaytimeObservationCommitter(
             gameDao = db.gameDao(),
             sessionDao = db.sessionDao(),
@@ -416,6 +436,12 @@ class PlaytimeObservationCommitterRecoveryTest {
             recoveryAdapter = adapter,
             pendingEvidencePruner = pruner,
         )
+    }
+
+    private inner class MutableTimeProvider(var currentZone: ZoneId = ZoneOffset.UTC) : TimeProvider {
+        override fun nowMillis() = friday
+        override fun zone() = currentZone
+        override fun today() = LocalDate.of(2026, 7, 27)
     }
 
     private suspend fun allocatedMinutes(appId: Long): Long =

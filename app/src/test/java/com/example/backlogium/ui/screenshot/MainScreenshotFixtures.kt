@@ -55,6 +55,7 @@ import com.example.backlogium.ui.history.HistoryDayGroup
 import com.example.backlogium.ui.history.HistoryGameGroup
 import com.example.backlogium.ui.history.HistoryGameThumbnails
 import com.example.backlogium.ui.history.HistorySessionUi
+import com.example.backlogium.ui.history.HistoryTimedShareUi
 import com.example.backlogium.ui.history.HistoryUiState
 import com.example.backlogium.ui.history.RecoveryStatusUi
 import com.example.backlogium.ui.components.RecoveryExplanationKind
@@ -525,7 +526,7 @@ private fun allocationMultiHistoryState(): HistoryUiState {
     )
 }
 
-/** Mixed day: a timestamped session alongside an estimated allocation sharing the same game. */
+/** Mixed day: a session remainder, a funded timed share, and an estimate sharing the same game. */
 private fun mixedHistoryState(): HistoryUiState {
     val today = FIXED_TODAY.toString()
     val session = HistorySessionUi(
@@ -551,13 +552,14 @@ private fun mixedHistoryState(): HistoryUiState {
         appId = 440L,
         name = "Hades II",
         iconUrl = fixtureArt("hades-icon"),
-        minutesPlayed = 77,
+        minutesPlayed = 87,
         sessions = listOf(session),
         allocations = listOf(allocation),
+        timedShares = listOf(HistoryTimedShareUi(sessionId = session.id, minutes = 10, goalMinutes = 0)),
     )
     val day = HistoryDayGroup(
         date = today,
-        minutesPlayed = 77,
+        minutesPlayed = 87,
         goalMinutesPlayed = 42,
         questMet = true,
         games = listOf(game),

@@ -14,6 +14,7 @@ import com.example.backlogium.data.repo.PlaytimeRecoveryCommitMapper.RecoveryCom
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement.Input
 import com.example.backlogium.gamification.RuleConfig
+import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -339,12 +340,22 @@ class PlaytimeObservationCommitter @Inject constructor(
             // alone would not: the differ reported the clamp, so the plan stays conservative.
             val clockAnomalous = diff.clockRollbacks.any { it.appId == game.appId }
 
-            // 1) Every retained pending date-unknown quantity first: a trustworthy reading with a
-            //    valid window places each under its own existing contribution — never a new
-            //    identity, never a merged request (the planner rejects a combined new+pending
-            //    plan by construction). An invalid window leaves the retained pending untouched.
+            // 1) Retry retained pending quantity against its original contribution bounds and
+            //    frozen zone/eligibility. A later observation can never move already-reported
+            //    quantity into a newer window; if the original bounds or zone are unavailable or
+            //    invalid, leave it pending unchanged rather than borrowing today's context.
             var planned = false
             for (pending in pendingPlacements) {
+                val pendingWindowStartAt = pending.windowStartAt ?: continue
+                val pendingZone = pending.zone ?: continue
+                if (pending.windowEndAt < pendingWindowStartAt) continue
+
+                val pendingContext = context.copy(
+                    windowStartAt = pending.windowStartAt,
+                    windowEndAt = pending.windowEndAt,
+                    hiddenAtCredit = pending.hiddenAtCredit,
+                    goalAtCredit = pending.goalAtCredit,
+                )
                 val pendingPlan = PlaytimeAttributionPlanner.plan(
                     PlaytimeRecoveryRequest(
                         account = account,
@@ -352,20 +363,21 @@ class PlaytimeObservationCommitter @Inject constructor(
                         baselineEpoch = pending.contributionId.baselineEpoch,
                         authorizedDeltaMinutes = 0,
                         unplacedPendingMinutes = pending.minutes.toInt(),
-                        previousObservationAt = previousObservationAt,
-                        recoveryObservedAt = syncedAt,
-                        zone = zone,
-                        previousZone = previousZone,
-                        evaluationDate = time.today(),
+                        previousObservationAt = pendingWindowStartAt,
+                        recoveryObservedAt = pending.windowEndAt,
+                        zone = pendingZone,
+                        previousZone = pendingZone,
+                        evaluationDate = Instant.ofEpochMilli(pending.windowEndAt)
+                            .atZone(pendingZone).toLocalDate(),
                         priorHighWaterMinutes = null,
                         existingContributionId = pending.contributionId,
-                        priorOpenSession = priorOpen,
-                        clockAnomalous = clockAnomalous,
+                        priorOpenSession = null,
+                        clockAnomalous = false,
                     ),
                 )
                 if (applyPlanIfNeeded(
                         plan = pendingPlan,
-                        context = context,
+                        context = pendingContext,
                         replaceExisting = true,
                         evidenceIdentity = null,
                         appliedActions = appliedActions,

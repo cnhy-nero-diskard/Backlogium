@@ -16,6 +16,7 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.UnlockedAchievementRarity
 import com.example.backlogium.domain.CreditedAllocation
+import com.example.backlogium.domain.DatedCreditedTotal
 import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
@@ -40,7 +41,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 import javax.inject.Inject
 
 /** One bar in the daily playtime chart: a local date and that day's tracked minutes. */
@@ -253,7 +253,7 @@ data class AnalyticsUiState(
 private data class AnalyticsInputs(
     val window: AnalyticsWindow,
     val sessions: List<PlaySession>,
-    val minutesByGame: Map<Long, Int>,
+    val datedTotals: List<DatedCreditedTotal>,
     val previousMinutesByGame: Map<Long, Int>,
     val library: List<LibraryGame>,
     val dailyProgress: List<DayProgress>,
@@ -265,7 +265,7 @@ private data class AnalyticsInputs(
 /** One windowed query snapshot feeding [AnalyticsInputs]; allocations are the recovery leaves. */
 private data class AnalyticsWindowed(
     val sessions: List<PlaySession>,
-    val minutesByGame: Map<Long, Int>,
+    val datedTotals: List<DatedCreditedTotal>,
     val previousMinutesByGame: Map<Long, Int>,
     val allocations: List<CreditedAllocation>,
 )
@@ -472,29 +472,17 @@ class AnalyticsViewModel @Inject constructor(
         val previousMinutesFlow: Flow<Map<Long, Int>> = if (comparisonBounds == null) {
             flowOf(emptyMap())
         } else {
-            val previousBounds = historyWindowBounds(
-                start = comparisonBounds.start,
-                endInclusive = comparisonBounds.endInclusive,
+            sessionRepository.datedCreditedTotalsBetween(
                 zone = time.zone(),
-            )
-            combine(
-                sessionRepository.minutesByGameBetween(
-                    startInclusiveMillis = previousBounds.startInclusiveMillis,
-                    endExclusiveMillis = previousBounds.endExclusiveMillis,
-                ),
-                sessionRepository.datedAllocationsBetween(
-                    startInclusiveDate = comparisonBounds.start,
-                    endInclusiveDate = comparisonBounds.endInclusive,
-                ),
-            ) { sessionMinutes, allocations ->
-                val allocationMinutes = allocations.groupBy { it.appId }
-                    .mapValues { (_, rows) -> rows.sumOf { it.minutes } }
-                (sessionMinutes.keys + allocationMinutes.keys).associateWith { appId ->
-                    Math.addExact(
-                        (sessionMinutes[appId] ?: 0).toLong(),
-                        (allocationMinutes[appId] ?: 0).toLong(),
-                    ).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                }
+                startDateInclusive = comparisonBounds.start,
+                endDateExclusive = comparisonBounds.endInclusive.plusDays(1),
+            ).map { totals ->
+                totals.flatMap { it.minutesByGame.entries }
+                    .groupBy({ it.key }, { it.value })
+                    .mapValues { (_, values) ->
+                        values.fold(0L) { sum, minutes -> Math.addExact(sum, minutes) }
+                            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    }
             }
         }
         combine(
@@ -503,17 +491,18 @@ class AnalyticsViewModel @Inject constructor(
                     startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
                     endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
                 ),
-                sessionRepository.minutesByGameBetween(
-                    startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
-                    endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
+                sessionRepository.datedCreditedTotalsBetween(
+                    zone = time.zone(),
+                    startDateInclusive = resolved.bounds.start,
+                    endDateExclusive = resolved.bounds.endInclusive.plusDays(1),
                 ),
                 previousMinutesFlow,
                 sessionRepository.datedAllocationsBetween(
                     startInclusiveDate = resolved.bounds.start,
                     endInclusiveDate = resolved.bounds.endInclusive,
                 ),
-            ) { sessions, minutesByGame, previousMinutesByGame, allocations ->
-                AnalyticsWindowed(sessions, minutesByGame, previousMinutesByGame, allocations)
+            ) { sessions, datedTotals, previousMinutesByGame, allocations ->
+                AnalyticsWindowed(sessions, datedTotals, previousMinutesByGame, allocations)
             },
             gameRepository.library,
             profileRepository.dailyProgress,
@@ -523,7 +512,7 @@ class AnalyticsViewModel @Inject constructor(
             AnalyticsInputs(
                 window = resolved.window,
                 sessions = current.sessions,
-                minutesByGame = current.minutesByGame,
+                datedTotals = current.datedTotals,
                 previousMinutesByGame = current.previousMinutesByGame,
                 library = library,
                 dailyProgress = dailyProgress,
@@ -550,22 +539,13 @@ class AnalyticsViewModel @Inject constructor(
         )
         val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
-        // Session start date is the canonical attribution shared with sync daily progress and
-        // History, including for sessions that cross local midnight. Dated unknown-time
-        // allocations join by their frozen attribution date, so both kinds hit the same key.
-        val sessionsByDate = inputs.sessions.groupBy { localDate(it.startAt, time.zone()) }
         val allocationsByDate = inputs.allocations.groupBy { it.date }
-        val minutesByDate = mutableMapOf<LocalDate, Int>()
-        sessionsByDate.forEach { (date, daySessions) ->
-            minutesByDate[date] = (minutesByDate[date] ?: 0) + daySessions.sumOf { it.minutes }
-        }
-        allocationsByDate.forEach { (date, dayAllocations) ->
-            minutesByDate[date] = (minutesByDate[date] ?: 0) + dayAllocations.sumOf { it.minutes }
-        }
+        val totalsByDate = inputs.datedTotals.associateBy { it.date }
         val dailyMinutes = dates.map { date ->
             AnalyticsDay(
                 date = date,
-                minutes = minutesByDate[date] ?: 0,
+                minutes = totalsByDate[date]?.minutes
+                    ?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: 0,
                 estimatedMinutes = allocationsByDate[date]?.sumOf { it.minutes } ?: 0,
             )
         }
@@ -575,37 +555,30 @@ class AnalyticsViewModel @Inject constructor(
         }
         val questMetDaysCount = dates.count { date -> progressByDate[date]?.questMet == true }
 
-        val sessionMinutesByGame = inputs.sessions.groupBy { it.appId }
-            .mapValues { (_, sessions) -> sessions.sumOf { it.minutes } }
         val allocationMinutesByGame = inputs.allocations.groupBy { it.appId }
             .mapValues { (_, allocations) -> allocations.sumOf { it.minutes } }
-        // The period's canonical per-game credited total: timestamped sessions plus dated
-        // allocations, exactly once each. This screen reconciles its own dated totals, so top
-        // games stay truthful even while the repository's minutesByGameBetween handles the
-        // previous-period comparison separately.
-        val creditedMinutesByGame = (sessionMinutesByGame.keys + allocationMinutesByGame.keys)
-            .associateWith { appId ->
-                (sessionMinutesByGame[appId] ?: 0) + (allocationMinutesByGame[appId] ?: 0)
+        val creditedMinutesByGame = inputs.datedTotals.asSequence()
+            .flatMap { it.minutesByGame.asSequence() }
+            .groupBy({ it.key }, { it.value })
+            .mapValues { (_, values) ->
+                values.fold(0L) { sum, minutes -> Math.addExact(sum, minutes) }
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
         val topGames = joinGameMinutes(creditedMinutesByGame, gamesById, allocationMinutesByGame)
             .take(TOP_GAMES_LIMIT)
         val totalMinutes = dailyMinutes.sumOf { it.minutes }
         // Shared games are counted in the window's totals; this is the slice of them, so the
         // contribution can be told apart rather than silently folded in.
-        val familySharedMinutes = inputs.minutesByGame
+        val familySharedMinutes = creditedMinutesByGame
             .filter { (appId, _) -> gamesById[appId]?.source == GameSource.FAMILY_SHARED }
-            .values
-            .sum()
-        val gamesByDate = (sessionsByDate.keys + allocationsByDate.keys)
+            .values.sum()
+        val gamesByDate = (totalsByDate.keys + allocationsByDate.keys)
             .associateWith { date ->
-                val daySessions = sessionsByDate[date].orEmpty()
                 val dayAllocations = allocationsByDate[date].orEmpty()
-                val sessionMinutes = daySessions.groupBy { it.appId }
-                    .mapValues { (_, gameSessions) -> gameSessions.sumOf { it.minutes } }
                 val allocationMinutes = dayAllocations.groupBy { it.appId }
                     .mapValues { (_, gameAllocations) -> gameAllocations.sumOf { it.minutes } }
-                val minutesByDayGame = (sessionMinutes.keys + allocationMinutes.keys)
-                    .associateWith { appId -> (sessionMinutes[appId] ?: 0) + (allocationMinutes[appId] ?: 0) }
+                val minutesByDayGame = totalsByDate[date]?.minutesByGame.orEmpty()
+                    .mapValues { (_, minutes) -> minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
                 joinGameMinutes(minutesByDayGame, gamesById, allocationMinutes)
             }
 
@@ -734,6 +707,3 @@ private fun joinGameMinutes(
         )
     }
     .sortedWith(compareByDescending<AnalyticsGame> { it.minutes }.thenBy { it.name })
-
-private fun localDate(epochMillis: Long, zone: ZoneId): LocalDate =
-    Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()

@@ -74,6 +74,7 @@ data class SessionCloudContribution(
  * convert an allocation date or observation instant into an exact gameplay instant.
  */
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class SessionRepository @Inject constructor(
     private val sessionDao: SessionDao,
     private val hiddenGamesRepository: HiddenGamesRepository,
@@ -192,7 +193,7 @@ class SessionRepository @Inject constructor(
 
     /**
      * Earliest canonical dated activity in the device zone: the first session start date, first
-     * *positive* dated allocation, first frozen detached-share date or first positive recipe-
+     * *positive* dated allocation, first frozen timed-share date or first positive recipe-
      * derived date. Unlike [earliestSessionStart] (an exact session instant) this is a *date*, so
      * History and Analytics can anchor period availability over allocation-only days that precede
      * the first timestamped session. Excluded/zero rows never anchor history. Bounded reads: each
@@ -202,14 +203,14 @@ class SessionRepository @Inject constructor(
         combine(
             sessionDao.observeEarliestVisibleSessionStart(),
             sessionDao.observeEarliestDatedAllocationDate(),
-            sessionDao.observeEarliestDetachedShareDate(),
+            sessionDao.observeEarliestTimedShareDate(),
             sessionDao.observeActiveRecoveryRecipes(),
             hiddenGamesRepository.hiddenAppIds,
-        ) { earliestSessionMillis, earliestAllocationDate, earliestDetachedDate, recipes, hidden ->
+        ) { earliestSessionMillis, earliestAllocationDate, earliestTimedShareDate, recipes, hidden ->
             buildSet {
                 earliestSessionMillis?.let { add(PlaytimeReadProjector.sessionDate(it, zone)) }
                 earliestAllocationDate?.toLocalDateOrNull()?.let(::add)
-                earliestDetachedDate?.toLocalDateOrNull()?.let(::add)
+                earliestTimedShareDate?.toLocalDateOrNull()?.let(::add)
                 recipes.filterNot { it.appId in hidden }
                     .mapNotNull { PlaytimeReadProjector.earliestPositiveRecipeDate(it.toCredit()) }
                     .forEach(::add)
@@ -223,7 +224,8 @@ class SessionRepository @Inject constructor(
      * rows are bounded to the requested slice and combined with materialized rows exactly once.
      * Results are ordered newest date first. Reads are window-scoped: the session query uses the
      * date window (widened a day for DST-safe midnight edges), funded shares are filtered by their
-     * frozen credited date, and only the sessions hosting those shares are fetched for validation.
+     * frozen credited date, only relevant host sessions are fetched, and every active share for
+     * those hosts is loaded so omitted out-of-window shares still reduce the unlinked remainder.
      */
     fun activityBetween(
         zone: ZoneId,
@@ -245,19 +247,25 @@ class SessionRepository @Inject constructor(
                 ActivityInput(windowSessions, hostSessions, placements, allocations, recipes)
             },
             hiddenGamesRepository.hiddenAppIds,
-        ) { input, hidden ->
-            PlaytimeReadProjector.datedActivityBetween(
-                sessions = input.relevantSessions(hidden).map(Session::toCredit),
-                timedShares = input.placements.filterNot { it.appId in hidden }
-                    .map(TimedContributionPlacement::toCredit),
-                allocations = input.allocations.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocation::toCredit),
-                recipes = input.recipes.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocationRecipe::toCredit),
-                zone = zone,
-                startDateInclusive = startDateInclusive,
-                endDateExclusive = endDateExclusive,
-            )
+        ) { input, hidden -> input to hidden }
+            .flatMapLatest { (input, hidden) ->
+                val relevantSessions = input.relevantSessions(hidden)
+                observeTimedPlacementsForSessions(relevantSessions).map { allHostPlacements ->
+                    PlaytimeReadProjector.datedActivityBetween(
+                        sessions = relevantSessions.map(Session::toCredit),
+                        timedShares = input.placements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                        allocations = input.allocations.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocation::toCredit),
+                        recipes = input.recipes.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocationRecipe::toCredit),
+                        zone = zone,
+                        startDateInclusive = startDateInclusive,
+                        endDateExclusive = endDateExclusive,
+                        allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                    )
+                }
         }
     }
 
@@ -344,7 +352,8 @@ class SessionRepository @Inject constructor(
      * Pending date-unknown quantity stays out - it feeds cumulative XP, never dated charts,
      * quests or habit training. Reads are window-scoped: sessions come from the date window
      * (widened a day for DST-safe midnight edges) plus only the hosts of the window's funded
-     * shares, and shares/allocations are filtered by their frozen dates.
+     * shares. All active shares for those fetched hosts determine the remainder; only dated shares,
+     * allocations and recipes inside the requested frozen-date window are added to its totals.
      */
     fun datedCreditedTotalsBetween(
         zone: ZoneId,
@@ -366,19 +375,25 @@ class SessionRepository @Inject constructor(
                 ActivityInput(windowSessions, hostSessions, placements, allocations, recipes)
             },
             hiddenGamesRepository.hiddenAppIds,
-        ) { input, hidden ->
-            PlaytimeReadProjector.datedCreditedTotals(
-                sessions = input.relevantSessions(hidden).map(Session::toCredit),
-                timedShares = input.placements.filterNot { it.appId in hidden }
-                    .map(TimedContributionPlacement::toCredit),
-                allocations = input.allocations.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocation::toCredit),
-                recipes = input.recipes.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocationRecipe::toCredit),
-                zone = zone,
-                startDateInclusive = startDateInclusive,
-                endDateExclusive = endDateExclusive,
-            )
+        ) { input, hidden -> input to hidden }
+            .flatMapLatest { (input, hidden) ->
+                val relevantSessions = input.relevantSessions(hidden)
+                observeTimedPlacementsForSessions(relevantSessions).map { allHostPlacements ->
+                    PlaytimeReadProjector.datedCreditedTotals(
+                        sessions = relevantSessions.map(Session::toCredit),
+                        timedShares = input.placements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                        allocations = input.allocations.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocation::toCredit),
+                        recipes = input.recipes.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocationRecipe::toCredit),
+                        zone = zone,
+                        startDateInclusive = startDateInclusive,
+                        endDateExclusive = endDateExclusive,
+                        allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                    )
+                }
         }
     }
 
@@ -407,21 +422,27 @@ class SessionRepository @Inject constructor(
                 TrainingTotalsInput(closedSessions, hostSessions, placements, allocations, recipes)
             },
             hiddenGamesRepository.hiddenAppIds,
-        ) { input, hidden ->
-            PlaytimeReadProjector.trainingTotalsBetween(
-                sessions = input.relevantSessions(hidden).map(Session::toCredit),
-                timedShares = input.placements.filterNot { it.appId in hidden }
-                    .map(TimedContributionPlacement::toCredit),
-                allocations = input.allocations.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocation::toCredit),
-                recipes = input.recipes.filterNot { it.appId in hidden }
-                    .map(UnknownTimeAllocationRecipe::toCredit),
-                zone = zone,
-                firstDateInclusive = firstDateInclusive,
-                lastDateInclusive = lastDateInclusive,
-            ).entries.sortedBy { it.key }.map { (date, minutes) ->
-                DatedPlayTotal(date, minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
-            }
+        ) { input, hidden -> input to hidden }
+            .flatMapLatest { (input, hidden) ->
+                val relevantSessions = input.relevantSessions(hidden)
+                observeTimedPlacementsForSessions(relevantSessions).map { allHostPlacements ->
+                    PlaytimeReadProjector.trainingTotalsBetween(
+                        sessions = relevantSessions.map(Session::toCredit),
+                        timedShares = input.placements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                        allocations = input.allocations.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocation::toCredit),
+                        recipes = input.recipes.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocationRecipe::toCredit),
+                        zone = zone,
+                        firstDateInclusive = firstDateInclusive,
+                        lastDateInclusive = lastDateInclusive,
+                        allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                    ).entries.sortedBy { it.key }.map { (date, minutes) ->
+                        DatedPlayTotal(date, minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                    }
+                }
         }
     }
 
@@ -515,6 +536,15 @@ class SessionRepository @Inject constructor(
                 .toList()
         }
 
+    private fun observeTimedPlacementsForSessions(
+        sessions: List<Session>,
+    ): Flow<List<TimedContributionPlacement>> {
+        val sessionIdChunks = sessions.map(Session::id).distinct().chunked(SESSION_ID_QUERY_CHUNK_SIZE)
+        if (sessionIdChunks.isEmpty()) return flowOf(emptyList())
+        val placementFlows = sessionIdChunks.map(sessionDao::observeActiveTimedPlacementsForSessions)
+        return combine(placementFlows) { chunks -> chunks.flatMap { it } }
+    }
+
     private fun Flow<Map<Long, Int>>.visibleKeys(): Flow<Map<Long, Int>> =
         combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
             if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
@@ -559,6 +589,8 @@ private class TrainingTotalsInput(
 
 /** One day of margin around a date window, so DST midnight edges cannot drop a session. */
 private const val DAY_MILLIS: Long = 24L * 60 * 60 * 1000
+/** Leaves headroom below SQLite's bind-parameter limit for Room's generated account subquery. */
+private const val SESSION_ID_QUERY_CHUNK_SIZE = 900
 
 private fun Session.toDomain() = PlaySession(
     id = id,

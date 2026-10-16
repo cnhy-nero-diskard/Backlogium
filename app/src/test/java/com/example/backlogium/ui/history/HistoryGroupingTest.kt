@@ -6,6 +6,8 @@ import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
 import com.example.backlogium.data.repo.ContributionState
 import com.example.backlogium.data.repo.SessionCloudContribution
+import com.example.backlogium.domain.PlaytimeActivity
+import com.example.backlogium.domain.SessionFundedShare
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -147,6 +149,75 @@ class HistoryGroupingTest {
 
         assertEquals(listOf("2026-07-25"), days.map { it.date })
         assertEquals(1, days.single().games.single().sessions.size)
+    }
+
+    @Test
+    fun frozenFundedShareStaysOnItsCreditDateWhileMixedSessionRemainderFollowsDeviceZone() {
+        val startAt = java.time.Instant.parse("2026-10-16T06:30:00Z").toEpochMilli()
+        val frozenDate = LocalDate.of(2026, 10, 16)
+        val session = session(81, appId = 10, startAt = startAt, minutes = 70)
+        val activity = PlaytimeActivity.TimestampedSession(
+            appId = 10,
+            id = 81,
+            startAt = startAt,
+            endAt = startAt + 70 * 60_000L,
+            minutes = 70,
+            open = false,
+            fundedShares = listOf(
+                SessionFundedShare(
+                    contributionId = "c1",
+                    minutes = 20,
+                    creditedDate = frozenDate,
+                    frozenZone = "Asia/Tokyo",
+                    goalAtCredit = true,
+                ),
+                SessionFundedShare(
+                    contributionId = "c2",
+                    minutes = 10,
+                    creditedDate = frozenDate.plusDays(1),
+                    frozenZone = "Asia/Tokyo",
+                    goalAtCredit = true,
+                ),
+            ),
+            fundedMinutes = 30,
+            unlinkedMinutes = 40,
+        )
+        val games = listOf(game(10, "Game", isGoal = false))
+
+        val losAngelesDays = groupHistory(
+            sessions = listOf(session),
+            sessionActivities = listOf(activity),
+            games = games,
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = ZoneId.of("America/Los_Angeles"),
+            windowStartDate = "2026-10-15",
+            windowEndDate = "2026-10-17",
+        )
+        assertEquals(listOf("2026-10-17", "2026-10-16", "2026-10-15"), losAngelesDays.map { it.date })
+        assertEquals(40, losAngelesDays.single { it.date == "2026-10-15" }.minutesPlayed)
+        assertEquals(20, losAngelesDays.single { it.date == "2026-10-16" }.minutesPlayed)
+        assertEquals(10, losAngelesDays.single { it.date == "2026-10-17" }.minutesPlayed)
+        assertEquals(20, losAngelesDays.single { it.date == "2026-10-16" }.goalMinutesPlayed)
+        losAngelesDays.forEach { day ->
+            assertEquals(day.minutesPlayed, day.games.sumOf { game ->
+                game.sessions.sumOf { it.minutes } + game.timedShares.sumOf { it.minutes } +
+                    game.allocations.sumOf { it.minutes }
+            })
+        }
+
+        val tokyoDays = groupHistory(
+            sessions = listOf(session),
+            sessionActivities = listOf(activity),
+            games = games,
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = ZoneId.of("Asia/Tokyo"),
+            windowStartDate = "2026-10-15",
+            windowEndDate = "2026-10-17",
+        )
+        assertEquals(60, tokyoDays.single { it.date == "2026-10-16" }.minutesPlayed)
+        assertEquals(20, tokyoDays.single { it.date == "2026-10-16" }.games.single().timedShares.sumOf { it.minutes })
     }
 
     @Test

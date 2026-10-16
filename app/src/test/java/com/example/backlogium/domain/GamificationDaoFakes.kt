@@ -121,8 +121,10 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
         flowOf(emptyList())
     override fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>> =
         flowOf(emptyList())
+    override fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
     override fun observeEarliestDatedAllocationDate(): Flow<String?> = flowOf(null)
-    override fun observeEarliestDetachedShareDate(): Flow<String?> = flowOf(null)
+    override fun observeEarliestTimedShareDate(): Flow<String?> = flowOf(null)
 }
 
 /**

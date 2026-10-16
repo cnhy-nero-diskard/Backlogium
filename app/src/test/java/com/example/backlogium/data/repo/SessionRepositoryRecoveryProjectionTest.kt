@@ -15,6 +15,7 @@ import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
+import com.example.backlogium.domain.DatedPlayTotal
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
@@ -29,6 +30,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.time.LocalDate
+import java.time.Instant
 import java.time.ZoneId
 
 /**
@@ -236,6 +238,85 @@ class SessionRepositoryRecoveryProjectionTest {
         )
     }
 
+    @Test
+    fun adjacentWindowsConserveMixedSessionAcrossFrozenShareDatesAfterZoneChange() = runTest {
+        val hostStart = Instant.parse("2026-10-16T06:30:00Z").toEpochMilli()
+        val hostId = db.sessionDao().insert(
+            Session(
+                appId = 81L,
+                startAt = hostStart,
+                endAt = hostStart + 70 * 60_000L,
+                minutes = 70,
+                open = false,
+            ),
+        )
+        val firstFrozenDate = LocalDate.of(2026, 10, 16)
+        val secondFrozenDate = firstFrozenDate.plusDays(1)
+        db.playtimeRecoveryDao().insertContribution(contribution("c-adjacent", 81L, 30))
+        db.playtimeRecoveryDao().insertTimedPlacements(
+            listOf(
+                timed("t-adjacent-1", "c-adjacent", 81L, hostId, 20, firstFrozenDate, "Asia/Tokyo"),
+                timed("t-adjacent-2", "c-adjacent", 81L, hostId, 10, secondFrozenDate, "Asia/Tokyo"),
+            ),
+        )
+
+        // The session starts on Oct 15 in Los Angeles, while its funded shares keep their
+        // Oct 16/17 Tokyo dates. Each one-day read must subtract both shares before exposing the
+        // Oct 15 legacy remainder, even when neither/barely one of those shares is in its slice.
+        val losAngeles = ZoneId.of("America/Los_Angeles")
+        val hostDate = LocalDate.of(2026, 10, 15)
+        val dayTotals = (0L..2L).map { offset ->
+            val date = hostDate.plusDays(offset)
+            date to sessions.datedCreditedTotalsBetween(losAngeles, date, date.plusDays(1))
+                .first().sumOf { it.minutes }
+        }.toMap()
+        assertEquals(mapOf(hostDate to 40L, firstFrozenDate to 20L, secondFrozenDate to 10L), dayTotals)
+        assertEquals(70L, dayTotals.values.sum())
+
+        val hostDayActivity = sessions.activityBetween(losAngeles, hostDate, hostDate.plusDays(1))
+            .first().filterIsInstance<PlaytimeActivity.TimestampedSession>().single()
+        assertEquals(30L, hostDayActivity.fundedMinutes)
+        assertEquals(40L, hostDayActivity.unlinkedMinutes)
+        assertEquals(listOf(firstFrozenDate, secondFrozenDate),
+            hostDayActivity.fundedShares.map { it.creditedDate })
+
+        val shareDayActivity = sessions.activityBetween(
+            losAngeles, firstFrozenDate, firstFrozenDate.plusDays(1),
+        ).first().filterIsInstance<PlaytimeActivity.TimestampedSession>().single()
+        assertEquals(40L, shareDayActivity.unlinkedMinutes)
+        assertEquals(30L, shareDayActivity.fundedMinutes)
+
+        assertEquals(
+            listOf(DatedPlayTotal(hostDate, 40)),
+            sessions.closedTrainingTotalsBetween(losAngeles, hostDate, hostDate).first(),
+        )
+        assertEquals(
+            listOf(DatedPlayTotal(hostDate, 40), DatedPlayTotal(firstFrozenDate, 20)),
+            sessions.closedTrainingTotalsBetween(losAngeles, hostDate, firstFrozenDate).first(),
+        )
+    }
+
+    @Test
+    fun earliestCanonicalDateIncludesHostedShareDateBeforeCurrentZoneHostDate() = runTest {
+        val hostStart = Instant.parse("2026-10-16T06:30:00Z").toEpochMilli()
+        val hostId = db.sessionDao().insert(
+            Session(
+                appId = 82L,
+                startAt = hostStart,
+                endAt = hostStart + 40 * 60_000L,
+                minutes = 40,
+                open = false,
+            ),
+        )
+        val frozenDate = LocalDate.of(2026, 10, 15)
+        db.playtimeRecoveryDao().insertContribution(contribution("c-old-share", 82L, 10))
+        db.playtimeRecoveryDao().insertTimedPlacements(
+            listOf(timed("t-old-share", "c-old-share", 82L, hostId, 10, frozenDate)),
+        )
+
+        assertEquals(frozenDate, sessions.earliestCanonicalActivityDate.first())
+    }
+
     /** Keeps the dated-total projection reachable without bloating the test body. */
     private object PlaytimeReadProjectorVia {
         suspend fun datedTotals(
@@ -364,11 +445,11 @@ class SessionRepositoryRecoveryProjectionTest {
 
     private fun timed(
         placementId: String, contributionId: String, appId: Long, sessionId: Long?,
-        minutes: Long, date: LocalDate,
+        minutes: Long, date: LocalDate, zone: String = "UTC",
     ) = TimedContributionPlacement(
         placementId = placementId, contributionId = contributionId, account = account, appId = appId,
         revision = 1L, sessionId = sessionId, minutes = minutes, creditedDate = date.toString(),
-        zone = "UTC", evidenceQuality = RecoveryEvidenceQuality.ESTIMATE, createdAt = 0L,
+        zone = zone, evidenceQuality = RecoveryEvidenceQuality.ESTIMATE, createdAt = 0L,
     )
 
     private fun allocation(

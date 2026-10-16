@@ -147,8 +147,10 @@ object PlaytimeReadProjector {
         zone: ZoneId,
         startDateInclusive: LocalDate,
         endDateExclusive: LocalDate,
+        allTimedSharesForRemainder: List<TimedShareCredit> = timedShares,
     ): List<PlaytimeActivity.TimestampedSession> {
-        val sharesBySession = validatedSharesBySession(sessions, timedShares)
+        val completeShares = completeTimedShares(timedShares, allTimedSharesForRemainder)
+        val sharesBySession = validatedSharesBySession(sessions, completeShares)
         return sessions.asSequence()
             .map { session ->
                 val shares = sharesBySession[session.id].orEmpty()
@@ -164,10 +166,15 @@ object PlaytimeReadProjector {
                     minutes = session.minutes,
                     open = session.open,
                     fundedShares = shares.map {
+                        val creditedDate = requireNotNull(it.creditedDate) {
+                            "funded share ${it.contributionId} has no frozen credited date"
+                        }
                         SessionFundedShare(
                             contributionId = it.contributionId,
                             minutes = it.minutes,
-                            creditedDate = it.creditedDate,
+                            creditedDate = creditedDate,
+                            frozenZone = it.frozenZone,
+                            goalAtCredit = it.goalAtCredit,
                         )
                     },
                     fundedMinutes = funded,
@@ -176,7 +183,12 @@ object PlaytimeReadProjector {
             }
             .filter { activity ->
                 val date = sessionDate(activity.startAt, zone)
-                date >= startDateInclusive && date < endDateExclusive
+                (date >= startDateInclusive && date < endDateExclusive) ||
+                    timedShares.any { share ->
+                        share.sessionId == activity.id && share.creditedDate?.let {
+                            it >= startDateInclusive && it < endDateExclusive
+                        } == true
+                    }
             }
             .toList()
     }
@@ -307,10 +319,18 @@ object PlaytimeReadProjector {
         zone: ZoneId,
         startDateInclusive: LocalDate,
         endDateExclusive: LocalDate,
+        allTimedSharesForRemainder: List<TimedShareCredit> = timedShares,
     ): List<PlaytimeActivity> {
         val recipeTotals = recipes.filterNot { it.pending }.associate { it.contributionId to it.residualTotalMinutes }
         val activities = mutableListOf<PlaytimeActivity>()
-        activities += sessionActivities(sessions, timedShares, zone, startDateInclusive, endDateExclusive)
+        activities += sessionActivities(
+            sessions = sessions,
+            timedShares = timedShares,
+            zone = zone,
+            startDateInclusive = startDateInclusive,
+            endDateExclusive = endDateExclusive,
+            allTimedSharesForRemainder = allTimedSharesForRemainder,
+        )
         activities += allocationActivities(allocations, recipeTotals)
             .filter { it.date >= startDateInclusive && it.date < endDateExclusive }
         activities += detachedTimedActivities(timedShares)
@@ -359,6 +379,7 @@ object PlaytimeReadProjector {
         zone: ZoneId,
         startDateInclusive: LocalDate,
         endDateExclusive: LocalDate,
+        allTimedSharesForRemainder: List<TimedShareCredit> = timedShares,
     ): List<DatedCreditedTotal> {
         val minutesByDate = sortedMapOf<LocalDate, MutableMap<Long, Long>>()
         fun add(date: LocalDate, appId: Long, minutes: Long) {
@@ -368,7 +389,10 @@ object PlaytimeReadProjector {
         }
 
         // 1) Unlinked legacy remainder follows the session's own start-date attribution.
-        val sharesBySession = validatedSharesBySession(sessions, timedShares)
+        val sharesBySession = validatedSharesBySession(
+            sessions,
+            completeTimedShares(timedShares, allTimedSharesForRemainder),
+        )
         for (session in sessions) {
             val funded = sharesBySession[session.id]?.sumOf { it.minutes } ?: 0L
             require(funded <= session.minutes.toLong()) {
@@ -407,8 +431,8 @@ object PlaytimeReadProjector {
      *
      * The inputs are already window-scoped (bounded reads): sessions are the closed window
      * sessions plus the host sessions of the window's shares. A funded share frozen more than the
-     * lookback before its host session's date would not be present in the share slice and would
-     * only reduce the host's remainder; that boundary case is out of the bounded scope.
+     * lookback before its host session's date is loaded for the host rows too, so it still reduces
+     * the session's remainder without being credited outside the requested date slice.
      */
     fun trainingTotalsBetween(
         sessions: List<SessionCredit>,
@@ -418,9 +442,13 @@ object PlaytimeReadProjector {
         zone: ZoneId,
         firstDateInclusive: LocalDate,
         lastDateInclusive: LocalDate,
+        allTimedSharesForRemainder: List<TimedShareCredit> = timedShares,
     ): Map<LocalDate, Long> {
         val closedById = sessions.filterNot { it.open }.associateBy { it.id }
-        val fundedBySession = mutableMapOf<Long, Long>()
+        val completeSharesBySession = validatedSharesBySession(
+            sessions,
+            completeTimedShares(timedShares, allTimedSharesForRemainder),
+        )
         val perDate = mutableMapOf<LocalDate, Long>()
         fun add(date: LocalDate, minutes: Long, retainObservedZero: Boolean = false) {
             if (minutes < 0 || date < firstDateInclusive || date > lastDateInclusive) return
@@ -442,7 +470,6 @@ object PlaytimeReadProjector {
                             "hosting session $sessionId appId=${host.appId}",
                     )
                 }
-                fundedBySession.merge(sessionId, share.minutes, ::checkedAdd)
             }
             val frozenDate = requireNotNull(share.creditedDate) {
                 "funded share ${share.contributionId} has no frozen credited date"
@@ -451,7 +478,7 @@ object PlaytimeReadProjector {
         }
         for (session in sessions) {
             if (session.open) continue
-            val funded = fundedBySession[session.id] ?: 0L
+            val funded = completeSharesBySession[session.id]?.sumOf { it.minutes } ?: 0L
             require(funded <= session.minutes.toLong()) {
                 "overfunded session ${session.id}: $funded funded share(s) exceed its ${session.minutes} minutes"
             }
@@ -471,7 +498,7 @@ object PlaytimeReadProjector {
 
     /**
      * Earliest canonical dated activity: the first session start date, first *positive* dated
-     * allocation, first frozen detached-share date, or first positive recipe-derived date —
+     * allocation, first frozen timed-share date, or first positive recipe-derived date —
      * whichever came first. Excluded/zero rows never anchor history, and a recipe whose early
      * dates are fully resolved does not drag the anchor backwards.
      */
@@ -487,9 +514,7 @@ object PlaytimeReadProjector {
             allocations.forEach {
                 if (!it.pendingDate && it.date != null) add(it.date)
             }
-            timedShares.forEach {
-                if (it.sessionId == null && it.creditedDate != null) add(it.creditedDate)
-            }
+            timedShares.forEach { it.creditedDate?.let(::add) }
             recipes.forEach { recipe -> recipeEarliestPositiveDate(recipe)?.let(::add) }
         }
         return dates.minOrNull()
@@ -636,6 +661,13 @@ object PlaytimeReadProjector {
         }
         return result
     }
+
+    /** Merge the dated slice with the complete host-session shares, without duplicate placement ids. */
+    private fun completeTimedShares(
+        datedShares: List<TimedShareCredit>,
+        allSharesForRemainder: List<TimedShareCredit>,
+    ): List<TimedShareCredit> = (allSharesForRemainder + datedShares)
+        .distinctBy(TimedShareCredit::placementId)
 
     private fun recipeEarliestPositiveDate(recipe: RecipeCredit): LocalDate? {
         if (recipe.pending) return null

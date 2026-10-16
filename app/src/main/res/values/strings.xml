@@ -617,13 +617,14 @@
     <string name="history_game_accessibility">%1$s, %2$s played</string>
     <string name="history_session">%1$s - %2$s played</string>
     <string name="history_session_live">%1$s - %2$s played - live</string>
+    <string name="history_timed_share">%1$s from a timestamped session</string>
     <string name="history_overflow_count">+%1$s</string>
     <string name="history_allocation_leaf">%1$s · exact session times unavailable</string>
     <string name="history_allocation_accessibility">%1$s of estimated playtime, exact session times unavailable</string>
     <string name="history_recovery_status_unavailable">Steam playtime is unavailable right now. Recovery keeps your last-known totals and continues when Steam publishes an updated total.</string>
     <string name="history_recovery_status_awaiting">Play was observed, but Steam has not published an updated total yet. Recovered minutes are added as soon as Steam reports them.</string>
     <string name="history_recovery_status_unchanged">Steam reported its playtime successfully and the total has not changed, so no play is known to be waiting for recovery.</string>
-    <string name="history_recovery_status_pending">%1$s of recovered play could not be assigned to a date yet. It stays credited to this library and is placed the next time a valid observation window is available.</string>
+    <string name="history_recovery_status_pending">%1$s of recovered play could not be assigned to a date yet. It stays credited to this library but is excluded from date-based totals until a defensible date can be established.</string>
     <string name="recovery_explanation_title">Estimated playtime</string>
     <string name="recovery_explanation_indicator_label">Estimated</string>
     <string name="recovery_explanation_button">Estimated playtime — show explanation</string>

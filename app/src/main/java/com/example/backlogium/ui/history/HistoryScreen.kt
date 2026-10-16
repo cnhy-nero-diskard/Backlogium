@@ -758,6 +758,9 @@ private fun DayGamesBlock(
                                 reveal?.takeIf { it.date == date && it.appId == game.appId && it.sessionId == session.id },
                                 onRevealHandled)
                         }
+                        game.timedShares.forEach { share ->
+                            HistoryTimedShareRow(share)
+                        }
                         game.allocations.forEach { allocation ->
                             HistoryAllocationRow(allocation)
                         }
@@ -766,6 +769,20 @@ private fun DayGamesBlock(
             }
         }
     }
+}
+
+/** A frozen-date funded part of a real session, separated from the host row's unlinked remainder. */
+@Composable
+private fun HistoryTimedShareRow(share: HistoryTimedShareUi) {
+    Text(
+        text = stringResource(
+            R.string.history_timed_share,
+            UiFormat.localizedMinutes(share.minutes),
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)

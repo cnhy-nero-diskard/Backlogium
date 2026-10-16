@@ -13,9 +13,11 @@ import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.domain.CreditedAllocation
 import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.PlaytimeRecoveryStatus
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.PlaytimeReadProjector.toCreditedAllocation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -79,7 +81,7 @@ data class HistoryReveal(val date: String, val appId: Long, val sessionId: Long)
 /** One windowed snapshot feeding History: sessions, allocations, paging anchor and recovery. */
 private data class HistoryWindowedInputs(
     val sessions: List<PlaySession>,
-    val allocations: List<CreditedAllocation>,
+    val activities: List<PlaytimeActivity>,
     val earliestCanonicalDate: String?,
     val pendingMinutes: Int,
     val domainStatus: PlaytimeRecoveryStatus,
@@ -123,12 +125,15 @@ class HistoryViewModel @Inject constructor(
         .flatMapLatest { (window, today) ->
             val cutoff = historyWindowCutoffMillis(window, today, time.zone())
             val windowStartDate = today.minusDays((window - 1).toLong()).toString()
+            val windowEndExclusive = today.plusDays(1)
+            val windowEndMillis = windowEndExclusive.atStartOfDay(time.zone()).toInstant().toEpochMilli()
             combine(
                 combine(
-                    sessionRepository.sessionsSince(cutoff),
-                    sessionRepository.datedAllocationsBetween(
-                        startInclusiveDate = LocalDate.parse(windowStartDate),
-                        endInclusiveDate = today,
+                    sessionRepository.sessionsBetween(cutoff, windowEndMillis),
+                    sessionRepository.activityBetween(
+                        zone = time.zone(),
+                        startDateInclusive = LocalDate.parse(windowStartDate),
+                        endDateExclusive = windowEndExclusive,
                     ),
                     sessionRepository.earliestCanonicalActivityDate,
                     combine(
@@ -137,10 +142,10 @@ class HistoryViewModel @Inject constructor(
                     ) { pending, status ->
                         pending to status
                     },
-                ) { sessions, allocations, earliestCanonicalDate, recovery ->
+                ) { sessions, activities, earliestCanonicalDate, recovery ->
                     HistoryWindowedInputs(
                         sessions = sessions,
-                        allocations = allocations,
+                        activities = activities,
                         earliestCanonicalDate = earliestCanonicalDate?.toString(),
                         pendingMinutes = recovery.first,
                         domainStatus = recovery.second,
@@ -156,11 +161,15 @@ class HistoryViewModel @Inject constructor(
                     configured = credState is CredentialsState.Configured,
                     days = groupHistory(
                         sessions = windowed.sessions,
+                        sessionActivities = windowed.activities
+                            .filterIsInstance<PlaytimeActivity.TimestampedSession>(),
                         games = games,
                         dailyProgress = dailyProgress,
                         achievementUnlocks = achievements,
                         zone = time.zone(),
-                        allocations = windowed.allocations.map(CreditedAllocation::toHistoryAllocationUi),
+                        allocations = windowed.activities
+                            .filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                            .map { it.toCreditedAllocation().toHistoryAllocationUi() },
                         windowStartDate = windowStartDate,
                         windowEndDate = today.toString(),
                     ),

@@ -581,7 +581,7 @@ class CollectionViewModelTest {
             "observeHostSessionsForDates",
             -> flowOf(emptyList<Any>())
             "observeEarliestDatedAllocationDate",
-            "observeEarliestDetachedShareDate",
+            "observeEarliestTimedShareDate",
             -> flowOf(null)
             else -> null
         }

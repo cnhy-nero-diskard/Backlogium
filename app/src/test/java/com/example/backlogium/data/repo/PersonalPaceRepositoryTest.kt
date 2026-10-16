@@ -95,6 +95,7 @@ class PersonalPaceRepositoryTest {
                 }
                 "observeAllOpenSessions" -> flowOf(sessions.filter { it.open })
                 "observeHostSessionsForDates" -> flowOf(sessions)
+                "observeActiveTimedPlacementsForSessions" -> flowOf(emptyList<Any>())
                 "observeEarliestSessionStart", "observeEarliestVisibleSessionStart" -> flowOf(null)
                 "observeTrackedMinutesByGame", "observeSessionCountsByGame",
                 "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame",
@@ -104,7 +105,7 @@ class PersonalPaceRepositoryTest {
                 "observeDatedAllocationsBetween", "observeTimedPlacementsByDate",
                 "observeHostSessionsForDates" ->
                     flowOf(emptyList<Any>())
-                "observeEarliestDatedAllocationDate", "observeEarliestDetachedShareDate" ->
+                "observeEarliestDatedAllocationDate", "observeEarliestTimedShareDate" ->
                     flowOf(null)
                 "toString" -> "SessionDao test double"
                 "hashCode" -> 0

@@ -85,6 +85,10 @@ data class SessionFundedShare(
     val minutes: Long,
     /** Frozen attribution date of this share; may differ from the session's own start date. */
     val creditedDate: LocalDate?,
+    /** Frozen zone used for the credited date. */
+    val frozenZone: String? = null,
+    /** Credit-time Focus eligibility; null is reserved for legacy/test projections. */
+    val goalAtCredit: Boolean? = null,
 )
 
 /**

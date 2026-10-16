@@ -295,6 +295,10 @@ object PlaytimeRecoveryCommitMapper {
         context: RecoveryCommitContext,
     ): Pair<List<UnknownTimeAllocation>, UnknownTimeAllocationRecipe?> {
         val zone = frozenZone(contribution, plan)
+        val retainedContext = context.copy(
+            windowStartAt = contribution.windowStartAt,
+            windowEndAt = contribution.windowEndAt,
+        )
         if (plan.pending != null) {
             val pendingRow = UnknownTimeAllocation(
                 placementId = PlaytimeRecoveryIdentity.allocationPlacementId(
@@ -308,18 +312,18 @@ object PlaytimeRecoveryCommitMapper {
                 minutes = plan.pending.minutes.toLong(),
                 method = RecoveryAllocationMethods.PENDING_DATE_UNKNOWN,
                 zone = zone.toString(),
-                windowStartAt = context.windowStartAt,
-                windowEndAt = context.windowEndAt,
+                windowStartAt = retainedContext.windowStartAt,
+                windowEndAt = retainedContext.windowEndAt,
                 pendingDate = true,
-                hiddenAtCredit = context.hiddenAtCredit,
-                goalAtCredit = context.goalAtCredit,
-                createdAt = context.now,
+                hiddenAtCredit = retainedContext.hiddenAtCredit,
+                goalAtCredit = retainedContext.goalAtCredit,
+                createdAt = retainedContext.now,
             )
             return listOf(pendingRow) to null
         }
 
         val residual = plan.residual ?: return emptyList<UnknownTimeAllocation>() to null
-        val recipe = recipeRow(plan, contribution, revision, context, residual, zone)
+        val recipe = recipeRow(plan, contribution, revision, retainedContext, residual, zone)
         if (residual.windowDateCount > INLINE_MAX_DATES) {
             return emptyList<UnknownTimeAllocation>() to recipe
         }
@@ -336,11 +340,11 @@ object PlaytimeRecoveryCommitMapper {
                 minutes = allocation.minutes.toLong(),
                 method = methodString(allocation.method),
                 zone = zone.toString(),
-                windowStartAt = context.windowStartAt,
-                windowEndAt = context.windowEndAt,
-                hiddenAtCredit = context.hiddenAtCredit,
-                goalAtCredit = context.goalAtCredit,
-                createdAt = context.now,
+                windowStartAt = retainedContext.windowStartAt,
+                windowEndAt = retainedContext.windowEndAt,
+                hiddenAtCredit = retainedContext.hiddenAtCredit,
+                goalAtCredit = retainedContext.goalAtCredit,
+                createdAt = retainedContext.now,
             )
         }
         return rows to recipe
