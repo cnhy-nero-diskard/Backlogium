@@ -39,12 +39,13 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -838,10 +839,7 @@ class WriteIntegrityDaoTest {
         // both read "no open session" before either commits. Neither this test nor the code it
         // exercises takes SteamSyncCoordinator — the guarantee must hold without it (spec
         // scenario "Correctness does not rest on a process lock").
-        coroutineScope {
-            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
-            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
-        }
+        recordOverlappingPresenceObservations()
 
         val sessions = database.sessionDao().getAll()
         assertEquals(1, sessions.size)
@@ -856,10 +854,10 @@ class WriteIntegrityDaoTest {
         // The coordinator is busy for the whole scenario, as a worker holding it across a
         // library-scale run would leave it — proving the presence path's correctness does not
         // rest on ever acquiring it, per design.md Decision 1.
-        coroutineScope {
-            launch { coordinator.withLock { delay(50) } }
-            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
-            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
+        withTimeout(10_000L) {
+            coordinator.withLock {
+                recordOverlappingPresenceObservations()
+            }
         }
 
         val sessions = database.sessionDao().getAll()
@@ -960,12 +958,34 @@ class WriteIntegrityDaoTest {
         time = FixedTimeProvider,
     )
 
+    private suspend fun recordOverlappingPresenceObservations() = withTimeout(10_000L) {
+        val firstRead = CompletableDeferred<Unit>()
+        val secondRead = CompletableDeferred<Unit>()
+        // Both observations must read before either writes. Otherwise the earlier timestamp can
+        // see the later session and correctly close it as a backwards-clock observation.
+        launch {
+            recordPresenceObservation(appId = 730L, at = 1_000L) {
+                firstRead.complete(Unit)
+                secondRead.await()
+            }
+        }
+        launch {
+            recordPresenceObservation(appId = 730L, at = 1_030L) {
+                secondRead.complete(Unit)
+                firstRead.await()
+            }
+        }
+    }
+
     /**
-     * Mirrors PresenceSessionRecorder's read-derive-write boundary (`:69`, `:87`) for one
-     * observation of a single already-known shared game, without the admission/recompute
-     * machinery the single-open-session guarantee does not depend on.
+     * Mirrors PresenceSessionRecorder's read-derive-write boundary for one observation of a
+     * known shared game, without admission/recompute machinery. [afterRead] controls overlap.
      */
-    private suspend fun recordPresenceObservation(appId: Long, at: Long) {
+    private suspend fun recordPresenceObservation(
+        appId: Long,
+        at: Long,
+        afterRead: suspend () -> Unit = {},
+    ) {
         val open = database.sessionDao().getAllOpenSessions()
             .firstOrNull { it.appId == appId }
             ?.let {
@@ -976,6 +996,7 @@ class WriteIntegrityDaoTest {
                     lastObservedAt = it.endAt ?: it.startAt,
                 )
             }
+        afterRead()
         val result = PresenceSessionDeriver().derive(
             observation = PresenceSessionDeriver.Observation(appId, at),
             openSession = open,
