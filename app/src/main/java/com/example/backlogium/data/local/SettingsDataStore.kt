@@ -1,7 +1,9 @@
 package com.example.backlogium.data.local
 
 import android.content.Context
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -9,13 +11,14 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.preferencesDataStoreFile
 import com.example.backlogium.domain.GameListDensity
 import com.example.backlogium.domain.LibrarySortKey
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.SmartCollectionVisibility
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortPrefs
+import com.example.backlogium.domain.PendingLevelUp
 import com.example.backlogium.domain.PendingStreakBreak
 import com.example.backlogium.domain.PendingTransition
 import com.example.backlogium.domain.ProgressMarks
@@ -40,6 +43,10 @@ import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.LocalDate
+import java.util.LinkedHashSet
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -49,7 +56,29 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.dataStore by preferencesDataStore(name = "settings")
+// The app uses one stable settings file, but Robolectric switches data directories between tests
+// within a worker. Keep one live store per backing file: cancelling the previous scope on a path
+// change can abort a DataStore read or write that is still active in another test.
+private object SettingsDataStoreInstance {
+    private val stores = mutableMapOf<String, DataStore<Preferences>>()
+
+    fun get(context: Context): DataStore<Preferences> {
+        val appContext = context.applicationContext
+        val file = appContext.preferencesDataStoreFile("settings")
+        val path = file.canonicalPath
+
+        return synchronized(this) {
+            stores.getOrPut(path) {
+                val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                PreferenceDataStoreFactory.create(scope = scope) { file }
+            }
+        }
+    }
+}
+
+private val Context.dataStore: DataStore<Preferences>
+    get() = SettingsDataStoreInstance.get(this)
+
 private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
 
 /**
@@ -180,6 +209,14 @@ class SettingsDataStore @Inject constructor(
         // than re-derived because a stored `questMet` row is not evidence a quest was ever earned.
         val PENDING_QUEST_DATES = stringSetPreferencesKey("pending_quest_dates")
 
+        // Explicit earned obligations from the recover-missed-playtime staged protocol: a corrective
+        // reseed preserves them (and advances the acknowledgement high-water marks) so an already
+        // owed level-up or milestone survives recovery instead of being consumed or duplicated.
+        // Each level-up transition is encoded as "from:to"; a set keeps independent transitions
+        // independently deliverable.
+        val PENDING_LEVEL_UPS = stringSetPreferencesKey("pending_level_ups")
+        val PENDING_STREAK_MILESTONES = stringSetPreferencesKey("pending_streak_milestones")
+
         // Write-ahead record of an in-flight persist() call, written before its Room write and
         // cleared after its marks are finalized. Presence of PENDING_TRANSITION_SOURCE is what
         // marks recovery needs to resolve after a crash between the two.
@@ -188,6 +225,10 @@ class SettingsDataStore @Inject constructor(
         val PENDING_TRANSITION_STREAK = intPreferencesKey("pending_transition_streak")
         val PENDING_TRANSITION_QUEST_MET = booleanPreferencesKey("pending_transition_quest_met")
         val PENDING_TRANSITION_DATE = stringPreferencesKey("pending_transition_date")
+        // The recovery operation whose staged persist wrote this WAL record, when any (task 5.6):
+        // lets a resume/recovery pass attribute the in-flight transition to its journal instead of
+        // treating it as an unrelated sync's.
+        val PENDING_TRANSITION_OPERATION_ID = stringPreferencesKey("pending_transition_operation_id")
     }
 
     val ruleConfigWithVersionFlow: Flow<VersionedRuleConfig> = context.dataStore.data.map { prefs ->
@@ -278,8 +319,34 @@ class SettingsDataStore @Inject constructor(
             pendingStreakBreak = pendingBreak,
             pendingTransition = parsePendingTransition(prefs),
             pendingQuestDates = parsePendingQuestDates(prefs),
+            pendingLevelUps = parsePendingLevelUps(prefs),
+            pendingStreakMilestones = parsePendingStreakMilestones(prefs),
         )
     }
+
+    /**
+     * A level-up obligation is the intact `from:to` pair. A torn or unparseable entry cannot be a
+     * real transition; it is dropped rather than inventing a half event.
+     */
+    private fun parsePendingLevelUps(prefs: Preferences): Set<PendingLevelUp> =
+        prefs[Keys.PENDING_LEVEL_UPS]
+            ?.mapNotNull { entry ->
+                val parts = entry.split(':')
+                val from = parts.getOrNull(0)?.toIntOrNull()
+                val to = parts.getOrNull(1)?.toIntOrNull()
+                if (from != null && to != null && from <= to) PendingLevelUp(from, to) else null
+            }
+            ?.sortedBy { it.from }
+            ?.toCollection(LinkedHashSet())
+            ?: emptySet()
+
+    /** Read back lowest-first so delivery order is a property of the stored value. */
+    private fun parsePendingStreakMilestones(prefs: Preferences): Set<Int> =
+        prefs[Keys.PENDING_STREAK_MILESTONES]
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.sorted()
+            ?.toCollection(LinkedHashSet())
+            ?: emptySet()
 
     /**
      * Read back oldest-first so delivery order is a property of the stored value rather than of the
@@ -316,6 +383,21 @@ class SettingsDataStore @Inject constructor(
                 marks.pendingQuestDates.map(LocalDate::toString).toSet()
         }
 
+        val levelUps = marks.pendingLevelUps
+        if (levelUps.isEmpty()) {
+            prefs.remove(Keys.PENDING_LEVEL_UPS)
+        } else {
+            prefs[Keys.PENDING_LEVEL_UPS] =
+                levelUps.map { "${it.from}:${it.to}" }.toSet()
+        }
+
+        if (marks.pendingStreakMilestones.isEmpty()) {
+            prefs.remove(Keys.PENDING_STREAK_MILESTONES)
+        } else {
+            prefs[Keys.PENDING_STREAK_MILESTONES] =
+                marks.pendingStreakMilestones.map(Int::toString).toSet()
+        }
+
         val pending = marks.pendingTransition
         if (pending == null) {
             prefs.remove(Keys.PENDING_TRANSITION_SOURCE)
@@ -323,12 +405,14 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.PENDING_TRANSITION_STREAK)
             prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
             prefs.remove(Keys.PENDING_TRANSITION_DATE)
+            prefs.remove(Keys.PENDING_TRANSITION_OPERATION_ID)
         } else {
             prefs[Keys.PENDING_TRANSITION_SOURCE] = pending.source.name
             prefs[Keys.PENDING_TRANSITION_LEVEL] = pending.previousLevel
             prefs[Keys.PENDING_TRANSITION_STREAK] = pending.previousStreak
             prefs[Keys.PENDING_TRANSITION_QUEST_MET] = pending.previousTodayQuestMet
             prefs[Keys.PENDING_TRANSITION_DATE] = pending.evaluationDate.toString()
+            writeNullableString(prefs, Keys.PENDING_TRANSITION_OPERATION_ID, pending.operationId)
         }
     }
 
@@ -344,6 +428,7 @@ class SettingsDataStore @Inject constructor(
             previousStreak = prefs[Keys.PENDING_TRANSITION_STREAK] ?: 0,
             previousTodayQuestMet = prefs[Keys.PENDING_TRANSITION_QUEST_MET] ?: false,
             evaluationDate = date,
+            operationId = prefs[Keys.PENDING_TRANSITION_OPERATION_ID],
         )
     }
 
@@ -1111,11 +1196,14 @@ class SettingsDataStore @Inject constructor(
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)
             prefs.remove(Keys.LAST_STREAK_BROKEN_DATE)
             prefs.remove(Keys.PENDING_QUEST_DATES)
+            prefs.remove(Keys.PENDING_LEVEL_UPS)
+            prefs.remove(Keys.PENDING_STREAK_MILESTONES)
             prefs.remove(Keys.PENDING_TRANSITION_SOURCE)
             prefs.remove(Keys.PENDING_TRANSITION_LEVEL)
             prefs.remove(Keys.PENDING_TRANSITION_STREAK)
             prefs.remove(Keys.PENDING_TRANSITION_QUEST_MET)
             prefs.remove(Keys.PENDING_TRANSITION_DATE)
+            prefs.remove(Keys.PENDING_TRANSITION_OPERATION_ID)
             prefs.remove(Keys.ACQUIRED_APP_IDS)
             prefs.remove(Keys.ACQUIRED_AT)
             prefs.remove(Keys.ACQUIRED_DISMISSED)

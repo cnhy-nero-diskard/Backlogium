@@ -18,6 +18,7 @@ import com.example.backlogium.gamification.XpState
 import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /** The only field a gamification recompute is allowed to change on a progress row. */
@@ -56,13 +57,15 @@ data class GamificationResult(
  * logic — only the I/O and the injected "today".
  *
  * Two distinct playtime inputs (kept separate, per design):
- * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked) plus any
- *   frozen `Game.backfillMinutes` from an opt-in Steam-history import, plus any family-shared
- *   game's own `Game.manualSharedMinutes` estimate (add-shared-game-playtime-and-filter) — the
- *   two are mutually exclusive per game (a game's source gates which one can ever be nonzero) —
- *   joined with each game's HowLongToBeat completionist length so the engine can taper XP per
- *   game. Because `gameXp` tapers over *cumulative* minutes, feeding `backfill + manual +
- *   tracked` as one total yields the correctly bounded XP with no engine change.
+ * - **XP** is fed per-game canonical credited minutes (tracked `Session.minutes` plus recovered
+ *   contribution quantity counted exactly once — recover-missed-playtime Decision 7, read through
+ *   `SessionDao.creditedMinutesByGame()`) plus any frozen `Game.backfillMinutes` from an opt-in
+ *   Steam-history import, plus any family-shared game's own `Game.manualSharedMinutes` estimate
+ *   (add-shared-game-playtime-and-filter) — the two are mutually exclusive per game (a game's
+ *   source gates which one can ever be nonzero) — joined with each game's HowLongToBeat
+ *   completionist length so the engine can taper XP per game. Because `gameXp` tapers over
+ *   *cumulative* minutes, feeding `backfill + manual + credited` as one total yields the correctly
+ *   bounded XP with no engine change.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
  *
@@ -112,6 +115,7 @@ class GamificationUpdater @Inject constructor(
         today: LocalDate,
         config: RuleConfig = RuleConfig(),
         hiddenAppIds: Set<Long>? = null,
+        excludeEarned: RecoveryEarnedInputs = RecoveryEarnedInputs(),
     ): GamificationResult {
         // A rule value stored before RuleField gained its ceilings bypasses Settings validation on
         // every background recompute — opening Settings is not required for a sync — so the raw
@@ -127,10 +131,33 @@ class GamificationUpdater @Inject constructor(
         val hidden = hiddenAppIds ?: hiddenGameDao.hiddenAppIds().toSet()
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
         // player opted in to importing Steam history) + a family-shared game's manual estimate
-        // (0 for an owned game) + tracked session minutes, tapered against that game's HLTB
-        // completionist average. Games with no HLTB row resolve to null -> flat fallback. The
-        // union covers backfilled/manually-estimated games with no tracked sessions.
-        val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        // (0 for an owned game) + canonical credited minutes (recover-missed-playtime Decision 7:
+        // funded recovery contributions count once, and each session contributes only its unlinked
+        // legacy remainder, so a recovered bucket is never double-counted), tapered against that
+        // game's HLTB completionist average. Games with no HLTB row resolve to null -> flat
+        // fallback. The union covers backfilled/manually-estimated games with no tracked sessions.
+        if (excludeEarned.contributions.isNotEmpty()) {
+            val activeContributions = sessionDao.observeActiveRecoveryContributions().first()
+                .associateBy { it.contributionId }
+            for (snapshot in excludeEarned.contributions) {
+                val current = activeContributions[snapshot.identity()]
+                    ?: error("fresh contribution ${snapshot.identity()} is no longer active")
+                require(
+                    current.appId == snapshot.appId &&
+                        current.baselineEpoch == snapshot.baselineEpoch &&
+                        current.fromMinutes == snapshot.fromMinutes &&
+                        current.toMinutes == snapshot.toMinutes &&
+                        current.revision == snapshot.revision &&
+                        current.authorizedMinutes == snapshot.authorizedMinutes,
+                ) { "fresh contribution snapshot no longer matches ${snapshot.identity()}" }
+            }
+        }
+        val allCreditedByGame = sessionDao.creditedMinutesByGame()
+            .associate { it.appId to it.minutes.toLong() }
+        // A mixed corrective pass subtracts only the exact fresh contribution ranges recorded in
+        // its journal. Existing/past credit for the same game remains in the baseline.
+        val trackedByGame = recoveryCorrectiveCreditedByGame(allCreditedByGame, excludeEarned)
+            .mapValues { (_, minutes) -> minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
         val allGames = gameDao.getAll()
         val backfillByGame = allGames.associate { it.appId to it.backfillMinutes }
         val manualByGame = allGames.associate { it.appId to it.manualSharedMinutes }
@@ -158,7 +185,11 @@ class GamificationUpdater @Inject constructor(
         // achievements are excluded here and would contribute 0 XP anyway.
         // Achievements of a hidden game are excluded for the same reason its minutes are: the
         // level has to be explicable from the library the player can see.
-        val achievements = achievementDao.getAllUnlocked().filterNot { it.appId in hidden }.map { row ->
+        val achievementExclusions = excludeEarned.achievementKeys
+        val achievements = achievementDao.getAllUnlocked()
+            .filterNot { it.appId in hidden }
+            .filterNot { RecoveryAchievementKey(it.appId, it.apiName) in achievementExclusions }
+            .map { row ->
             AchievementInput(
                 id = row.apiName,
                 unlocked = row.unlocked,
@@ -172,7 +203,8 @@ class GamificationUpdater @Inject constructor(
         // day that happened, and a bookkeeping preference expressed today does not unmake it. Going
         // forward, SteamSyncWorker keeps a hidden game out of daily attribution, so the divergence
         // does not grow (add-hidden-games design decision 3).
-        val days = dailyProgressDao.getAllOrdered()
+        val storedDays = dailyProgressDao.getAllOrdered()
+        val days = recoveryCorrectiveDailyProgress(storedDays, excludeEarned)
         val daysByDate = days.associateBy { LocalDate.parse(it.date) }
         val changedDays = mutableListOf<QuestStatusUpdate>()
         // The pure engine folds by list order, so the caller must make calendar order explicit. Do
@@ -245,9 +277,10 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long = 0L,
+        operationId: String? = null,
     ) {
         transitionCoordinator.withTransition {
-            persistWithinProtocol(result, source, configVersion)
+            persistWithinProtocol(result, source, configVersion, operationId)
         }
     }
 
@@ -265,6 +298,7 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long,
+        operationId: String?,
     ) {
         val today = result.evaluationDate
 
@@ -303,6 +337,7 @@ class GamificationUpdater @Inject constructor(
                         previousStreak = previousState.currentStreak,
                         previousTodayQuestMet = previousState.todayQuestMet,
                         evaluationDate = today,
+                        operationId = operationId,
                     ),
                 )
             }

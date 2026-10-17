@@ -2102,7 +2102,7 @@ unlocked-of-total count is shown in the least dense grid, the same distinction S
 
 ### Requirement: History screen
 The system SHALL provide a History screen presenting play history grouped by day, where each day
-expands into the games played that day and each game expands into its individual sessions. Each day
+expands into the games played that day and each game expands into its timestamped sessions and dated unknown-time allocations. Each day
 SHALL show its total played time, its goal-game time, and whether that day's quest was met. A
 session's start time SHALL be presented as approximate, and its tracked playtime SHALL be presented
 distinctly from that start time — never as a start–end range, since subtracting the two into a
@@ -2122,8 +2122,8 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Expanding a game within a day
 - **WHEN** the user expands a game within a day
-- **THEN** that game's individual sessions for that day are listed, each with its approximate start
-  time and its tracked playtime
+- **THEN** timestamped sessions show approximate start and tracked minutes, and unknown-time allocations show minutes with exact session times unavailable
+- **AND** allocations do not show fabricated clock times or in-progress session status
 
 #### Scenario: Today expanded by default
 - **WHEN** the History screen is opened
@@ -2139,7 +2139,7 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Day total matches its contents
 - **WHEN** a day is expanded
-- **THEN** the total shown on that day's header equals the sum of the sessions listed beneath it
+- **THEN** the total shown on that day's header equals the sum of the credited activity listed beneath it
 
 #### Scenario: Session spanning midnight
 - **WHEN** a session began on one day and ended on the next
@@ -2173,8 +2173,9 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 - **THEN** its header shows no achievement thumbnail row
 
 #### Scenario: Day with progress but no sessions
-- **WHEN** a day has recorded progress but no individual sessions
-- **THEN** its header is shown with its recorded state and offers nothing to expand
+- **WHEN** a day has recorded progress but no timestamped sessions
+- **THEN** the header is shown with its recorded state
+- **AND** it expands into known game allocations when those exist, otherwise offers no activity expansion
 
 #### Scenario: Quest state remains authoritative
 - **WHEN** a day's presented total differs from the stored per-day total that determined its quest
@@ -2186,7 +2187,7 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 - **THEN** the session is still listed under a fallback label rather than being omitted
 
 #### Scenario: No history yet
-- **WHEN** no sessions and no daily progress exist
+- **WHEN** no sessions, recovery activity or daily progress exist
 - **THEN** an empty state explains that history appears after playing and syncing
 
 ### Requirement: Circular game thumbnails in compact rows
@@ -2545,7 +2546,7 @@ a streak.
 
 ### Requirement: Surfaces agree on a session's date
 Every surface that presents play activity by date — history, daily progress, quest status,
-streaks, and analytics — SHALL use the same attribution rule, so that the same session is
+streaks, and analytics — SHALL use the same attribution rule for timestamped sessions and explicit frozen dates for unknown-time allocations, so that the same session is
 never shown under one date on one surface and counted toward another date elsewhere.
 
 #### Scenario: Midnight-crossing session in history and progress
@@ -2560,6 +2561,10 @@ never shown under one date on one surface and counted toward another date elsewh
 #### Scenario: Analytics agree
 - **WHEN** per-day totals are presented in analytics
 - **THEN** they reconcile with the dates history shows for the same sessions
+
+#### Scenario: Unknown-time activity agrees across surfaces
+- **WHEN** a recovery allocation contributes to a date's quest
+- **THEN** History, Analytics, game breakdowns and daily totals show those same minutes on that date
 
 ### Requirement: Committed actions are felt as well as seen
 Surfaces that commit a consequence SHALL accompany the outcome with the corresponding haptic
@@ -3599,3 +3604,36 @@ Match Center shortcut even when no attention badge is present.
 - **WHEN** a per-game Library action opens the reviewer
 - **THEN** that game's app ID is the initial review target, and resolving a different game does not
   falsely complete the scoped route
+
+### Requirement: Estimated activity is visible and accessible wherever dated totals are inspected
+Every positive multi-day estimated allocation SHALL carry a visible ! indicator in History activity, day summaries, Analytics calendar/chart inspection and relevant game breakdowns. Aggregates mixing timed and estimated play SHALL indicate that they contain estimates. Activating the indicator SHALL explain: "Estimated playtime - X minutes recovered from a cumulative Steam total between [dates] and distributed evenly. Exact session times are unavailable." The explanation SHALL distinguish the window's recovered residual total from the selected day's share, state its allocation zone when relevant, and remain available after restart and backup import. The symbol SHALL have an accessible label and activation target, and copy SHALL be localized with locale-aware dates and amounts. Single-day unknown-time activity SHALL also disclose its derivation and absent clock boundaries without claiming multi-day distribution.
+
+#### Scenario: Mixed day summary
+- **WHEN** a day contains timestamped sessions and estimated allocations
+- **THEN** its combined total and game breakdown reconcile and expose an accessible estimate explanation
+
+#### Scenario: Inspecting a chart day
+- **WHEN** a user selects an estimated date by touch or an accessible alternative
+- **THEN** the date's minutes, estimated share and explanation are available without precise chart touch
+
+#### Scenario: Single-day fallback
+- **WHEN** 70 minutes were recovered onto one date
+- **THEN** History describes unknown session times and does not show a fabricated start
+
+### Requirement: Unknown-time activity does not invent session metrics
+Analytics SHALL include dated recovery allocations in played-minute charts, comparative totals, day/game breakdowns and most-played games. It SHALL exclude unknown-time allocations from session counts, longest/average session duration, time-of-day buckets and related session-shape claims. Pending date-unknown quantity SHALL be disclosed separately from dated charts. If only unknown-time activity exists, session/time-of-day insights SHALL explain that session timing is unavailable rather than suggesting measured zeros.
+
+#### Scenario: Allocations-only period
+- **WHEN** a selected period contains 105 recovered minutes but no timestamped sessions
+- **THEN** it shows 105 played minutes and matching games while session and time-of-day insights state that timing is unavailable
+
+### Requirement: Recovery availability is described honestly
+When Steam data is unavailable or an expected increase has not yet appeared, the interface SHALL preserve last-good figures and communicate that recovery depends on Steam publishing an updated readable cumulative total. It SHALL not claim real-time detection of Offline/Invisible or PC-offline gameplay. A successful unchanged read without independent evidence of pending play SHALL not be described as a known recovery debt. Timing anomalies with credited but undated quantity SHALL be distinguishable from unavailable remote data.
+
+#### Scenario: Private library
+- **WHEN** the owned-game read is inaccessible
+- **THEN** the interface shows unavailable recovery status and retains the prior baseline and credited play
+
+#### Scenario: Unchanged total without observed play
+- **WHEN** a trustworthy total is unchanged and no independent observation indicates pending play
+- **THEN** the interface reports the successful reading without inventing pending minutes

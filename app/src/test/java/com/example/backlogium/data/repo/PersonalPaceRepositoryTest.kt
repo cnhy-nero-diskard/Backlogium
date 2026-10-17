@@ -93,10 +93,20 @@ class PersonalPaceRepositoryTest {
                     requestedCutoffs += cutoff
                     flowOf(sessions.filter { it.startAt >= cutoff })
                 }
+                "observeAllOpenSessions" -> flowOf(sessions.filter { it.open })
+                "observeHostSessionsForDates" -> flowOf(sessions)
+                "observeActiveTimedPlacementsForSessions" -> flowOf(emptyList<Any>())
                 "observeEarliestSessionStart", "observeEarliestVisibleSessionStart" -> flowOf(null)
                 "observeTrackedMinutesByGame", "observeSessionCountsByGame",
-                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame" ->
+                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame",
+                "observeSince", "observeActiveRecoveryAllocations",
+                "observeActiveRecoveryTimedPlacements", "observeActiveRecoveryRecipes",
+                "observeActiveRecoveryContributions",
+                "observeDatedAllocationsBetween", "observeTimedPlacementsByDate",
+                "observeHostSessionsForDates" ->
                     flowOf(emptyList<Any>())
+                "observeEarliestDatedAllocationDate", "observeEarliestTimedShareDate" ->
+                    flowOf(null)
                 "toString" -> "SessionDao test double"
                 "hashCode" -> 0
                 "equals" -> false
@@ -104,7 +114,7 @@ class PersonalPaceRepositoryTest {
             }
         } as SessionDao
         return PersonalPaceRepository(
-            sessionRepository = SessionRepository(sessionDao, fakeHiddenGamesRepository()),
+            sessionRepository = SessionRepository(sessionDao, fakeHiddenGamesRepository(), time = time),
             currentDate = CurrentDateProvider(time),
         )
     }
@@ -112,6 +122,7 @@ class PersonalPaceRepositoryTest {
     private fun session(date: LocalDate, minutes: Int): Session {
         val startAt = at(date, 12)
         return Session(
+            id = startAt,
             appId = 1L,
             startAt = startAt,
             endAt = startAt + 1,

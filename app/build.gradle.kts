@@ -216,3 +216,10 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+// The Robolectric suite runs thousands of tests in one Windows worker by default.
+// Periodically recycle it to bound accumulated test state, open handles, and heap use.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    maxHeapSize = "1g"
+    forkEvery = 100
+}

@@ -248,4 +248,139 @@ class ProgressEventRepositoryTest {
         assertEquals(concurrentWriters, finalMarks.lastCelebratedLevel)
         assertTrue(repository.pendingEvents.first().none { it is ProgressEvent.StreakBroken })
     }
+
+    // ------------------------------------------------ recover-missed-playtime 5.5/5.6 obligations
+
+    @Test
+    fun owedLevelUpIsDeliveredEvenWhenTheCorrectiveBaselineHasMovedPastIt() = runTest {
+        // A prior sync earned 4→7 and it was never acknowledged; a recovery recompute has since
+        // advanced the acknowledged baseline to 20 (corrective reseed) while the obligation stayed.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 20,
+                initialized = true,
+                pendingLevelUps = setOf(PendingLevelUp(4, 7)),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 20)),
+        )
+
+        assertEquals(
+            listOf(ProgressEvent.LevelUp(4, 7)),
+            repository.pendingEvents.first(),
+        )
+
+        repository.acknowledge(ProgressEvent.LevelUp(4, 7))
+
+        val finalMarks = marksStore.read()
+        assertTrue(finalMarks.pendingLevelUps.isEmpty())
+        assertEquals(20, finalMarks.lastCelebratedLevel)
+        assertTrue(repository.pendingEvents.first().isEmpty())
+    }
+
+    @Test
+    fun owedLevelUpNeverDoubleEmitsWithTheReconstructionPath() = runTest {
+        // Deeper than the plain delivery case: with the obligation present, the level high-water
+        // comparison must not *also* reconstruct a second LevelUp for the same rise.
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingLevelUps = setOf(PendingLevelUp(4, 7)),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 7)),
+        )
+
+        assertEquals(listOf(ProgressEvent.LevelUp(4, 7)), repository.pendingEvents.first())
+    }
+
+    @Test
+    fun independentOwedLevelUpsDeliverOldestFirstAndAcknowledgeOneAtATime() = runTest {
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingLevelUps = setOf(PendingLevelUp(7, 9), PendingLevelUp(4, 7)),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 4)),
+        )
+
+        val first = repository.pendingEvents.first().single()
+        assertEquals(ProgressEvent.LevelUp(4, 7), first)
+        repository.acknowledge(first)
+        assertEquals(setOf(PendingLevelUp(7, 9)), marksStore.read().pendingLevelUps)
+
+        val second = repository.pendingEvents.first().single()
+        assertEquals(ProgressEvent.LevelUp(7, 9), second)
+        repository.acknowledge(second)
+        assertTrue(marksStore.read().pendingLevelUps.isEmpty())
+        assertEquals(9, marksStore.read().lastCelebratedLevel)
+    }
+
+    @Test
+    fun owedMilestonesDeliverLowestFirstAndAcknowledgeOneAtATime() = runTest {
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingStreakMilestones = setOf(14, 7),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 4, currentStreak = 15)),
+        )
+
+        val first = repository.pendingEvents.first().single()
+        assertEquals(ProgressEvent.StreakMilestone(7), first)
+        repository.acknowledge(first)
+        assertEquals(setOf(14), marksStore.read().pendingStreakMilestones)
+
+        val second = repository.pendingEvents.first().single()
+        assertEquals(ProgressEvent.StreakMilestone(14), second)
+        repository.acknowledge(second)
+        assertEquals(emptySet<Int>(), marksStore.read().pendingStreakMilestones)
+        assertTrue(repository.pendingEvents.first().isEmpty())
+    }
+
+    @Test
+    fun acknowledgementHighWaterNeverRegressesForAnOwedLevelUp() = runTest {
+        val marksStore = InMemoryProgressMarksStore(
+            ProgressMarks(
+                lastCelebratedLevel = 4,
+                initialized = true,
+                pendingLevelUps = setOf(PendingLevelUp(4, 9)),
+            ),
+        )
+        val repository = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 9)),
+        )
+
+        repository.acknowledge(ProgressEvent.LevelUp(4, 9))
+        assertEquals(9, marksStore.read().lastCelebratedLevel)
+        assertTrue(marksStore.read().pendingLevelUps.isEmpty())
+
+        // A corrective reseed that lowers the derived level below the *acknowledged* mark must not
+        // make the already-delivered level look owed again.
+        val afterLowering = testRepository(
+            marksStore,
+            coordinator,
+            FakePlayerProfileDao(PlayerProfile(level = 3)),
+        )
+        assertTrue(afterLowering.pendingEvents.first().isEmpty())
+    }
 }

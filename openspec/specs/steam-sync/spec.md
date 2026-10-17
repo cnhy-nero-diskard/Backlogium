@@ -74,21 +74,14 @@ number of games owned and cannot approach the platform's background execution li
   subsequent syncs and to the deferred pass rather than fetched in one inline sweep
 
 ### Requirement: Session synthesis by playtime diffing
-The system SHALL synthesize play sessions by comparing each game's `playtime_forever`
-against the previously stored value, since the Steam Web API does not expose session
-or "currently playing" data. This mechanism SHALL apply only to games for which Steam reports
-playtime — those in the player's own library — so that a game whose sessions are derived from
-observed presence is never also diffed.
+The system SHALL derive owned-game credited play by comparing each game's cumulative Steam minutes with its previously committed quantity baseline. This SHALL remain the only quantity detector for games with Steam-reported playtime; games without those totals SHALL retain their presence-derived mechanism.
 
-The diffed increase SHALL be the sole authority on how many minutes were played. Where a record of
-observed presence covers the period the increase was earned in, that record MAY determine the
-boundaries of the sessions the increase is written into — including producing more than one session
-from a single increase. The record SHALL NOT change the number of minutes synthesized, and its
-absence SHALL leave this mechanism behaving exactly as specified without it.
+The positive diff SHALL authorize exactly that many minutes, represented as timestamped sessions when usable timing exists and as unknown-time allocations when it does not. Validated timing evidence SHALL place a bounded share through the playtime-recovery rules without changing quantity; unmatched minutes SHALL use local fallback. Ordinary short-gap monitoring with a usable estimate SHALL retain its open/extend/close session behavior. A stale open row alone SHALL NOT establish usable timing across a missed interval.
 
 #### Scenario: Playtime increases
-- **WHEN** a game's `playtime_forever` is greater than its stored value
-- **THEN** an open session for that game is created if none exists, extended by the delta minutes, and its last-increase timestamp updated
+- **WHEN** a game's cumulative total exceeds its committed quantity baseline
+- **THEN** the increase is credited exactly once through sessions, unknown-time allocations, or their combination
+- **AND** ordinary usable short-gap timing still opens or extends the game's session
 
 #### Scenario: Playtime unchanged
 - **WHEN** a game with an open session shows no increase on the next poll
@@ -99,17 +92,18 @@ absence SHALL leave this mechanism behaving exactly as specified without it.
 - **THEN** no session is emitted and the decrease does not produce negative playtime
 
 #### Scenario: An increase placed against observed presence
-- **WHEN** a playtime increase is observed and a record of observed presence covers the period
-- **THEN** the increase may be written as one or more sessions bounded by the observed intervals
-- **AND** the minutes across them sum to the observed increase
+- **WHEN** a playtime increase has validated timing evidence for part or all of its observation window
+- **THEN** evidence-informed placement receives only its authorized bounded share and unmatched minutes use recovery fallback
+- **AND** their combined credited minutes equal the observed increase
 
 #### Scenario: No presence record available
-- **WHEN** a playtime increase is observed and no record of observed presence covers the period
-- **THEN** the increase is written as a single session exactly as it is without the record
+- **WHEN** an increase has no usable timing evidence
+- **THEN** the playtime-recovery fallback credits unknown-time activity without fabricated session boundaries
+- **AND** cloud configuration is not required
 
 #### Scenario: The record cannot change the total
-- **WHEN** the observed intervals span more or less time than the diffed increase
-- **THEN** the minutes written still equal the diffed increase
+- **WHEN** usable intervals span more or less time than the diffed increase
+- **THEN** timestamped and unknown-time credited minutes together equal the diffed increase exactly
 
 ### Requirement: Play deltas available to dependent work
 The sync SHALL make the per-game playtime deltas it computes available to work that depends on
@@ -141,17 +135,17 @@ of database queries rather than one query per owned game.
 
 ### Requirement: First-sync baselining
 The system SHALL treat the first successful poll as a baseline, recording current
-playtime totals without creating any historical sessions. A baseline poll SHALL NOT record an
+playtime totals without creating any historical sessions or unknown-time allocations. A baseline poll SHALL NOT record an
 arrival time for any game it observes, so that the games a player already owned are never
 presented as newly acquired.
 
 #### Scenario: Initial install poll
 - **WHEN** the first successful poll completes and no prior playtime is stored
-- **THEN** each game's `playtime_forever` is stored as the baseline and zero sessions are created
+- **THEN** each game's `playtime_forever` is stored as the baseline and zero sessions or unknown-time allocations are created
 
 #### Scenario: Deltas after baseline
 - **WHEN** subsequent polls observe playtime increases beyond the baseline
-- **THEN** only those post-baseline deltas are turned into sessions
+- **THEN** only those post-baseline deltas are credited through sessions or unknown-time allocations
 
 #### Scenario: Baseline records no arrivals
 - **WHEN** the baseline poll stores a library of any size
@@ -308,7 +302,7 @@ appearing to do nothing.
 - **THEN** the day's recorded minutes increase by that increase once, not twice
 
 ### Requirement: A poll's raw persistence is atomic
-The raw data a poll produces — synthesized sessions, per-game playtime baselines, daily
+The raw data a poll produces — synthesized sessions, recovery snapshots, funded contributions, unknown-time allocations, per-game playtime baselines, daily
 progress, and player profile fields — SHALL be committed as one unit that either applies
 completely or not at all. A playtime baseline SHALL NOT be advanced unless the progress that
 advance represents is committed with it.
@@ -343,6 +337,11 @@ regenerated from anything.
 - **WHEN** a poll commits its raw data and is interrupted before derived values are written
 - **THEN** the raw data remains committed, the incomplete derived write is detected on the next
   attempt, and derived values are regenerated from the committed raw data
+
+#### Scenario: Recovery baseline and allocation commit together
+- **WHEN** a poll advances a recovery baseline and authorizes unknown-time minutes
+- **THEN** the snapshot, contribution, allocation and raw daily credit commit as one unit
+- **AND** derived-state materialization remains recoverable through the existing protocol
 
 ### Requirement: The sync writes only Steam-owned fields
 When persisting a poll, the system SHALL update only those per-game fields for which
@@ -459,14 +458,9 @@ other's fields.
 - **THEN** only the failure-reporting fields change, leaving identity and aggregates
   untouched
 ### Requirement: Playtime is attributed to a session's start date
-Observed playtime SHALL be credited to the local calendar date on which its session began,
-not to the date of the poll that observed it. A single poll SHALL be able to credit more
-than one date when the sessions it observed began on different dates. A session's minutes
-SHALL NOT be divided across dates.
+Timestamped session minutes SHALL be credited to the local date on which that session began, rather than the poll date, and a timestamped session SHALL remain atomic across midnight. Multiple timestamped sessions SHALL be attributed independently by start date.
 
-Where several sessions are synthesized from one observed increase, each SHALL be attributed
-independently by its own start date. This rule is unchanged by that: more sessions means more start
-dates, not divided minutes.
+Unknown-time play SHALL instead be credited to its explicit frozen allocation dates under playtime-recovery. An unknown-time allocation SHALL NOT acquire a synthetic session-start timestamp to satisfy this rule. One increase SHALL be able to credit multiple dates through independent sessions and/or day allocations. Crediting or moving minutes on a previously evaluated date SHALL re-evaluate that date's quest, including a change from met to unmet after placement correction.
 
 #### Scenario: Session crossing midnight
 - **WHEN** a session begins before local midnight and continues after it
@@ -494,8 +488,12 @@ dates, not divided minutes.
   persisted
 
 #### Scenario: Attribution does not depend on poll timing
-- **WHEN** the same play activity is observed by polls at different times
-- **THEN** the date credited is the same in every case
+- **WHEN** the same credited activity has the same usable timing evidence or frozen allocation dates
+- **THEN** every surface uses those dates independently of when a later poll or render occurs
+
+#### Scenario: Unknown-time allocation date
+- **WHEN** recovered play is allocated to Wednesday without session timing
+- **THEN** Wednesday receives that credit without creating a session start
 
 ### Requirement: A playtime baseline is only diffed against the same account
 The system SHALL NOT compare a stored playtime baseline against a poll for a different Steam
@@ -633,9 +631,9 @@ the attempt SHALL succeed as a no-op: it SHALL neither commit playtime nor enque
 - **THEN** it does not append a successor to either chain
 
 ### Requirement: Targeted fetches commit through the ordinary poll path
-A targeted playtime fetch SHALL apply its observation through the same session synthesis and
+A targeted playtime fetch SHALL apply its observation through the same credited-activity synthesis and
 persistence path as a periodic poll, deriving its committed delta from baselines read within the
-committing transaction. It SHALL NOT synthesize sessions, credit daily progress, or author derived
+committing transaction. It SHALL NOT synthesize sessions or allocations, credit daily progress, or author derived
 values by any separate route.
 
 #### Scenario: Same increase observed by both sources
@@ -644,9 +642,9 @@ values by any separate route.
   session and no additional minutes
 
 #### Scenario: Records are indistinguishable by source
-- **WHEN** a session is recorded from a targeted fetch
-- **THEN** the stored session, playtime baseline, and daily progress are identical to what a
-  periodic poll observing the same increase would have produced
+- **WHEN** a targeted fetch and a periodic poll supply equivalent quantity and timing evidence
+- **THEN** their credited activity, quantity baseline and daily progress are equivalent
+- **AND** targeted evidence of a known play instant is retained when a later fetch observes the total
 
 #### Scenario: The observation carries the time the play ended
 - **WHEN** a targeted fetch commits an observation

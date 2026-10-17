@@ -75,4 +75,44 @@ class BackupVersionedDecoderTest {
         ))
         assertNull(decode(mixed))
     }
+
+    @Test fun v3RequiresExplicitRecoveryObjectAndKeepsSessionContributionFacts() {
+        assertNotNull(decode(v3Text(withRecovery = true)))
+        // A v3 file with no recovery section is not a valid v3 backup.
+        assertNull(decode(v3Text(withRecovery = false)))
+        // An explicit null recovery is not an object.
+        assertNull(decode(v3Text(withRecovery = true).replace(RecoveryObject, "\"recovery\":null")))
+        // An empty object decodes (the preflight, not the stream, rejects its absent sections).
+        assertNotNull(decode(v3Text(withRecovery = true).replace(RecoveryObject, "\"recovery\":{}")))
+        // The version marker owns the section: a legacy marker must not carry it.
+        assertNull(decode(v3Text(withRecovery = true).replace("\"formatVersion\":3", "\"formatVersion\":2")))
+        assertNull(decode(v3Text(withRecovery = true).replace("\"formatVersion\":3", "\"formatVersion\":1")))
+    }
+
+    private fun v3Text(withRecovery: Boolean): String = json.encodeToString(
+        BackupFile.serializer(),
+        legacy.copy(
+            formatVersion = 3,
+            sessions = legacy.sessions.map {
+                it.copy(cloudContribution = BackupCloudContribution(
+                    BackupContributionState.UNKNOWN, BackupContributionState.NONE))
+            },
+            recovery = if (withRecovery) {
+                BackupRecovery(
+                    observations = emptyList(),
+                    contributions = emptyList(),
+                    timedPlacements = emptyList(),
+                    unknownAllocations = emptyList(),
+                    recipes = emptyList(),
+                    replacements = emptyList(),
+                )
+            } else {
+                null
+            },
+        ),
+    )
+
+    private companion object {
+        val RecoveryObject = Regex("\"recovery\"\\s*:\\s*\\{[^}]*}")
+    }
 }

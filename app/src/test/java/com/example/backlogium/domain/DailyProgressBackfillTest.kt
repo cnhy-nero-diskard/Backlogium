@@ -2,6 +2,9 @@ package com.example.backlogium.domain
 
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.TimedContributionPlacement
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
+import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -150,5 +153,79 @@ class DailyProgressBackfillTest {
         )
 
         assertEquals(86, result.single().correctedMinutes)
+    }
+
+    @Test
+    fun `recovery allocations and frozen timed shares survive the one-time daily backfill`() {
+        val host = session(1L, at("2026-08-13", 23, 30), 40).copy(id = 7L)
+        val timed = TimedContributionPlacement(
+            placementId = "timed-frozen",
+            contributionId = "contribution",
+            account = "account",
+            appId = 1L,
+            revision = 1L,
+            sessionId = 7L,
+            minutes = 20L,
+            creditedDate = "2026-08-12",
+            zone = "UTC",
+            evidenceQuality = "LOCAL",
+            goalAtCredit = true,
+            createdAt = 0L,
+        )
+        val allocation = UnknownTimeAllocation(
+            placementId = "bucket",
+            contributionId = "contribution",
+            account = "account",
+            appId = 2L,
+            revision = 1L,
+            date = "2026-08-12",
+            minutes = 30L,
+            method = RecoveryAllocationMethods.SINGLE_DAY,
+            zone = "UTC",
+            goalAtCredit = false,
+            createdAt = 0L,
+        )
+
+        val result = dailyProgressCorrections(
+            sessions = listOf(host),
+            goalAppIds = setOf(1L),
+            stored = listOf(day("2026-08-12", 0, 0), day("2026-08-13", 40, 40)),
+            zone = zone,
+            timedShares = listOf(timed),
+            allocations = listOf(allocation),
+        ).associateBy { it.date }
+
+        assertEquals(50, result.getValue("2026-08-12").correctedMinutes)
+        assertEquals(20, result.getValue("2026-08-12").correctedGoalMinutes)
+        assertEquals(20, result.getValue("2026-08-13").correctedMinutes)
+        assertEquals(20, result.getValue("2026-08-13").correctedGoalMinutes)
+    }
+
+    @Test
+    fun `orphaned portable timed share retains its frozen daily credit`() {
+        val orphan = TimedContributionPlacement(
+            placementId = "orphaned-portable-share",
+            contributionId = "contribution",
+            account = "account",
+            appId = 2L,
+            revision = 1L,
+            sessionId = 9_999L,
+            minutes = 15L,
+            creditedDate = "2026-08-12",
+            zone = "UTC",
+            goalAtCredit = true,
+            createdAt = 0L,
+        )
+
+        val result = dailyProgressCorrections(
+            sessions = emptyList(),
+            goalAppIds = emptySet(),
+            stored = listOf(day("2026-08-12", 0, 0)),
+            zone = zone,
+            timedShares = listOf(orphan),
+        )
+
+        assertEquals(15, result.single().correctedMinutes)
+        assertEquals(15, result.single().correctedGoalMinutes)
     }
 }

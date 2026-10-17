@@ -97,6 +97,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_39_40,
         BacklogiumDatabase.MIGRATION_40_41,
         BacklogiumDatabase.MIGRATION_41_42,
+        BacklogiumDatabase.MIGRATION_42_43,
     )
 
     @Test
@@ -1705,6 +1706,185 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun v42ToV43_createsRecoveryTablesAndSeedsMatchingOwnedHighWaterHonestly() {
+        val databaseName = "migration-v42-${System.nanoTime()}"
+        val previous = migrationTestHelper.createDatabase(databaseName, 42)
+        try {
+            previous.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Owned Game', '', 570, 0, 500, 0, NULL, 1700000000000, 42, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
+            )
+            previous.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(441, 'Borrowed Game', '', 0, 0, 0, 0, NULL, 1700000000001, 0, 'FAMILY_SHARED', " +
+                    "NULL, NULL, NULL, 30)",
+            )
+            previous.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+                    "(0, '76561198000000000', 42, 1200, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 'UTC', 0, NULL, 0)",
+            )
+            previous.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, openAppId, " +
+                    "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                    "(9, 440, 1700000010000, 1700005410000, 90, 0, NULL, NULL, NULL)",
+            )
+            previous.execSQL(
+                "INSERT INTO daily_progress (date, minutesPlayed, goalMinutesPlayed, questMet) " +
+                    "VALUES ('2026-08-13', 90, 60, 1)",
+            )
+        } finally {
+            previous.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 43, true, BacklogiumDatabase.MIGRATION_42_43,
+            )
+            try {
+                // Legacy data survives the hop untouched.
+                migrated.query(
+                    "SELECT startAt, endAt, minutes, open FROM sessions WHERE id = 9",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1700000010000L, cursor.getLong(0))
+                    assertEquals(1700005410000L, cursor.getLong(1))
+                    assertEquals(90, cursor.getInt(2))
+                    assertEquals(0, cursor.getInt(3))
+                }
+                migrated.query(
+                    "SELECT minutesPlayed, goalMinutesPlayed, questMet " +
+                        "FROM daily_progress WHERE date = '2026-08-13'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(90, cursor.getInt(0))
+                    assertEquals(60, cursor.getInt(1))
+                    assertEquals(1, cursor.getInt(2))
+                }
+                migrated.query(
+                    "SELECT backfillMinutes, manualSharedMinutes FROM games WHERE appId = 440",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(42, cursor.getInt(0))
+                    assertEquals(0, cursor.getInt(1))
+                }
+
+                // The recovery tables have the expected shapes.
+                assertTableInfo(
+                    migrated,
+                    "game_recovery_state",
+                    listOf(
+                        ColumnInfo("account", "TEXT", notNull = true, pk = 1),
+                        ColumnInfo("appId", "INTEGER", notNull = true, pk = 2),
+                        ColumnInfo("baselineEpoch", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("highWaterMinutes", "INTEGER", notNull = true, pk = 0),
+                        ColumnInfo("lastObservationAt", "INTEGER", notNull = false, pk = 0),
+                        ColumnInfo("lastObservationDate", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("lastObservationZone", "TEXT", notNull = false, pk = 0),
+                        ColumnInfo("clockState", "TEXT", notNull = true, pk = 0),
+                        ColumnInfo("updatedAt", "INTEGER", notNull = true, pk = 0),
+                    ),
+                )
+
+                // Only the matching-account owned game is seeded; the shared game never is.
+                migrated.query(
+                    "SELECT account, appId, baselineEpoch, highWaterMinutes, lastObservationAt, " +
+                        "lastObservationDate, lastObservationZone, clockState " +
+                        "FROM game_recovery_state",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("76561198000000000", cursor.getString(0))
+                    assertEquals(440L, cursor.getLong(1))
+                    assertEquals(1L, cursor.getLong(2))
+                    // The diff baseline, not the raw current total: no lifetime minutes imported.
+                    assertEquals(500L, cursor.getLong(3))
+                    // lastSyncedAt is trustworthy when present...
+                    assertEquals(1700000000000L, cursor.getLong(4))
+                    // ...but the historical zone/date are unknown, never invented.
+                    assertTrue(cursor.isNull(5))
+                    assertTrue(cursor.isNull(6))
+                    assertEquals("UNKNOWN", cursor.getString(7))
+                    assertFalse(cursor.moveToNext())
+                }
+
+                // Everything the attribution committer writes starts empty on an upgraded install.
+                listOf(
+                    "playtime_daily_snapshots",
+                    "playtime_contributions",
+                    "recovery_timed_placements",
+                    "recovery_unknown_allocations",
+                    "recovery_allocation_recipes",
+                    "recovery_journal",
+                    "recovery_local_evidence",
+                ).forEach { table ->
+                    migrated.query("SELECT COUNT(*) FROM `$table`").use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals("$table starts empty on upgrade", 0, cursor.getInt(0))
+                    }
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v42ToV43_blankIdentityAndSharedGamesSeedNoSnapshotBaseline() {
+        val databaseName = "migration-v42-blank-${System.nanoTime()}"
+        val previous = migrationTestHelper.createDatabase(databaseName, 42)
+        try {
+            // A pre-recovery install that never finished account setup has a blank identity.
+            previous.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Owned Game', '', 570, 0, 500, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "NULL, NULL, NULL, 0)",
+            )
+            previous.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+                    "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, " +
+                    "NULL, NULL, NULL, 0, NULL, 0)",
+            )
+        } finally {
+            previous.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 43, true, BacklogiumDatabase.MIGRATION_42_43,
+            )
+            try {
+                migrated.query("SELECT COUNT(*) FROM game_recovery_state").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    // A blank identity seeds nothing: the next successful owned read is a genuine
+                    // first baseline, and a lifetime total is never imported as play.
+                    assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertTableInfo(database: SupportSQLiteDatabase, table: String, expected: List<ColumnInfo>) {
         val actual = mutableListOf<ColumnInfo>()
         database.query("PRAGMA table_info(`$table`)").use { cursor ->
@@ -2135,6 +2315,46 @@ class MigrationTest {
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
             assertEquals(0, cursor.getInt(0))
+        }
+
+        // v42→v43 seeded recovery state from the matching-account owned diff baseline, honestly:
+        // zone/date stay unknown and the high-water is `lastPlaytime`, so no lifetime total is
+        // imported and the next reading only ever recovers post-baseline minutes.
+        query(
+            "SELECT account, appId, highWaterMinutes, lastObservationAt, " +
+                "lastObservationDate, lastObservationZone, clockState " +
+                "FROM game_recovery_state ORDER BY appId",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("76561198000000000", cursor.getString(0))
+            assertEquals(440L, cursor.getLong(1))
+            assertEquals(12340, cursor.getInt(2))
+            assertFalse(
+                "A pre-recovery install never captured a local date for its baseline",
+                cursor.isNull(3),
+            )
+            assertTrue(cursor.isNull(4))
+            assertTrue(cursor.isNull(5))
+            assertEquals("UNKNOWN", cursor.getString(6))
+            assertTrue(cursor.moveToNext())
+            assertEquals(441L, cursor.getLong(1))
+            assertEquals(10, cursor.getInt(2))
+            assertFalse(cursor.moveToNext())
+        }
+
+        listOf(
+            "playtime_daily_snapshots",
+            "playtime_contributions",
+            "recovery_timed_placements",
+            "recovery_unknown_allocations",
+            "recovery_allocation_recipes",
+            "recovery_journal",
+            "recovery_local_evidence",
+        ).forEach { table ->
+            query("SELECT COUNT(*) FROM `$table`").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("$table starts empty on upgrade", 0, cursor.getInt(0))
+            }
         }
     }
 }

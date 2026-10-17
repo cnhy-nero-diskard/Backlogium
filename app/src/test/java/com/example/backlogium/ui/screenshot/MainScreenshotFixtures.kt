@@ -47,12 +47,19 @@ import com.example.backlogium.ui.home.HomeNextGame
 import com.example.backlogium.ui.home.HomeSmartCollectionCard
 import com.example.backlogium.ui.home.HomeUiState
 import com.example.backlogium.ui.history.HistoryAchievements
+import com.example.backlogium.ui.history.HistoryAllocationMethod
+import com.example.backlogium.ui.history.HistoryAllocationUi
+import com.example.backlogium.ui.history.HistoryAllocationWindow
 import com.example.backlogium.ui.history.HistoryContent
 import com.example.backlogium.ui.history.HistoryDayGroup
 import com.example.backlogium.ui.history.HistoryGameGroup
 import com.example.backlogium.ui.history.HistoryGameThumbnails
 import com.example.backlogium.ui.history.HistorySessionUi
+import com.example.backlogium.ui.history.HistoryTimedShareUi
 import com.example.backlogium.ui.history.HistoryUiState
+import com.example.backlogium.ui.history.RecoveryStatusUi
+import com.example.backlogium.ui.components.RecoveryExplanationKind
+import com.example.backlogium.ui.components.RecoveryWindowShare
 import com.example.backlogium.ui.library.BacklogGameUi
 import com.example.backlogium.ui.library.GoalGameUi
 import com.example.backlogium.ui.library.LibraryBatchGame
@@ -78,9 +85,14 @@ internal enum class MainFixtureKind {
     LIBRARY_SELECTION,
     HISTORY_POPULATED,
     HISTORY_EMPTY,
+    HISTORY_ALLOCATION_SINGLE,
+    HISTORY_ALLOCATION_MULTI,
+    HISTORY_MIXED,
+    HISTORY_UNAVAILABLE,
     ANALYTICS_POPULATED,
     ANALYTICS_SELECTED_DAY,
     ANALYTICS_EMPTY_WINDOW,
+    ANALYTICS_ALLOCATIONS_ONLY,
     SETTINGS_OVERVIEW,
     SETTINGS_HEALTHY,
     SETTINGS_ATTENTION,
@@ -135,9 +147,14 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
                     cloudReaderConfigured = true,
                 ),
             )
+            MainFixtureKind.HISTORY_ALLOCATION_SINGLE -> HistoryContent(allocationSingleHistoryState())
+            MainFixtureKind.HISTORY_ALLOCATION_MULTI -> HistoryContent(allocationMultiHistoryState())
+            MainFixtureKind.HISTORY_MIXED -> HistoryContent(mixedHistoryState())
+            MainFixtureKind.HISTORY_UNAVAILABLE -> HistoryContent(unavailableHistoryState())
             MainFixtureKind.ANALYTICS_POPULATED -> AnalyticsContent(analyticsState())
             MainFixtureKind.ANALYTICS_SELECTED_DAY -> AnalyticsContent(analyticsState(selectedDay = true))
             MainFixtureKind.ANALYTICS_EMPTY_WINDOW -> AnalyticsContent(analyticsState(empty = true))
+            MainFixtureKind.ANALYTICS_ALLOCATIONS_ONLY -> AnalyticsContent(analyticsAllocationsOnlyState())
             MainFixtureKind.SETTINGS_OVERVIEW -> SettingsOverviewScreen(
                 state = settingsState(),
                 onOpenGroup = {},
@@ -420,6 +437,162 @@ private fun populatedHistoryState(): HistoryUiState {
     )
 }
 
+/** Single-day fallback: 70 recovered minutes all on one date, no clock boundary, honest `!`. */
+private fun allocationSingleHistoryState(): HistoryUiState {
+    val today = FIXED_TODAY.toString()
+    val allocation = HistoryAllocationUi(
+        placementId = "single|610|1",
+        appId = 610L,
+        date = FIXED_TODAY,
+        minutes = 70,
+        method = HistoryAllocationMethod.SINGLE_DAY_ESTIMATE,
+        window = HistoryAllocationWindow(
+            windowStartDate = FIXED_TODAY,
+            windowEndDate = FIXED_TODAY,
+            zone = "UTC",
+            totalMinutes = 70,
+        ),
+    )
+    val game = HistoryGameGroup(
+        appId = 610L,
+        name = "Celeste",
+        iconUrl = fixtureArt("celeste-icon"),
+        minutesPlayed = 70,
+        sessions = emptyList(),
+        allocations = listOf(allocation),
+    )
+    val day = HistoryDayGroup(
+        date = today,
+        minutesPlayed = 70,
+        goalMinutesPlayed = 0,
+        questMet = true,
+        games = listOf(game),
+        gameThumbnails = HistoryGameThumbnails(games = listOf(game)),
+        achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+        estimatedMinutes = 70,
+    )
+    return HistoryUiState(
+        loading = false,
+        configured = true,
+        days = listOf(day),
+        today = today,
+        cloudReaderConfigured = true,
+    )
+}
+
+/** Multi-day window: 27/26/26/26 over four frozen dates from a 105-minute residual. */
+private fun allocationMultiHistoryState(): HistoryUiState {
+    val shares = intArrayOf(27, 26, 26, 26)
+    val days = (0..3).map { offset ->
+        val date = FIXED_TODAY.minusDays(offset.toLong())
+        val allocation = HistoryAllocationUi(
+            placementId = "multi|440|1|$date",
+            appId = 440L,
+            date = date,
+            minutes = shares[offset],
+            method = HistoryAllocationMethod.MULTI_DAY_ESTIMATE,
+            window = HistoryAllocationWindow(
+                windowStartDate = FIXED_TODAY.minusDays(3),
+                windowEndDate = FIXED_TODAY,
+                zone = "UTC",
+                totalMinutes = 105,
+            ),
+        )
+        val game = HistoryGameGroup(
+            appId = 440L,
+            name = "Hades II",
+            iconUrl = fixtureArt("hades-icon"),
+            minutesPlayed = shares[offset],
+            sessions = emptyList(),
+            allocations = listOf(allocation),
+        )
+        HistoryDayGroup(
+            date = date.toString(),
+            minutesPlayed = shares[offset],
+            goalMinutesPlayed = 0,
+            questMet = false,
+            games = listOf(game),
+            gameThumbnails = HistoryGameThumbnails(games = listOf(game)),
+            achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+            estimatedMinutes = shares[offset],
+        )
+    }
+    return HistoryUiState(
+        loading = false,
+        configured = true,
+        days = days,
+        today = FIXED_TODAY.toString(),
+        cloudReaderConfigured = true,
+    )
+}
+
+/** Mixed day: a session remainder, a funded timed share, and an estimate sharing the same game. */
+private fun mixedHistoryState(): HistoryUiState {
+    val today = FIXED_TODAY.toString()
+    val session = HistorySessionUi(
+        id = 1L,
+        startAt = Instant.parse("2026-01-15T18:20:00Z").toEpochMilli(),
+        minutes = 52,
+        open = false,
+        creditedMinutes = 42,
+    )
+    val fullyFundedSession = HistorySessionUi(
+        id = 2L,
+        startAt = Instant.parse("2026-01-15T19:10:00Z").toEpochMilli(),
+        minutes = 20,
+        open = false,
+        creditedMinutes = 0,
+    )
+    val allocation = HistoryAllocationUi(
+        placementId = "mixed|440|1",
+        appId = 440L,
+        date = FIXED_TODAY,
+        minutes = 35,
+        method = HistoryAllocationMethod.MULTI_DAY_ESTIMATE,
+        window = HistoryAllocationWindow(
+            windowStartDate = FIXED_TODAY.minusDays(1),
+            windowEndDate = FIXED_TODAY,
+            zone = "UTC",
+            totalMinutes = 70,
+        ),
+    )
+    val game = HistoryGameGroup(
+        appId = 440L,
+        name = "Hades II",
+        iconUrl = fixtureArt("hades-icon"),
+        minutesPlayed = 107,
+        sessions = listOf(session, fullyFundedSession),
+        allocations = listOf(allocation),
+        timedShares = listOf(
+            HistoryTimedShareUi(sessionId = session.id, minutes = 10, goalMinutes = 0),
+            HistoryTimedShareUi(sessionId = fullyFundedSession.id, minutes = 20, goalMinutes = 0),
+        ),
+    )
+    val day = HistoryDayGroup(
+        date = today,
+        minutesPlayed = 107,
+        goalMinutesPlayed = 42,
+        questMet = true,
+        games = listOf(game),
+        gameThumbnails = HistoryGameThumbnails(games = listOf(game)),
+        achievements = HistoryAchievements(iconUrls = emptyList(), overflowCount = 0),
+        estimatedMinutes = 35,
+    )
+    return HistoryUiState(
+        loading = false,
+        configured = true,
+        days = listOf(day),
+        today = today,
+        cloudReaderConfigured = true,
+    )
+}
+
+/** Steam unavailable: last-good figures remain on screen with an honest status disclosure. */
+private fun unavailableHistoryState(): HistoryUiState =
+    populatedHistoryState().copy(
+        recoveryStatus = RecoveryStatusUi.REMOTE_UNAVAILABLE,
+    )
+
 private fun analyticsState(
     selectedDay: Boolean = false,
     empty: Boolean = false,
@@ -517,6 +690,62 @@ private fun analyticsState(
         },
         gamesByDate = gamesByDate,
         familySharedMinutes = if (empty) 0 else 35,
+    )
+}
+
+/** Allocations-only insights: played minutes and games are real, session/time-of-day say why not. */
+private fun analyticsAllocationsOnlyState(): AnalyticsUiState {
+    val window = AnalyticsWindow(FIXED_TODAY, AnalyticsWindowLength.ONE_MONTH)
+    val shares = listOf(27, 26, 26, 26)
+    val dates = (0..3).map { FIXED_TODAY.minusDays(it.toLong()) }
+    val game = AnalyticsGame(
+        appId = 440L,
+        name = "Hades II",
+        iconUrl = fixtureArt("hades-icon"),
+        minutes = 105,
+        headerUrl = fixtureArt("hades-header"),
+        heroCapsuleUrl = fixtureArt("hades-hero"),
+        estimatedMinutes = 105,
+    )
+    val shareFor = { date: LocalDate, minutes: Int ->
+        RecoveryWindowShare(
+            kind = RecoveryExplanationKind.MULTI_DAY_ESTIMATE,
+            windowStart = FIXED_TODAY.minusDays(3),
+            windowEnd = FIXED_TODAY,
+            zone = "UTC",
+            windowTotalMinutes = 105,
+            shareMinutes = minutes,
+        )
+    }
+    val days = dates.mapIndexed { index, date ->
+        AnalyticsDay(date = date, minutes = shares[index], estimatedMinutes = shares[index])
+    }
+    return AnalyticsUiState(
+        loading = false,
+        configured = true,
+        window = window,
+        windowBounds = window.resolve(),
+        earliestTrackedDate = FIXED_TODAY.minusDays(3),
+        canStepEarlier = true,
+        canStepLater = false,
+        isCurrentWindow = true,
+        headline = AnalyticsHeadline.LeadingGame("Hades II", 105),
+        dailyMinutes = days,
+        questThreshold = 45,
+        currentStreak = 0,
+        longestStreak = 0,
+        questMetDaysCount = 0,
+        topGames = listOf(game),
+        sessionInsights = SessionInsights(),
+        timeOfDayPattern = TimeOfDayPattern(),
+        gamesByDate = dates.mapIndexed { index, date ->
+            date to listOf(game.copy(minutes = shares[index], estimatedMinutes = shares[index]))
+        }.toMap(),
+        timingUnavailable = true,
+        estimatedSharesByDate = dates.mapIndexed { index, date ->
+            date to listOf(shareFor(date, shares[index]))
+        }.toMap(),
+        estimatedShares = listOf(shareFor(FIXED_TODAY, 105)),
     )
 }
 

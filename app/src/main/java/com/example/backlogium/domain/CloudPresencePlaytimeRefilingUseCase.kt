@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.dao.CloudHistoricalDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.CloudHistoricalApplyPayload
 import com.example.backlogium.data.local.entity.CloudHistoricalApplyPayloadCodec
@@ -47,15 +48,26 @@ internal data class CloudPresenceSessionRefile(
     val replacement: List<Session>,
 )
 
-/** Pure session selection/replacement rule used by both the one-time action and its tests. */
+/**
+ * Pure session selection/replacement rule used by both the one-time action and its tests.
+ *
+ * Sessions that already carry an active funded recovery share ([fundedSessionIds]) are never
+ * selected: their placement is authoritative and must survive the historical operation intact
+ * (recover-missed-playtime, tasks 6.3/6.4). A historical re-file may only move the unlinked legacy
+ * remainder of an unfunded session, never a funded share and never a superseded estimate.
+ */
 internal fun cloudPresenceSessionRefiles(
     sessions: List<Session>,
     ownedAppIds: Set<Long>,
     intervals: List<CloudPresenceInterval>,
     range: CloudPresenceHistoricalSelection? = null,
+    fundedSessionIds: Set<Long> = emptySet(),
 ): List<CloudPresenceSessionRefile> = sessions
     .asSequence()
-    .filter { it.appId in ownedAppIds && !it.open && it.endAt != null && it.minutes > 0 }
+    .filter {
+        it.appId in ownedAppIds && !it.open && it.endAt != null && it.minutes > 0 &&
+            it.id !in fundedSessionIds
+    }
     .mapNotNull { original ->
         val originalEndAt = original.endAt ?: return@mapNotNull null
         val periodStartAt = maxOf(original.startAt, range?.effectiveStartAt ?: Long.MIN_VALUE)
@@ -107,6 +119,12 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
     private val playerProfileDao: PlayerProfileDao,
     private val cloudHistoricalDao: CloudHistoricalDao,
     private val settings: SettingsRepository,
+    /**
+     * Recovery contribution graph (recover-missed-playtime). Optional only so pure-JVM tests can
+     * construct this use case without Room; when present, historical re-filing never moves a
+     * session that carries an active funded share and reversal preserves independent upgrades.
+     */
+    private val recoveryDao: PlaytimeRecoveryDao? = null,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val syncCoordinator: com.example.backlogium.work.SteamSyncCoordinator,
@@ -249,10 +267,11 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                     .map { it.appId }
                     .toSet()
                 val expectedByOriginal = cloudPresenceSessionRefiles(
-                    inProgress.sessions,
-                    ownedIds,
-                    intervals,
-                    range,
+                    sessions = inProgress.sessions,
+                    ownedAppIds = ownedIds,
+                    intervals = intervals,
+                    range = range,
+                    fundedSessionIds = fundedSessionIds(ownedIds),
                 ).associateBy { it.original.id }
                 val originalIds = inProgress.sessions.map { it.id }.toSet()
                 val currentSessions = sessionDao.getAll()
@@ -394,6 +413,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                         ownedAppIds = ownedIds,
                         intervals = stagedIntervals,
                         range = selection,
+                        fundedSessionIds = fundedSessionIds(ownedIds),
                     )
                     val changedOriginalIds = changes.map { it.original.id }.toSet()
                     val replacementRows = changes.flatMap { change ->
@@ -585,8 +605,17 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                     operation.state == CloudHistoricalStates.APPLIED
                 ) { "Cloud historical operation identity changed before reversal" }
 
-                payload.createdSessions.forEach { sessionDao.deleteById(it.id) }
-                payload.originalSessions.forEach { sessionDao.update(it.toSession()) }
+                val currentById = sessionDao.getAll().associateBy { it.id }
+                val account = playerProfileDao.get()?.steamId.orEmpty()
+                payload.createdSessions.forEach { created ->
+                    // A created row that has since acquired an active funded share is owned by the
+                    // recovery graph; deleting it would orphan that share and drop its minutes.
+                    if (activeFundedMinutes(created.id) > 0) return@forEach
+                    sessionDao.deleteById(created.id)
+                }
+                payload.originalSessions.forEach { original ->
+                    restoreOriginalSession(original.toSession(), currentById, account)
+                }
                 payload.transferredMinutesByAppId.forEach { delta ->
                     check(gameDao.restoreImportedBalanceDelta(delta.appId, delta.minutes) == 1) {
                         "Imported balance could not be restored for game ${delta.appId}"
@@ -690,8 +719,14 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             addAll(backup.createdDailyProgressDates)
         }
         transaction.run {
-            backup.createdSessionIds.forEach { id -> sessionDao.deleteById(id) }
-            backup.sessions.forEach { session -> sessionDao.update(session) }
+            val currentById = sessionDao.getAll().associateBy { it.id }
+            val account = playerProfileDao.get()?.steamId.orEmpty()
+            backup.createdSessionIds.forEach { id ->
+                // Keep any created row the recovery graph later funded; only unfunded rows revert.
+                if (activeFundedMinutes(id) > 0) return@forEach
+                sessionDao.deleteById(id)
+            }
+            backup.sessions.forEach { session -> restoreOriginalSession(session, currentById, account) }
         }
         // Rebuild from the restored ledger so later ordinary sessions on these dates survive.
         val hasWork = backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty() ||
@@ -858,11 +893,78 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             .filter { it.source == GameSource.STEAM_OWNED }
             .map { it.appId }
             .toSet()
-        return cloudPresenceSessionRefiles(sessionDao.getAll(), ownedIds, intervals, range)
-            .map { change -> Change(change.original, change.replacement) }
+        return cloudPresenceSessionRefiles(
+            sessions = sessionDao.getAll(),
+            ownedAppIds = ownedIds,
+            intervals = intervals,
+            range = range,
+            fundedSessionIds = fundedSessionIds(ownedIds),
+        ).map { change -> Change(change.original, change.replacement) }
+    }
+
+    /**
+     * Sessions carrying an active funded recovery share — never moved by a historical re-file.
+     * Looked up per owned game through the recovery contribution graph (no extra network reads).
+     */
+    private suspend fun fundedSessionIds(ownedAppIds: Set<Long>): Set<Long> {
+        val dao = recoveryDao ?: return emptySet()
+        val account = playerProfileDao.get()?.steamId?.takeIf { it.isNotBlank() } ?: return emptySet()
+        val ids = mutableSetOf<Long>()
+        for (appId in ownedAppIds) {
+            for (contribution in dao.contributionsForGame(account, appId)) {
+                dao.activeTimedPlacements(contribution.contributionId).forEach { share ->
+                    share.sessionId?.let { ids += it }
+                }
+            }
+        }
+        return ids
+    }
+
+    /** Active funded minutes currently hosted by one session; the part a reversal must preserve. */
+    private suspend fun activeFundedMinutes(sessionId: Long): Int =
+        (recoveryDao?.activeTimedSharesForSession(sessionId)?.sumOf { it.minutes } ?: 0L)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+
+    /**
+     * Whether this game has an advanced recovery contribution (a later revision or a replacement
+     * alias). When it does, a historical reversal must not overwrite the shape the recovery graph
+     * now owns — restoring original minutes could resurrect a superseded estimate.
+     */
+    private suspend fun hasUpgradedContribution(account: String, appId: Long): Boolean {
+        val dao = recoveryDao ?: return false
+        val contributions = dao.contributionsForGame(account, appId)
+        if (contributions.any { it.revision > 1L }) return true
+        return contributions.any { contribution ->
+            dao.journalsForContribution(contribution.contributionId)
+                .any { !it.replacedPlacementIdsCsv.isNullOrBlank() }
+        }
+    }
+
+    /**
+     * Contribution-aware restore of one pre-apply session: keep any funded share the recovery graph
+     * now owns, never restore minutes a correction already removed, and otherwise restore exactly.
+     */
+    private suspend fun restoreOriginalSession(
+        original: Session,
+        currentById: Map<Long, Session>,
+        account: String,
+    ) {
+        val current = currentById[original.id] ?: return
+        val fundedNow = activeFundedMinutes(original.id)
+        val restoreMinutes = when {
+            fundedNow > 0 -> fundedNow + original.minutes
+            current.minutes < original.minutes &&
+                hasUpgradedContribution(account, original.appId) -> current.minutes
+            else -> original.minutes
+        }
+        sessionDao.update(original.copy(minutes = restoreMinutes))
     }
 
     private suspend fun recompute(): Set<String> {
+        val account = playerProfileDao.get()?.steamId?.trim()?.takeIf { it.isNotEmpty() }
+        val activeTimed = account?.let { recoveryDao?.activeTimedPlacementsForAccount(it) }.orEmpty()
+        val activeAllocations = account?.let { recoveryDao?.activeAllocationsForAccount(it) }.orEmpty()
         val corrections = dailyProgressCorrections(
             sessions = sessionDao.getAll(),
             goalAppIds = gameDao.getAll().asSequence()
@@ -871,6 +973,8 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 .toSet(),
             stored = dailyProgressDao.getAllOrdered(),
             zone = time.zone(),
+            timedShares = activeTimed,
+            allocations = activeAllocations,
         )
         corrections.forEach { correction ->
             dailyProgressDao.ensureDate(correction.date)

@@ -5,20 +5,28 @@ import androidx.room.withTransaction
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.CloudReadRecord
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.entity.DailyPlaytimeSnapshot
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.GameGenreCache
+import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbMatchStatus
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.PlaytimeContribution
+import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
 import com.example.backlogium.data.local.entity.PresenceDecision
+import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
+import com.example.backlogium.data.local.entity.RecoveryProvenance
 import com.example.backlogium.data.local.entity.RequestBreakdown
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.SyncRun
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.local.entity.Collection as CollectionEntity
+import com.example.backlogium.data.local.recovery.PlaytimeRecoveryIdentity
 import com.example.backlogium.data.repo.AccountRoomReset
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.GameSource
@@ -31,12 +39,13 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -404,6 +413,74 @@ class WriteIntegrityDaoTest {
                 matchStatus = HltbMatchStatus.RESOLVED,
             ),
         )
+        // Recovery observation state and funded contributions are one Steam identity's quantity
+        // history: a reset must clear them alongside sessions and the library.
+        val recoveryDao = database.playtimeRecoveryDao()
+        recoveryDao.upsertState(
+            GameRecoveryState(
+                account = "old-account",
+                appId = appId,
+                baselineEpoch = 1L,
+                highWaterMinutes = 90L,
+                lastObservationAt = 1L,
+                updatedAt = 10L,
+            ),
+        )
+        recoveryDao.upsertSnapshot(
+            DailyPlaytimeSnapshot(
+                account = "old-account",
+                appId = appId,
+                date = "2026-08-13",
+                zone = "UTC",
+                absoluteMinutes = 90L,
+                observedAt = 10L,
+            ),
+        )
+        val contributionId = PlaytimeRecoveryIdentity.contributionId("old-account", appId, 1L, 90L, 100L)
+        recoveryDao.insertContributionChecked(
+            PlaytimeContribution(
+                contributionId = contributionId,
+                account = "old-account",
+                appId = appId,
+                baselineEpoch = 1L,
+                fromMinutes = 90L,
+                toMinutes = 100L,
+                windowEndAt = 10L,
+                authorizedMinutes = 10L,
+                revision = 1L,
+                provenance = RecoveryProvenance.RETROACTIVE_PLAY,
+                zone = "UTC",
+                createdAt = 10L,
+            ),
+        )
+        recoveryDao.insertAllocations(
+            listOf(
+                UnknownTimeAllocation(
+                    placementId = PlaytimeRecoveryIdentity.allocationPlacementId(contributionId, 1L, "2026-08-14"),
+                    contributionId = contributionId,
+                    account = "old-account",
+                    appId = appId,
+                    revision = 1L,
+                    date = "2026-08-14",
+                    minutes = 10L,
+                    method = RecoveryAllocationMethods.MULTI_DAY_ESTIMATE,
+                    zone = "UTC",
+                    createdAt = 10L,
+                ),
+            ),
+        )
+        recoveryDao.upsertJournal(
+            PlaytimeRecoveryJournal(
+                operationId = "old-op",
+                contributionId = contributionId,
+                account = "old-account",
+                appId = appId,
+                currentRevision = 1L,
+                affectedDatesCsv = "2026-08-14",
+                createdAt = 10L,
+                updatedAt = 10L,
+            ),
+        )
         database.sessionDao().insert(Session(appId = appId, startAt = 1L, minutes = 30, open = false))
         database.dailyProgressDao().upsert(DailyProgress(DATE, minutesPlayed = 30, questMet = true))
         database.achievementDao().upsertAll(
@@ -531,6 +608,14 @@ class WriteIntegrityDaoTest {
         assertFalse(profile.pendingImportRecompute)
         assertTrue(database.wishlistDao().observeItems().first().isEmpty())
         assertTrue(database.wishlistDao().observeLatestPrices().first().isEmpty())
+
+        // The old identity's recovery state is fully cleared: baselines, snapshots, contributions,
+        // placements/allocations and the journal mutate only under the account that owns them.
+        assertTrue(recoveryDao.statesForAccount("old-account").isEmpty())
+        assertTrue(recoveryDao.recentSnapshots("old-account", appId, 5).isEmpty())
+        assertTrue(recoveryDao.contributionsForGame("old-account", appId).isEmpty())
+        assertTrue(recoveryDao.activeAllocations(contributionId).isEmpty())
+        assertNull(recoveryDao.journal("old-op"))
     }
 
     @Test
@@ -754,10 +839,7 @@ class WriteIntegrityDaoTest {
         // both read "no open session" before either commits. Neither this test nor the code it
         // exercises takes SteamSyncCoordinator — the guarantee must hold without it (spec
         // scenario "Correctness does not rest on a process lock").
-        coroutineScope {
-            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
-            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
-        }
+        recordOverlappingPresenceObservations()
 
         val sessions = database.sessionDao().getAll()
         assertEquals(1, sessions.size)
@@ -772,10 +854,10 @@ class WriteIntegrityDaoTest {
         // The coordinator is busy for the whole scenario, as a worker holding it across a
         // library-scale run would leave it — proving the presence path's correctness does not
         // rest on ever acquiring it, per design.md Decision 1.
-        coroutineScope {
-            launch { coordinator.withLock { delay(50) } }
-            launch { recordPresenceObservation(appId = 730L, at = 1_000L) }
-            launch { recordPresenceObservation(appId = 730L, at = 1_030L) }
+        withTimeout(10_000L) {
+            coordinator.withLock {
+                recordOverlappingPresenceObservations()
+            }
         }
 
         val sessions = database.sessionDao().getAll()
@@ -876,12 +958,34 @@ class WriteIntegrityDaoTest {
         time = FixedTimeProvider,
     )
 
+    private suspend fun recordOverlappingPresenceObservations() = withTimeout(10_000L) {
+        val firstRead = CompletableDeferred<Unit>()
+        val secondRead = CompletableDeferred<Unit>()
+        // Both observations must read before either writes. Otherwise the earlier timestamp can
+        // see the later session and correctly close it as a backwards-clock observation.
+        launch {
+            recordPresenceObservation(appId = 730L, at = 1_000L) {
+                firstRead.complete(Unit)
+                secondRead.await()
+            }
+        }
+        launch {
+            recordPresenceObservation(appId = 730L, at = 1_030L) {
+                secondRead.complete(Unit)
+                firstRead.await()
+            }
+        }
+    }
+
     /**
-     * Mirrors PresenceSessionRecorder's read-derive-write boundary (`:69`, `:87`) for one
-     * observation of a single already-known shared game, without the admission/recompute
-     * machinery the single-open-session guarantee does not depend on.
+     * Mirrors PresenceSessionRecorder's read-derive-write boundary for one observation of a
+     * known shared game, without admission/recompute machinery. [afterRead] controls overlap.
      */
-    private suspend fun recordPresenceObservation(appId: Long, at: Long) {
+    private suspend fun recordPresenceObservation(
+        appId: Long,
+        at: Long,
+        afterRead: suspend () -> Unit = {},
+    ) {
         val open = database.sessionDao().getAllOpenSessions()
             .firstOrNull { it.appId == appId }
             ?.let {
@@ -892,6 +996,7 @@ class WriteIntegrityDaoTest {
                     lastObservedAt = it.endAt ?: it.startAt,
                 )
             }
+        afterRead()
         val result = PresenceSessionDeriver().derive(
             observation = PresenceSessionDeriver.Observation(appId, at),
             openSession = open,

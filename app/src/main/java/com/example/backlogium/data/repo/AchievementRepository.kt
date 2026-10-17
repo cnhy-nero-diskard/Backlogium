@@ -17,6 +17,7 @@ import com.example.backlogium.data.remote.dto.PlayerAchievementDto
 import com.example.backlogium.domain.AchievementDataState
 import com.example.backlogium.domain.SmartCollectionAchievementSignals
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.RecoveryAchievementSnapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -134,6 +135,32 @@ class AchievementRepository @Inject constructor(
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
 ) {
+
+    /**
+     * Exact achievements this not-yet-applied refresh newly unlocks, captured before the raw
+     * transaction applies it. A mixed recovery pass excludes only these claims from its corrective
+     * baseline; already-unlocked rows are not accidentally removed from historical XP.
+     */
+    suspend fun freshUnlockSnapshots(refreshes: List<AchievementRefresh>): Set<RecoveryAchievementSnapshot> =
+        buildSet {
+            for (refresh in refreshes) {
+                val incoming = refresh.achievements ?: continue
+                for (achievement in incoming) {
+                    if (achievement.achieved <= 0) continue
+                    val existing = achievementDao.getOne(refresh.appId, achievement.apiName)
+                    if (existing?.unlocked == true) continue
+                    add(
+                        RecoveryAchievementSnapshot(
+                            appId = refresh.appId,
+                            apiName = achievement.apiName,
+                            version = refresh.fetchedAt,
+                            unlockedBefore = existing?.unlocked ?: false,
+                            snapshotPercentBefore = existing?.snapshotPercent,
+                        ),
+                    )
+                }
+            }
+        }
 
     /** Serializes merge application so a stale response cannot interleave with a newer one. */
     private val mergeMutex = Mutex()

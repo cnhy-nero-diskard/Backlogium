@@ -7,6 +7,7 @@ import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.work.SteamSyncCoordinator
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -16,6 +17,20 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * What an import resolved in the recovery domain, for the shared import-result summary channel
+ * (tasks 8.6). Aggregates are still recomputed from raw data; this only surfaces the reports and
+ * the count of what was written so a caller can distinguish a clean merge from an ambiguous one.
+ */
+data class BackupImportSummary(
+    val recoveryConflicts: List<RecoveryMergeConflict>,
+    val recoveryWarnings: List<RecoveryMergeWarning>,
+    val importedObservations: Int,
+    val importedContributions: Int,
+) {
+    val isClean: Boolean get() = recoveryConflicts.isEmpty()
+}
 
 /** The outcome of reading a candidate backup file/snapshot, before any merge happens. */
 sealed interface ParsedBackup {
@@ -49,6 +64,7 @@ class BackupRepository @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val liveStatusRepository: LiveStatusRepository,
+    private val syncCoordinator: SteamSyncCoordinator,
 ) : BackupExportGateway {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
     override suspend fun exportTo(uri: Uri) {
@@ -115,28 +131,38 @@ class BackupRepository @Inject constructor(
     }
 
     /** Merge a validated file into the local database — the one import/restore code path. */
-    suspend fun importBackup(file: BackupFile) {
+    suspend fun importBackup(file: BackupFile): BackupImportSummary {
         require(BackupValidator.validate(file) is BackupValidationResult.Valid) { "Invalid backup" }
-        derivedStateWrites.withLock {
-            val rules = settings.ruleConfigWithVersionFlow.first()
-            // The merge's authoritative hidden-set replacement must share the visibility ordering
-            // with normal hide/unhide writes: it commits while holding the live-state mutex (via
-            // mutateHiddenSetAndReconcile), so an older live projection holding that mutex cannot
-            // be interleaved with — it either commits fully before the hidden row lands, or blocks
-            // until after the restore has committed and reconciled. Committing the hidden row
-            // outside the mutex and reconciling afterward leaves a window where the older
-            // projection resumes with a stale hidden read and emits the now-hidden game. The mutex
-            // is held only across the raw-data transaction, never across the gamification
-            // recompute that follows.
-            liveStatusRepository.mutateHiddenSetAndReconcile {
-                mergeEngine.mergeRawWithLockHeld(file)
+        val summary = syncCoordinator.withLock {
+            derivedStateWrites.withLock {
+                val rules = settings.ruleConfigWithVersionFlow.first()
+                // The merge's authoritative hidden-set replacement must share the visibility ordering
+                // with normal hide/unhide writes: it commits while holding the live-state mutex (via
+                // mutateHiddenSetAndReconcile), so an older live projection holding that mutex cannot
+                // be interleaved with — it either commits fully before the hidden row lands, or blocks
+                // until after the restore has committed and reconciled. Committing the hidden row
+                // outside the mutex and reconciling afterward leaves a window where the older
+                // projection resumes with a stale hidden read and emits the now-hidden game. The mutex
+                // is held only across the raw-data transaction, never across the gamification
+                // recompute that follows. The outer sync barrier keeps a Steam/account-reset commit
+                // from making the recovery merge plan stale before its Room transaction begins.
+                val rawSummary = liveStatusRepository.mutateHiddenSetAndReconcile {
+                    mergeEngine.mergeRawWithLockHeld(file)
+                }
+                mergeEngine.recomputeAfterMerge(file, rules.config, rules.version)
+                rawSummary
             }
-            mergeEngine.recomputeAfterMerge(file, rules.config, rules.version)
         }
         // Restore supplies only unlocked achievements and no per-game metadata, so a restored
         // library reads as entirely unfetched. Kick off a deferred reconciliation pass to
         // converge the cold tier as soon as conditions allow rather than waiting a week.
         syncScheduler.reconcileNow(force = false)
+        return BackupImportSummary(
+            recoveryConflicts = summary.conflicts,
+            recoveryWarnings = summary.warnings,
+            importedObservations = summary.importedObservations,
+            importedContributions = summary.importedContributions,
+        )
     }
 
     /** Retained automatic snapshots, most recent first. */

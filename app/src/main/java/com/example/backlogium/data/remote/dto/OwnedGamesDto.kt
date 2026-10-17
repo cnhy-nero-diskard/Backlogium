@@ -25,8 +25,22 @@ data class OwnedGameDto(
     val appid: Long,
     val name: String = "",
     @SerialName("img_icon_url") val imgIconUrl: String = "",
-    @SerialName("playtime_forever") val playtimeForever: Int = 0,
-    @SerialName("playtime_2weeks") val playtime2Weeks: Int = 0,
+    /**
+     * Steam's cumulative lifetime minutes for an owned game.
+     *
+     * Valve reports this for every owned game, so an **omitted** value is an anomaly rather than a
+     * real reading of zero. Defaulting it to zero would turn "Steam did not say" into "Steam says
+     * none", which the diff path then treats as a baseline or a regression. Read it through
+     * [validatedPlaytimeForever], which keeps absence and malformed negatives distinct from an
+     * explicit `0`.
+     */
+    @SerialName("playtime_forever") val playtimeForever: Int? = null,
+    /**
+     * Minutes in the last two weeks. Steam omits this when the game was not played recently, so an
+     * absent value *is* zero here rather than unknown; [validatedPlaytime2Weeks] applies that rule
+     * and rejects a negative count.
+     */
+    @SerialName("playtime_2weeks") val playtime2Weeks: Int? = null,
     /**
      * Steam's last-played time in **epoch seconds**, arriving on the same `include_appinfo=1` call
      * the sync already makes. Defaulted so an absent field parses rather than failing the poll:

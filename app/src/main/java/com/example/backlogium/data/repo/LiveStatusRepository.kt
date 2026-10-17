@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.diagnostics.PresenceDecisionRecorder
 import com.example.backlogium.data.diagnostics.PresenceOutcome
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.PlayerIdentity
@@ -115,6 +116,8 @@ class LiveStatusRepository @Inject constructor(
     private val presenceObserver: PresenceObserver,
     private val diagnostics: PresenceDecisionRecorder? = null,
     @ApplicationScope private val scope: CoroutineScope,
+    private val recoveryTiming: LocalPlaytimeEvidenceRecorder? = null,
+    private val recoveryReadStatus: RecoveryReadStatusStore? = null,
 ) {
     private val _liveStatus = MutableStateFlow(LiveStatus())
     val liveStatus: StateFlow<LiveStatus> = _liveStatus.asStateFlow()
@@ -205,6 +208,8 @@ class LiveStatusRepository @Inject constructor(
     fun stopPolling() {
         pollingJob?.cancel()
         pollingJob = null
+        recoveryTiming?.invalidateContinuity()
+        scope.launch { recoveryTiming?.breakContinuity(time.nowMillis()) }
     }
 
     /**
@@ -221,6 +226,7 @@ class LiveStatusRepository @Inject constructor(
         // start (where there is no last emitted state to fall back on) it would do exactly that.
         val fetched = runCatching { fetch() }.getOrNull()
         if (fetched == null) {
+            runCatching { recoveryTiming?.breakContinuity(time.nowMillis()) }
             diagnostics?.record(trigger, PresenceOutcome.FAILED, retainedPriorState = true)
             return _liveStatus.value
         }
@@ -257,6 +263,21 @@ class LiveStatusRepository @Inject constructor(
         // is the caller's reason for being here, and it must not be held up — or lost — by a Room
         // write or an admission lookup. A game with no derivable session makes this a no-op.
         runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
+        val hasNewRecordedSession = nextSession.appId != null &&
+            (nextSession.appId != previousSession.appId || nextSession.startedAt != previousSession.startedAt)
+        if (hasNewRecordedSession && !fetched.steamId.isNullOrBlank()) {
+            val admittedSteamId = profileDao.get()?.steamId?.trim()
+            if (admittedSteamId == fetched.steamId) {
+                nextSession.startedAt?.let { startedAt ->
+                    runCatching { recoveryReadStatus?.observedPlay(fetched.steamId, nextSession.appId!!, startedAt) }
+                }
+            }
+        }
+        if (fetched.outcome == PresenceOutcome.NO_CREDENTIALS || fetched.outcome == PresenceOutcome.NO_PLAYER) {
+            runCatching { recoveryTiming?.breakContinuity(now) }
+        } else {
+            runCatching { recoveryTiming?.observation(fetched.steamId, fetched.appId, now) }
+        }
         return committed
     }
 
@@ -363,10 +384,11 @@ class LiveStatusRepository @Inject constructor(
      * so any in-flight projection that started before the mutation will detect the change and
      * re-read.
      */
-    suspend fun mutateHiddenSetAndReconcile(mutate: suspend () -> Unit) = visibilityMutex.withLock {
-        mutate()
+suspend fun <T> mutateHiddenSetAndReconcile(mutate: suspend () -> T): T = visibilityMutex.withLock {
+        val result = mutate()
         visibilityGeneration.incrementAndGet()
         reconcileVisibilityLocked()
+        result
     }
 
     /**

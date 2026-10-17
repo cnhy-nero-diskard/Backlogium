@@ -1248,6 +1248,7 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
 
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff && !it.open })
+    override fun observeAllOpenSessions(): Flow<List<Session>> = flowOf(store.filter { it.open })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
@@ -1284,6 +1285,25 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeActiveRecoveryAllocations(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryTimedPlacements(): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryContributions(): Flow<List<com.example.backlogium.data.local.entity.PlaytimeContribution>> =
+        flowOf(emptyList())
+    override fun observeDatedAllocationsBetween(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override fun observeTimedPlacementsByDate(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>> =
+        flowOf(emptyList())
+    override fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override fun observeEarliestDatedAllocationDate(): Flow<String?> = flowOf(null)
+    override fun observeEarliestTimedShareDate(): Flow<String?> = flowOf(null)
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {
@@ -1308,6 +1328,14 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
         store[date] = day.copy(
             minutesPlayed = minutesPlayed,
             goalMinutesPlayed = goalMinutesPlayed,
+        )
+    }
+
+    override suspend fun applyMinutesDelta(date: String, minutesDelta: Int, goalDelta: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(
+            minutesPlayed = day.minutesPlayed + minutesDelta,
+            goalMinutesPlayed = day.goalMinutesPlayed + goalDelta,
         )
     }
 
