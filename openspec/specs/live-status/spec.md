@@ -208,7 +208,7 @@ restart.
 #### Scenario: Live session excluded from XP
 - **WHEN** elapsed live session time is recorded
 - **THEN** it is never used as a playtime input for XP, quests, or streaks, which are derived
-  only from stored sessions
+  only from durable credited activity, including stored sessions and Steam-authorized unknown-time allocations
 
 #### Scenario: Presence-derived stored sessions still count
 - **WHEN** a stored session was synthesized from observed presence rather than from a Steam
@@ -216,6 +216,10 @@ restart.
 - **THEN** it participates in XP, quests, streaks, history, and analytics identically to a
   playtime-derived session, because the exclusion above applies to the transient elapsed
   timer and not to the source of a stored session
+
+#### Scenario: Unknown-time recovery does not use the transient timer
+- **WHEN** an owned-game Steam increase is recovered without timing evidence
+- **THEN** its quantity comes only from the cumulative diff and the live elapsed timer does not create additional minutes
 
 ### Requirement: A refused monitoring start never fails a sync
 Starting live monitoring SHALL be best-effort with respect to the Steam poll that requests it.
@@ -309,4 +313,3 @@ or library work of its own, and SHALL NOT persist the now-playing state.
 #### Scenario: Consumer failure does not affect presence
 - **WHEN** work acting on a published session-end transition fails
 - **THEN** presence observation is unaffected and continues on its existing cadence
-
