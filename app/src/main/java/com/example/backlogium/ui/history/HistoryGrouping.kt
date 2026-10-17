@@ -26,9 +26,12 @@ const val HISTORY_GAME_THUMBNAIL_CAP = HISTORY_ACHIEVEMENT_CAP
 data class HistorySessionUi(
     val id: Long,
     val startAt: Long,
+    /** Tracked session minutes shown beside its approximate clock time. */
     val minutes: Int,
     val open: Boolean,
     val cloudContribution: SessionCloudContribution = SessionCloudContribution(),
+    /** Portion of [minutes] counted in this date's totals; funded shares use their own frozen dates. */
+    val creditedMinutes: Int = minutes,
 )
 
 /** A frozen-date share of a timestamped session, displayed separately from unknown-time activity. */
@@ -237,8 +240,9 @@ data class HistoryWindowBounds(
  *   canonical date key the sync credits it to; it is never re-attributed by the screen's zone.
  * - A day header's total, and its Focus-games total, are both the **sum of the session remainders,
  *   frozen timed shares and allocations grouped beneath it** (current Focus tags apply only to
- *   unlinked/legacy session minutes; funded shares use their credit-time eligibility) — not the
- *   stored [DayProgress] counters. Daily progress is credited to the same session-start/allocated
+ *   unlinked/legacy session minutes; funded shares use their credit-time eligibility). Timestamped
+ *   session leaves retain full tracked minutes as metadata, but those minutes are not added again to
+ *   the totals. Daily progress is credited to the same session-start/allocated
  *   date by the sync worker; recomputing totals from the grouped activity keeps them internally
  *   consistent with each other and with what the breakdown actually shows. [DayProgress] still
  *   supplies `questMet`, which remains authoritative for streaks.
@@ -283,15 +287,16 @@ fun groupHistory(
         val hostDate = localDate(activity.startAt, zone)
         val hostIsInWindow = (windowStartDate == null || hostDate >= windowStartDate) &&
             (windowEndDate == null || hostDate <= windowEndDate)
-        if (hostIsInWindow && activity.unlinkedMinutes > 0L) {
+        if (hostIsInWindow) {
             val cloudContribution = sessions.firstOrNull { it.id == activity.id }?.cloudContribution
                 ?: SessionCloudContribution()
             sessionsByDate.getOrPut(hostDate, ::mutableListOf) += HistorySessionUi(
                 id = activity.id,
                 startAt = activity.startAt,
-                minutes = activity.unlinkedMinutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                minutes = activity.minutes,
                 open = activity.open,
                 cloudContribution = cloudContribution,
+                creditedMinutes = activity.unlinkedMinutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
             )
         }
         activity.fundedShares.forEach shareLoop@{ share ->
@@ -346,7 +351,7 @@ fun groupHistory(
                     appId = appId,
                     name = nameById[appId] ?: "App $appId",
                     iconUrl = iconById[appId] ?: "",
-                    minutesPlayed = sessionsForGame.sumOf { it.minutes } +
+                    minutesPlayed = sessionsForGame.sumOf { it.creditedMinutes } +
                         timedSharesForGame.sumOf { it.minutes } +
                         allocationsForGame.sumOf { it.minutes },
                     sessions = sessionsForGame.sortedBy { it.startAt },
@@ -366,11 +371,11 @@ fun groupHistory(
         val sessionGoalMinutes = sessionsByGame
             .filterKeys { it in goalAppIds }
             .values.flatten()
-            .sumOf { it.minutes }
+            .sumOf { it.creditedMinutes }
 
         HistoryDayGroup(
             date = date,
-            minutesPlayed = daySessions.sumOf { it.minutes } + dayTimedShares.sumOf { it.minutes } +
+            minutesPlayed = daySessions.sumOf { it.creditedMinutes } + dayTimedShares.sumOf { it.minutes } +
                 dayAllocations.sumOf { it.minutes },
             goalMinutesPlayed = sessionGoalMinutes +
                 dayTimedShares.sumOf { it.goalMinutes } +

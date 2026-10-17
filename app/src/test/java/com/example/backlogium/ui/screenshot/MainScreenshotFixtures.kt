@@ -532,8 +532,16 @@ private fun mixedHistoryState(): HistoryUiState {
     val session = HistorySessionUi(
         id = 1L,
         startAt = Instant.parse("2026-01-15T18:20:00Z").toEpochMilli(),
-        minutes = 42,
+        minutes = 52,
         open = false,
+        creditedMinutes = 42,
+    )
+    val fullyFundedSession = HistorySessionUi(
+        id = 2L,
+        startAt = Instant.parse("2026-01-15T19:10:00Z").toEpochMilli(),
+        minutes = 20,
+        open = false,
+        creditedMinutes = 0,
     )
     val allocation = HistoryAllocationUi(
         placementId = "mixed|440|1",
@@ -552,14 +560,17 @@ private fun mixedHistoryState(): HistoryUiState {
         appId = 440L,
         name = "Hades II",
         iconUrl = fixtureArt("hades-icon"),
-        minutesPlayed = 87,
-        sessions = listOf(session),
+        minutesPlayed = 107,
+        sessions = listOf(session, fullyFundedSession),
         allocations = listOf(allocation),
-        timedShares = listOf(HistoryTimedShareUi(sessionId = session.id, minutes = 10, goalMinutes = 0)),
+        timedShares = listOf(
+            HistoryTimedShareUi(sessionId = session.id, minutes = 10, goalMinutes = 0),
+            HistoryTimedShareUi(sessionId = fullyFundedSession.id, minutes = 20, goalMinutes = 0),
+        ),
     )
     val day = HistoryDayGroup(
         date = today,
-        minutesPlayed = 87,
+        minutesPlayed = 107,
         goalMinutesPlayed = 42,
         questMet = true,
         games = listOf(game),
