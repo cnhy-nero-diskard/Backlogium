@@ -2,7 +2,6 @@ package com.example.backlogium.ui.history
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -147,7 +146,7 @@ class HistoryScreenRegressionTest {
         composeRule.onNodeWithText(
             "${formatHistoryDate(date.toString())} · ${UiFormat.approxTime(cloudStart)} · 30 mins",
         ).assertIsDisplayed()
-        composeRule.onNodeWithText("Ordinary target").assertDoesNotExist()
+        composeRule.onAllNodesWithText("Ordinary target").assertCountEquals(0)
     }
 
     private fun playSession(
