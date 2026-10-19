@@ -66,6 +66,221 @@ class BackupRecoveryValidatorTest {
     }
 
     @Test
+    fun observationHighWaterAboveLiveWriterRange_rejected() {
+        val recovery = observationOnlyRecovery(epoch = 1L).copy(
+            observations = listOf(validObservation().copy(highWaterMinutes = Int.MAX_VALUE.toLong() + 1L)),
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryObservation" && it.detail.contains("highWaterMinutes")
+        })
+    }
+
+    @Test
+    fun contributionEndpointAboveLiveWriterRange_rejected() {
+        val from = Int.MAX_VALUE.toLong() - 1L
+        val to = Int.MAX_VALUE.toLong() + 1L
+        val recovery = validRecovery().copy(
+            observations = listOf(validObservation().copy(highWaterMinutes = to)),
+            contributions = listOf(validContribution().copy(
+                fromMinutes = from,
+                toMinutes = to,
+                authorizedMinutes = to - from,
+            )),
+            unknownAllocations = listOf(allocation("2026-07-17", to - from)),
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("live Steam")
+        })
+    }
+
+    @Test
+    fun maximumLiveWriterValue_remainsValid() {
+        val max = Int.MAX_VALUE.toLong()
+        val recovery = validRecovery().copy(
+            observations = listOf(validObservation().copy(highWaterMinutes = max)),
+            contributions = listOf(validContribution().copy(
+                fromMinutes = max - 1L,
+                toMinutes = max,
+                authorizedMinutes = 1L,
+            )),
+            unknownAllocations = listOf(allocation("2026-07-17", 1L)),
+        )
+
+        assertTrue(BackupValidator.validate(v3(recovery)) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun alternateEpochContributionCoveredByObservedHighWater_remainsValid() {
+        val recovery = validRecovery().copy(
+            observations = listOf(validObservation().copy(highWaterMinutes = 700L)),
+            contributions = listOf(validContribution().copy(baselineEpoch = 2L)),
+        )
+
+        assertTrue(BackupValidator.validate(v3(recovery)) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun alternateEpochContributionPastObservedHighWater_rejected() {
+        val recovery = validRecovery().copy(
+            contributions = listOf(validContribution().copy(
+                baselineEpoch = 2L,
+                toMinutes = 606L,
+                authorizedMinutes = 106L,
+            )),
+            unknownAllocations = validAllocations().mapIndexed { index, row ->
+                if (index == 0) row.copy(minutes = 28L) else row
+            },
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("exceeds observation high-water")
+        })
+    }
+
+    @Test
+    fun sameEpochContributionBeyondObservationHighWater_rejected() {
+        val recovery = validRecovery().copy(
+            contributions = listOf(validContribution().copy(toMinutes = 606L, authorizedMinutes = 106L)),
+            unknownAllocations = validAllocations().mapIndexed { index, row ->
+                if (index == 0) row.copy(minutes = 28L) else row
+            },
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("exceeds observation high-water")
+        })
+    }
+
+    @Test
+    fun missingObservationForFundedContribution_rejected() {
+        val problems = v3(recovery = validRecovery().copy(observations = emptyList())).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("no recovery observation")
+        })
+    }
+
+    @Test
+    fun olderContributionEpochWithNewerResetBaseline_remainsValid() {
+        val recovery = validRecovery().copy(
+            observations = listOf(validObservation().copy(baselineEpoch = 2L, highWaterMinutes = 50L)),
+            contributions = listOf(validContribution().copy(baselineEpoch = 1L)),
+        )
+
+        assertTrue("older epoch shares remain historical across baseline re-establishment",
+            BackupValidator.validate(v3(recovery)) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun recoveryAccountMustMatchFileIdentity_butForeignFileIdentityRemainsValid() {
+        val foreignRecovery = recoveryForAccount(FOREIGN_ACCOUNT)
+
+        val mismatched = v3(recovery = foreignRecovery).assertRejected()
+        assertTrue(mismatched.any { it.detail.contains("does not match backup identity") })
+
+        val foreignFile = v3(recovery = foreignRecovery).copy(
+            identity = BackupIdentity(steamId64 = FOREIGN_ACCOUNT),
+        )
+        assertTrue("a foreign backup is valid when its own recovery records match its identity",
+            BackupValidator.validate(foreignFile) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun timedPlacementAccountMustMatchItsContribution() {
+        val timed = BackupTimedPlacement(
+            placementId = "timed-foreign",
+            contributionId = "c1",
+            account = FOREIGN_ACCOUNT,
+            appId = APP_ID,
+            revision = 1L,
+            minutes = 1L,
+            creditedDate = "2026-07-17",
+            zone = "UTC",
+            sessionStartAt = "2026-07-17T10:00:00Z",
+            sessionEndAt = "2026-07-17T11:00:00Z",
+            evidenceQuality = "LOCAL",
+        )
+        val recovery = validRecovery().copy(
+            timedPlacements = listOf(timed),
+            unknownAllocations = validAllocations().mapIndexed { index, row ->
+                if (index == 0) row.copy(minutes = 26L) else row
+            },
+        )
+
+        val problems = v3(recovery, sessions = listOf(validSession())).assertRejected()
+
+        assertTrue(problems.any { it.detail.contains("account/game does not match contribution") })
+    }
+
+    @Test
+    fun allocationAccountMustMatchItsContribution() {
+        val recovery = validRecovery().copy(
+            unknownAllocations = validAllocations().mapIndexed { index, row ->
+                if (index == 0) row.copy(account = FOREIGN_ACCOUNT) else row
+            },
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any { it.detail.contains("account/game does not match contribution") })
+    }
+
+    @Test
+    fun recipeAccountMustMatchItsContribution() {
+        val recovery = validRecovery().copy(recipes = listOf(validRecipe().copy(account = FOREIGN_ACCOUNT)))
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any { it.detail.contains("account/game does not match contribution") })
+    }
+
+    @Test
+    fun replacementAccountMustMatchItsContribution() {
+        val recovery = validRecovery().copy(replacements = listOf(validReplacement().copy(account = FOREIGN_ACCOUNT)))
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any { it.detail.contains("account/game does not match contribution") })
+    }
+
+    @Test
+    fun ambiguousPortableSessionReference_rejected() {
+        val timed = BackupTimedPlacement(
+            placementId = "timed-1",
+            contributionId = "c1",
+            account = ACCOUNT,
+            appId = APP_ID,
+            revision = 1L,
+            minutes = 1L,
+            creditedDate = "2026-07-17",
+            zone = "UTC",
+            sessionStartAt = "2026-07-17T10:00:00Z",
+            sessionEndAt = "2026-07-17T11:00:00Z",
+            evidenceQuality = "LOCAL",
+        )
+        val recovery = validRecovery().copy(
+            timedPlacements = listOf(timed, timed.copy(placementId = "timed-2")),
+            unknownAllocations = validAllocations().mapIndexed { index, row ->
+                if (index == 0) row.copy(minutes = 25L) else row
+            },
+        )
+
+        val problems = v3(recovery, sessions = listOf(validSession(), validSession())).assertRejected()
+
+        assertTrue(problems.any { it.detail.contains("ambiguous across 2 natural-key sessions") })
+    }
+
+    @Test
     fun v3WithoutRecoverySection_rejected() {
         val problems = v3(recovery = null).assertRejected()
         assertEquals("recovery", problems.single().recordType)
@@ -262,6 +477,13 @@ class BackupRecoveryValidatorTest {
         replacements = emptyList(),
     )
 
+    private fun recoveryForAccount(account: String) = validRecovery().copy(
+        observations = listOf(validObservation().copy(account = account)),
+        contributions = listOf(validContribution().copy(account = account)),
+        unknownAllocations = validAllocations().map { it.copy(account = account) },
+        replacements = listOf(validReplacement().copy(account = account)),
+    )
+
     private fun validObservation() = BackupRecoveryObservation(
         account = ACCOUNT,
         appId = APP_ID,
@@ -382,6 +604,7 @@ class BackupRecoveryValidatorTest {
 
     private companion object {
         const val ACCOUNT = "76561198000000000"
+        const val FOREIGN_ACCOUNT = "76561198000000001"
         const val APP_ID = 440L
     }
 }

@@ -100,6 +100,33 @@ class BackupRepositoryRecoveryPreflightTest {
         assertEquals("no local raw, recovery, or progression state may change", before, snapshot())
     }
 
+    @Test
+    fun nonRepresentableObservationHighWater_isRejectedBeforeAnyReceivingStateChanges() = runBlocking {
+        val before = snapshot()
+
+        val failure = runCatching {
+            repository.importBackup(observationBackup(highWater = Int.MAX_VALUE.toLong() + 1L))
+        }.exceptionOrNull()
+
+        assertTrue("the live detector cannot import this v3 high-water", failure is IllegalArgumentException)
+        assertEquals("Invalid backup", failure?.message)
+        assertEquals(before, snapshot())
+    }
+
+    @Test
+    fun recoveryAccountDifferentFromBackupIdentity_isRejectedBeforeAnyReceivingStateChanges() = runBlocking {
+        val before = snapshot()
+        val mismatched = observationBackup(highWater = 60L).copy(
+            identity = BackupIdentity(steamId64 = FOREIGN_ACCOUNT),
+        )
+
+        val failure = runCatching { repository.importBackup(mismatched) }.exceptionOrNull()
+
+        assertTrue("inconsistent source account linkage must fail preflight", failure is IllegalArgumentException)
+        assertEquals("Invalid backup", failure?.message)
+        assertEquals(before, snapshot())
+    }
+
     private suspend fun seedReceivingState() {
         database.gameDao().upsert(
             Game(
@@ -212,6 +239,20 @@ class BackupRepositoryRecoveryPreflightTest {
             replacements = emptyList(),
         ),
     )
+
+    private fun observationBackup(highWater: Long): BackupFile {
+        val backup = invalidObservationOnlyBackup()
+        return backup.copy(
+            recovery = backup.recovery!!.copy(
+                observations = listOf(
+                    backup.recovery.observations!!.single().copy(
+                        baselineEpoch = 1L,
+                        highWaterMinutes = highWater,
+                    ),
+                ),
+            ),
+        )
+    }
 
     private fun invalidContributionBackup(): BackupFile {
         val backup = invalidObservationOnlyBackup()
@@ -366,6 +407,7 @@ class BackupRepositoryRecoveryPreflightTest {
 
     private companion object {
         const val ACCOUNT = "76561198000000000"
+        const val FOREIGN_ACCOUNT = "76561198000000001"
         const val EXISTING_APP = 440L
         const val IMPORTED_APP = 730L
     }

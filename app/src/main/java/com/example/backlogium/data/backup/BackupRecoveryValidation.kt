@@ -48,8 +48,14 @@ internal object BackupRecoveryValidator {
         val recipes = recovery.recipes.orEmpty()
         val recipesById = recipes.associateBy { it.contributionId }
 
+        validateRecoverySourceAccounts(file.identity.steamId64, recovery, problems)
         validateObservations(recovery.observations.orEmpty(), problems)
         validateContributions(contributions, problems)
+        validateContributionObservationCoherence(
+            observations = recovery.observations.orEmpty(),
+            contributions = contributions,
+            problems = problems,
+        )
         validateTimedPlacements(timed, contributionsById, problems)
         val replacedPlacementIds = recovery.replacements.orEmpty()
             .flatMap { it.replacedPlacementIdsCsv.orEmpty().split(',') }
@@ -65,6 +71,61 @@ internal object BackupRecoveryValidator {
         validateRecipes(recipes, contributionsById, problems)
         validateReplacements(recovery.replacements.orEmpty(), contributionsById, problems)
         validateConservation(contributions, timed, allocations, recipesById, problems)
+    }
+
+    /**
+     * Recovery rows are exported for the source account recorded at the file root. Cross-account
+     * restore still works: the file identity belongs to the backup, not the receiving install.
+     */
+    private fun validateRecoverySourceAccounts(
+        backupIdentity: String,
+        recovery: BackupRecovery,
+        problems: MutableList<BackupValidationProblem>,
+    ) {
+        recovery.observations.orEmpty().forEachIndexed { index, observation ->
+            if (observation.account != backupIdentity) {
+                problems += problem(
+                    "recoveryObservation",
+                    index,
+                    "account ${observation.account} does not match backup identity $backupIdentity",
+                )
+            }
+        }
+        recovery.contributions.orEmpty().forEachIndexed { index, contribution ->
+            if (contribution.account != backupIdentity) {
+                problems += problem(
+                    "recoveryContribution",
+                    index,
+                    "account ${contribution.account} does not match backup identity $backupIdentity",
+                )
+            }
+        }
+    }
+
+    /** A v3 contribution is only importable when its detector lineage is represented in the file. */
+    private fun validateContributionObservationCoherence(
+        observations: List<BackupRecoveryObservation>,
+        contributions: List<BackupContribution>,
+        problems: MutableList<BackupValidationProblem>,
+    ) {
+        val observationsByGame = observations.associateBy { it.account to it.appId }
+        contributions.forEachIndexed { index, contribution ->
+            val observation = observationsByGame[contribution.account to contribution.appId]
+            when {
+                observation == null -> problems += problem(
+                    "recoveryContribution",
+                    index,
+                    "has no recovery observation for account ${contribution.account} app ${contribution.appId}",
+                )
+                contribution.baselineEpoch >= observation.baselineEpoch &&
+                    contribution.toMinutes > observation.highWaterMinutes -> problems += problem(
+                    "recoveryContribution",
+                    index,
+                    "non-older-epoch endpoint ${contribution.toMinutes} exceeds observation high-water " +
+                        observation.highWaterMinutes,
+                )
+            }
+        }
     }
 
     private fun section(name: String, value: Any?, problems: MutableList<BackupValidationProblem>) {
@@ -89,6 +150,14 @@ internal object BackupRecoveryValidator {
             }
             if (observation.highWaterMinutes < 0L) {
                 problems += problem("recoveryObservation", index, "negative highWaterMinutes")
+            }
+            if (observation.highWaterMinutes > MAX_LIVE_STEAM_MINUTES) {
+                problems += problem(
+                    "recoveryObservation",
+                    index,
+                    "highWaterMinutes ${observation.highWaterMinutes} exceeds live Steam Int range " +
+                        "0..$MAX_LIVE_STEAM_MINUTES",
+                )
             }
             if (observation.clockState !in CLOCK_STATES) {
                 problems += problem("recoveryObservation", index, "unknown clockState ${observation.clockState}")
@@ -154,6 +223,13 @@ internal object BackupRecoveryValidator {
                     problems += problem(
                         "recoveryContribution", index,
                         "cumulative minutes ${contribution.toMinutes} exceed plausibility bound",
+                    )
+                }
+                if (contribution.toMinutes > MAX_LIVE_STEAM_MINUTES) {
+                    problems += problem(
+                        "recoveryContribution", index,
+                        "cumulative range endpoint ${contribution.toMinutes} exceeds live Steam Int range " +
+                            "0..$MAX_LIVE_STEAM_MINUTES",
                     )
                 }
             }
@@ -392,6 +468,11 @@ internal object BackupRecoveryValidator {
                     "recoveryRecipe", index,
                     "recipe revision ${recipe.revision} is not the contribution's ${contribution.revision}",
                 )
+            } else if (recipe.account != contribution.account || recipe.appId != contribution.appId) {
+                problems += problem(
+                    "recoveryRecipe", index,
+                    "account/game does not match contribution ${recipe.contributionId}",
+                )
             }
             if (recipe.eligibleCount < 0) {
                 problems += problem("recoveryRecipe", index, "negative eligibleCount")
@@ -503,6 +584,11 @@ internal object BackupRecoveryValidator {
                     "recoveryReplacement", index,
                     "replacement revision ${replacement.currentRevision} is inconsistent with " +
                         "contribution revision ${contribution.revision}",
+                )
+            } else if (replacement.account != contribution.account || replacement.appId != contribution.appId) {
+                problems += problem(
+                    "recoveryReplacement", index,
+                    "account/game does not match contribution ${replacement.contributionId}",
                 )
             }
             if (replacement.derivedStatus !in JOURNAL_STATUSES) {
@@ -695,6 +781,7 @@ internal object BackupRecoveryValidator {
      * keeps every wide arithmetic check honest.
      */
     private const val MAX_PLAUSIBLE_CUMULATIVE_MINUTES = 1_000_000_000_000L
+    private val MAX_LIVE_STEAM_MINUTES = Int.MAX_VALUE.toLong()
 
     private fun String.epochMilliOrNull(): Long? = runCatching { iso8601ToEpochMilli() }.getOrNull()
 

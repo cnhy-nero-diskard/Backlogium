@@ -324,6 +324,38 @@ class RecoveryBackupMergePlannerTest {
     }
 
     @Test
+    fun divergentEpochLineages_mergeToAValidBackupWhenRetainedHighWaterCoversBoth() {
+        val localObservation = observation(highWater = 700L, at = 2_000L, epoch = 1L)
+        val local = recovery(
+            contributions = listOf(contribution("local-epoch-1", 500L, 700L, baselineEpoch = 1L)),
+            unknownAllocations = listOf(allocation("local-share", "local-epoch-1", "2026-07-17", 200L)),
+            observations = listOf(localObservation),
+        )
+        val imported = recovery(
+            contributions = listOf(contribution("imported-epoch-2", 500L, 605L, baselineEpoch = 2L)),
+            unknownAllocations = listOf(allocation("imported-share", "imported-epoch-2", "2026-07-16", 105L)),
+            observations = listOf(observation(highWater = 605L, at = 1_000L, epoch = 2L)),
+        )
+
+        val plan = planner.plan(local, imported, activeAccount = ACCOUNT)
+
+        // Epochs can diverge on separate device lineages; the local observation timestamp wins,
+        // and the max high-water still covers each retained funded endpoint.
+        assertTrue(plan.observations.isEmpty())
+        assertEquals(700L, localObservation.highWaterMinutes)
+        assertEquals(setOf(1L, 2L), plan.contributions.map { it.contribution.baselineEpoch }.toSet())
+        val mergedRecovery = BackupRecovery(
+            observations = listOf(localObservation),
+            contributions = plan.contributions.map { it.contribution },
+            timedPlacements = plan.contributions.flatMap { it.timedPlacements },
+            unknownAllocations = plan.contributions.flatMap { it.unknownAllocations },
+            recipes = plan.contributions.mapNotNull { it.recipe },
+            replacements = plan.replacements,
+        )
+        assertTrue(BackupValidator.validate(backup(mergedRecovery)) is BackupValidationResult.Valid)
+    }
+
+    @Test
     fun importedOnlyContribution_isAdded() {
         val imported = recovery(
             listOf(contribution("c1", 0, 100)),
@@ -354,11 +386,12 @@ class RecoveryBackupMergePlannerTest {
         from: Long,
         to: Long,
         revision: Long = 1,
+        baselineEpoch: Long = 1L,
     ) = BackupContribution(
         contributionId = id,
         account = ACCOUNT,
         appId = APP,
-        baselineEpoch = 1,
+        baselineEpoch = baselineEpoch,
         fromMinutes = from,
         toMinutes = to,
         windowStartAt = "2026-07-13T00:00:00Z",
@@ -436,10 +469,11 @@ class RecoveryBackupMergePlannerTest {
         account: String = ACCOUNT,
         highWater: Long,
         at: Long,
+        epoch: Long = 1L,
     ) = BackupRecoveryObservation(
         account = account,
         appId = APP,
-        baselineEpoch = 1,
+        baselineEpoch = epoch,
         highWaterMinutes = highWater,
         lastObservationAt = at.let { "2026-07-${if (it < 2_000) "16" else "17"}T12:00:00Z" },
         lastObservationDate = if (at < 2_000) "2026-07-16" else "2026-07-17",
@@ -461,6 +495,22 @@ class RecoveryBackupMergePlannerTest {
         unknownAllocations = unknownAllocations,
         recipes = recipes,
         replacements = replacements,
+    )
+
+    private fun backup(recovery: BackupRecovery) = BackupFile(
+        formatVersion = 3,
+        exportedAt = "2026-07-17T12:00:00Z",
+        identity = BackupIdentity(steamId64 = ACCOUNT),
+        ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 0, 5, 10, 20, 40, 80),
+        games = listOf(BackupGame(appId = APP, name = "Game", isGoal = false, backfillMinutes = 0)),
+        achievements = emptyList(),
+        sessions = emptyList(),
+        dailyProgress = emptyList(),
+        hltbData = emptyList(),
+        librarySortPrefs = BackupLibrarySortPrefs(focus = "NAME", library = "PLAYTIME"),
+        playerProfile = BackupPlayerProfile(0, 1, 0, 0, false),
+        computed = BackupComputed(emptyList(), emptyList()),
+        recovery = recovery,
     )
 
     private companion object {

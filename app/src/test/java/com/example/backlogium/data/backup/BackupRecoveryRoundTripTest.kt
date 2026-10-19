@@ -34,6 +34,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -197,6 +198,127 @@ class BackupRecoveryRoundTripTest {
         val allocationMinutes = restored.playtimeRecoveryDao().sumActiveDatedMinutes(ACCOUNT, APP)
         assertEquals(110L, restoredSession.minutes.toLong() + allocationMinutes)
         assertEquals(105L, restored.playtimeRecoveryDao().conservedAllocatedMinutes("c1"))
+    }
+
+    @Test
+    fun detachedTimedShare_roundTripsWithoutInventingASession() = runBlocking {
+        source.gameDao().upsert(game(APP, "Game"))
+        seedContribution(
+            source,
+            timed = listOf(
+                TimedContributionPlacement(
+                    placementId = "c1:1:t:detached:2026-07-15:-",
+                    contributionId = "c1",
+                    account = ACCOUNT,
+                    appId = APP,
+                    revision = 1,
+                    sessionId = null,
+                    minutes = 35,
+                    creditedDate = "2026-07-15",
+                    zone = "UTC",
+                    evidenceIdentity = "detached-evidence",
+                    evidenceQuality = "LOCAL",
+                    createdAt = 0,
+                ),
+            ),
+        )
+        seedBaseline(source, highWater = 605, date = "2026-07-17")
+
+        val file = exportMapper(source).buildExport()
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        assertNull(file.recovery!!.timedPlacements!!.single().sessionStartAt)
+        assertNull(file.recovery!!.timedPlacements!!.single().sessionEndAt)
+
+        mergeEngine(restored).merge(file, RuleConfig())
+
+        val restoredShare = recoveryStore(restored).read(ACCOUNT).timedPlacements!!.single()
+        assertNull(restoredShare.sessionStartAt)
+        assertNull(restoredShare.sessionEndAt)
+        assertEquals(105L, restored.playtimeRecoveryDao().conservedAllocatedMinutes("c1"))
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+
+        val secondExport = exportMapper(restored).buildExport()
+        assertTrue(BackupValidator.validate(secondExport) is BackupValidationResult.Valid)
+        assertNull(secondExport.recovery!!.timedPlacements!!.single().sessionStartAt)
+        assertNull(secondExport.recovery!!.timedPlacements!!.single().sessionEndAt)
+    }
+
+    @Test
+    fun foreignBackupBaseline_remainsInactiveForConfiguredAccount() = runBlocking {
+        val foreignAccount = "76561198000000001"
+        val file = BackupFile(
+            formatVersion = 3,
+            exportedAt = "2026-07-17T12:00:00Z",
+            identity = BackupIdentity(steamId64 = foreignAccount),
+            ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 0, 5, 10, 20, 40, 80),
+            games = listOf(BackupGame(appId = APP, name = "Foreign game", isGoal = false, backfillMinutes = 0)),
+            achievements = emptyList(),
+            sessions = emptyList(),
+            dailyProgress = emptyList(),
+            hltbData = emptyList(),
+            librarySortPrefs = BackupLibrarySortPrefs(focus = "NAME", library = "PLAYTIME"),
+            playerProfile = BackupPlayerProfile(0, 1, 0, 0, false),
+            computed = BackupComputed(emptyList(), emptyList()),
+            recovery = BackupRecovery(
+                observations = listOf(
+                    BackupRecoveryObservation(
+                        account = foreignAccount,
+                        appId = APP,
+                        baselineEpoch = 1,
+                        highWaterMinutes = 605,
+                        lastObservationAt = "2026-07-17T12:00:00Z",
+                        lastObservationDate = "2026-07-17",
+                        lastObservationZone = "UTC",
+                        clockState = "VALID",
+                    ),
+                ),
+                contributions = listOf(
+                    BackupContribution(
+                        contributionId = "foreign-contribution",
+                        account = foreignAccount,
+                        appId = APP,
+                        baselineEpoch = 1,
+                        fromMinutes = 500,
+                        toMinutes = 605,
+                        windowStartAt = "2026-07-13T12:00:00Z",
+                        windowEndAt = "2026-07-17T12:00:00Z",
+                        authorizedMinutes = 105,
+                        revision = 1,
+                        provenance = "RETROACTIVE_PLAY",
+                        zone = "UTC",
+                        observedZone = "UTC",
+                    ),
+                ),
+                timedPlacements = emptyList(),
+                unknownAllocations = listOf(27L, 26L, 26L, 26L).mapIndexed { index, minutes ->
+                    BackupUnknownAllocation(
+                        placementId = "foreign-contribution:p$index",
+                        contributionId = "foreign-contribution",
+                        account = foreignAccount,
+                        appId = APP,
+                        revision = 1,
+                        date = listOf("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17")[index],
+                        minutes = minutes,
+                        method = "MULTI_DAY_ESTIMATE",
+                        zone = "UTC",
+                        windowStartAt = "2026-07-13T12:00:00Z",
+                        windowEndAt = "2026-07-17T12:00:00Z",
+                    )
+                },
+                recipes = emptyList(),
+                replacements = emptyList(),
+            ),
+        )
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+
+        val summary = mergeEngine(restored).merge(file, RuleConfig())
+
+        assertTrue(summary.warnings.any { it.detail.contains("foreign recovery baseline") && it.detail.contains("kept inactive") })
+        assertNull(restored.playtimeRecoveryDao().state(foreignAccount, APP))
+        assertNull(restored.playtimeRecoveryDao().state(ACCOUNT, APP))
+        assertEquals(105L, restored.playtimeRecoveryDao().conservedAllocatedMinutes("foreign-contribution"))
+        assertEquals(foreignAccount, restored.playtimeRecoveryDao().contribution("foreign-contribution")!!.account)
+        assertEquals(ACCOUNT, restored.playerProfileDao().get()!!.steamId)
     }
 
     @Test
