@@ -164,6 +164,25 @@ class PlaytimeObservationCommitterRecoveryTest {
     }
 
     @Test
+    fun twoMinuteFourDayResidualStoresOnlyTheTwoPositiveEarliestShares() = runTest {
+        seedGame(appId, playtime = 500, lastSyncAt = monday)
+
+        val result = db.withTransaction { committer().commit(obs(appId, 502), friday, friday) }
+
+        assertEquals(2, result.playedDeltaByAppId[appId])
+        val contribution = db.playtimeRecoveryDao().contributionsForGame(account, appId).single()
+        val allocations = db.playtimeRecoveryDao().activeAllocations(contribution.contributionId)
+        assertEquals(2L, contribution.authorizedMinutes)
+        assertEquals(2L, allocations.sumOf { it.minutes })
+        assertEquals(listOf(1L, 1L), allocations.sortedBy { it.date }.map { it.minutes })
+        assertEquals(listOf("2026-07-21", "2026-07-22"), allocations.sortedBy { it.date }.map { it.date })
+        assertTrue(allocations.none { it.minutes == 0L || it.date == null })
+        assertTrue(db.sessionDao().getAll().none { it.appId == appId })
+        assertTrue(db.playtimeRecoveryDao().validateGraph(contribution.contributionId))
+        assertEquals(2L, db.playtimeRecoveryDao().conservedAllocatedMinutes(contribution.contributionId))
+    }
+
+    @Test
     fun rawWriteFailpointsRollbackEveryObservationBoundaryThenRetryCommitsOnce() = runTest {
         RawObservationFailpoint.values().forEachIndexed { index, failpoint ->
             val targetApp = appId + 10L + index
