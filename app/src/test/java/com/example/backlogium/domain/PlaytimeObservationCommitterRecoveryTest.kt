@@ -3,12 +3,24 @@ package com.example.backlogium.domain
 import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.dao.BaselineAdvance
+import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
+import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.HiddenGame
+import com.example.backlogium.data.local.entity.PlaytimeContribution
 import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.RecoveredSharedPlayState
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.TimedContributionPlacement
+import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
+import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
 import com.example.backlogium.data.repo.CloudPendingEvidencePruner
 import com.example.backlogium.data.repo.FakeCredentials
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
@@ -94,6 +106,119 @@ class PlaytimeObservationCommitterRecoveryTest {
         assertTrue("funded graph must stay conserved", dao.validateGraph(contributions.single().contributionId))
         assertEquals(70, allocatedMinutes(appId))
         assertEquals(570, db.gameDao().getById(appId)!!.lastPlaytime)
+    }
+
+    @Test
+    fun independentPeriodicAndTargetedCoordinatorsCommitTheHighWaterOnceInEitherOrder() = runTest {
+        val periodicFirstApp = appId + 1L
+        val targetedFirstApp = appId + 2L
+        seedGame(periodicFirstApp, playtime = 500, lastSyncAt = monday)
+        seedGame(targetedFirstApp, playtime = 500, lastSyncAt = monday)
+        val sharedCommitter = committer()
+        val periodicCoordinator = com.example.backlogium.work.SteamSyncCoordinator()
+        val targetedCoordinator = com.example.backlogium.work.SteamSyncCoordinator()
+
+        val periodicFirst = periodicCoordinator.withLock {
+            db.withTransaction { sharedCommitter.commit(obs(periodicFirstApp, 570), wednesday, wednesday) }
+        }
+        val targetedSecond = targetedCoordinator.withLock {
+            db.withTransaction { sharedCommitter.commit(obs(periodicFirstApp, 570), wednesday, wednesday) }
+        }
+        val targetedFirst = targetedCoordinator.withLock {
+            db.withTransaction { sharedCommitter.commit(obs(targetedFirstApp, 570), wednesday, wednesday) }
+        }
+        val periodicSecond = periodicCoordinator.withLock {
+            db.withTransaction { sharedCommitter.commit(obs(targetedFirstApp, 570), wednesday, wednesday) }
+        }
+
+        assertTrue(periodicFirst.recordedPlay)
+        assertFalse(targetedSecond.recordedPlay)
+        assertTrue(targetedFirst.recordedPlay)
+        assertFalse(periodicSecond.recordedPlay)
+        for (targetApp in listOf(periodicFirstApp, targetedFirstApp)) {
+            val contributions = db.playtimeRecoveryDao().contributionsForGame(account, targetApp)
+            assertEquals(1, contributions.size)
+            assertEquals(70L, contributions.single().authorizedMinutes)
+            assertTrue(db.playtimeRecoveryDao().validateGraph(contributions.single().contributionId))
+            assertEquals(570L, db.playtimeRecoveryDao().state(account, targetApp)!!.highWaterMinutes)
+            assertEquals(570, db.gameDao().getById(targetApp)!!.lastPlaytime)
+        }
+    }
+
+    @Test
+    fun firstOwnedReadOnlyEstablishesBaselineAndDoesNotImportLifetimePlay() = runTest {
+        db.playerProfileDao().upsert(PlayerProfile(steamId = account, lastSyncAt = 0L))
+
+        val result = db.withTransaction {
+            committer().commit(obs(appId, 605), friday, friday)
+        }
+
+        assertFalse(result.recordedPlay)
+        assertTrue(result.playedDeltaByAppId.isEmpty())
+        assertEquals(setOf(appId), result.baselineEstablishedAppIds)
+        assertEquals(0, db.sessionDao().getAll().count { it.appId == appId })
+        assertTrue(db.playtimeRecoveryDao().contributionsForGame(account, appId).isEmpty())
+        assertEquals(605L, db.playtimeRecoveryDao().state(account, appId)!!.highWaterMinutes)
+        assertEquals(605, db.gameDao().getById(appId)!!.lastPlaytime)
+        assertTrue(db.dailyProgressDao().getAllOrdered().isEmpty())
+    }
+
+    @Test
+    fun rawWriteFailpointsRollbackEveryObservationBoundaryThenRetryCommitsOnce() = runTest {
+        RawObservationFailpoint.values().forEachIndexed { index, failpoint ->
+            val targetApp = appId + 10L + index
+            seedGame(targetApp, playtime = 500, lastSyncAt = monday)
+
+            val failingRecoveryDao = FailingRawObservationRecoveryDao(db.playtimeRecoveryDao(), failpoint)
+            val failingSessionDao = FailingRawObservationSessionDao(db.sessionDao(), failpoint)
+            val failingDailyDao = FailingRawObservationDailyDao(db.dailyProgressDao(), failpoint)
+            val failingGameDao = FailingRawObservationGameDao(db.gameDao(), failpoint)
+            val failingCommitter = committer(
+                adapter = PlaytimeRecoveryCommitAdapter(failingRecoveryDao, failingSessionDao),
+                gameDao = failingGameDao,
+                sessionDao = failingSessionDao,
+                dailyProgressDao = failingDailyDao,
+            )
+
+            val beforeGame = db.gameDao().getById(targetApp)!!
+            val beforeSessions = db.sessionDao().getAll().filter { it.appId == targetApp }
+            val beforeDaily = db.dailyProgressDao().getAllOrdered()
+            val beforeOtherContributions = db.playtimeRecoveryDao().contributionsForGame(account, targetApp)
+
+            val failure = runCatching {
+                db.withTransaction {
+                    failingCommitter.commit(
+                        observed = obs(targetApp, 570),
+                        observedPlayAt = friday,
+                        syncedAt = friday,
+                        placement = placement(targetApp),
+                    )
+                }
+            }.exceptionOrNull()
+
+            assertNotNull("$failpoint must interrupt the raw observation", failure)
+            assertEquals(beforeGame, db.gameDao().getById(targetApp))
+            assertEquals(beforeSessions, db.sessionDao().getAll().filter { it.appId == targetApp })
+            assertEquals(beforeDaily, db.dailyProgressDao().getAllOrdered())
+            assertNull(db.playtimeRecoveryDao().state(account, targetApp))
+            assertEquals(beforeOtherContributions, db.playtimeRecoveryDao().contributionsForGame(account, targetApp))
+
+            val retry = db.withTransaction {
+                committer().commit(
+                    observed = obs(targetApp, 570),
+                    observedPlayAt = friday,
+                    syncedAt = friday,
+                    placement = placement(targetApp),
+                )
+            }
+            assertTrue("$failpoint retry should still authorize the increase", retry.recordedPlay)
+            val contributions = db.playtimeRecoveryDao().contributionsForGame(account, targetApp)
+            assertEquals(1, contributions.size)
+            assertEquals(70L, contributions.single().authorizedMinutes)
+            assertTrue(db.playtimeRecoveryDao().validateGraph(contributions.single().contributionId))
+            assertEquals(570L, db.playtimeRecoveryDao().state(account, targetApp)!!.highWaterMinutes)
+            assertEquals(570, db.gameDao().getById(targetApp)!!.lastPlaytime)
+        }
     }
 
     // ----------------------------------------------------------------- 4.2 atomic failpoint
@@ -421,22 +546,43 @@ class PlaytimeObservationCommitterRecoveryTest {
         ),
         pruner: CloudPendingEvidencePruner? = null,
         time: TimeProvider = MutableTimeProvider(),
+        gameDao: GameDao = db.gameDao(),
+        sessionDao: SessionDao = db.sessionDao(),
+        dailyProgressDao: DailyProgressDao = db.dailyProgressDao(),
     ): PlaytimeObservationCommitter {
         return PlaytimeObservationCommitter(
-            gameDao = db.gameDao(),
-            sessionDao = db.sessionDao(),
-            dailyProgressDao = db.dailyProgressDao(),
+            gameDao = gameDao,
+            sessionDao = sessionDao,
+            dailyProgressDao = dailyProgressDao,
             profileDao = db.playerProfileDao(),
             hiddenGameDao = db.hiddenGameDao(),
             differ = SessionDiffer(),
             time = time,
             sessionActionWriter = SessionActionWriter(
-                db.sessionDao(), db.dailyProgressDao(), db.hiddenGameDao(), time,
+                sessionDao, dailyProgressDao, db.hiddenGameDao(), time,
             ),
             recoveryAdapter = adapter,
             pendingEvidencePruner = pruner,
         )
     }
+
+    private fun placement(targetApp: Long) = CloudPresencePlaytimePlacement.Input(
+        intervals = listOf(
+            CloudPresenceInterval(
+                appId = targetApp,
+                gameName = "Owned",
+                startAt = atUtc(2026, 7, 22, 17, 0),
+                endAt = atUtc(2026, 7, 22, 17, 35),
+                ongoing = false,
+                coverage = CloudCoverageState.CONTINUOUS,
+                observedUntil = null,
+                coverageLapseFrom = null,
+                coverageLapseRecoveredAt = null,
+                mayHaveStartedBefore = false,
+            ),
+        ),
+        readerIdentity = CloudReaderIdentity(account, 1L),
+    )
 
     private inner class MutableTimeProvider(var currentZone: ZoneId = ZoneOffset.UTC) : TimeProvider {
         override fun nowMillis() = friday
@@ -464,6 +610,129 @@ class PlaytimeObservationCommitterRecoveryTest {
 
     private fun atUtc(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
         Instant.parse("%04d-%02d-%02dT%02d:%02d:00Z".format(year, month, day, hour, minute)).toEpochMilli()
+}
+
+private enum class RawObservationFailpoint {
+    BASELINE_SEED,
+    SESSION_OPEN,
+    CONTRIBUTION_GRAPH,
+    JOURNAL,
+    BASELINE_ADVANCE,
+    DAILY_DATE,
+    DAILY_CREDIT,
+    GAME_STEAM_FIELDS,
+}
+
+/** Delegates real Room writes, then throws at the selected point so Room must roll them back. */
+private class FailingRawObservationRecoveryDao(
+    private val delegate: PlaytimeRecoveryDao,
+    private val failpoint: RawObservationFailpoint,
+) : PlaytimeRecoveryDao by delegate {
+    override suspend fun upsertStateIfAccountActive(state: GameRecoveryState): Boolean {
+        val written = delegate.upsertStateIfAccountActive(state)
+        if (failpoint == RawObservationFailpoint.BASELINE_SEED) error("raw baseline seed failpoint")
+        return written
+    }
+
+    override suspend fun commitAllocatedGraph(
+        contribution: PlaytimeContribution,
+        timed: List<TimedContributionPlacement>,
+        allocations: List<UnknownTimeAllocation>,
+        recipe: UnknownTimeAllocationRecipe?,
+    ): Boolean {
+        val written = delegate.commitAllocatedGraph(contribution, timed, allocations, recipe)
+        if (failpoint == RawObservationFailpoint.CONTRIBUTION_GRAPH) error("raw contribution graph failpoint")
+        return written
+    }
+
+    override suspend fun upsertJournal(journal: PlaytimeRecoveryJournal) {
+        delegate.upsertJournal(journal)
+        if (failpoint == RawObservationFailpoint.JOURNAL) error("raw journal failpoint")
+    }
+
+    override suspend fun advanceBaseline(
+        account: String,
+        appId: Long,
+        absoluteMinutes: Long,
+        observedAt: Long,
+        date: String?,
+        zone: String?,
+        epoch: Long,
+    ): BaselineAdvance {
+        val advanced = delegate.advanceBaseline(account, appId, absoluteMinutes, observedAt, date, zone, epoch)
+        if (failpoint == RawObservationFailpoint.BASELINE_ADVANCE) error("raw baseline advance failpoint")
+        return advanced
+    }
+}
+
+private class FailingRawObservationSessionDao(
+    private val delegate: SessionDao,
+    private val failpoint: RawObservationFailpoint,
+) : SessionDao by delegate {
+    override suspend fun tryOpenSession(
+        appId: Long,
+        startAt: Long,
+        endAt: Long?,
+        minutes: Int,
+        recoveredSharedPlay: RecoveredSharedPlayState,
+        timingInformedSteamPlay: TimingInformedSteamPlayState,
+    ): Long {
+        val id = delegate.tryOpenSession(
+            appId = appId,
+            startAt = startAt,
+            endAt = endAt,
+            minutes = minutes,
+            recoveredSharedPlay = recoveredSharedPlay,
+            timingInformedSteamPlay = timingInformedSteamPlay,
+        )
+        if (failpoint == RawObservationFailpoint.SESSION_OPEN) error("raw session write failpoint")
+        return id
+    }
+}
+
+private class FailingRawObservationDailyDao(
+    private val delegate: DailyProgressDao,
+    private val failpoint: RawObservationFailpoint,
+) : DailyProgressDao by delegate {
+    override suspend fun ensureDate(date: String) {
+        delegate.ensureDate(date)
+        if (failpoint == RawObservationFailpoint.DAILY_DATE) error("raw daily date failpoint")
+    }
+
+    override suspend fun addMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int) {
+        delegate.addMinutes(date, minutesPlayed, goalMinutesPlayed)
+        if (failpoint == RawObservationFailpoint.DAILY_CREDIT) error("raw daily credit failpoint")
+    }
+}
+
+private class FailingRawObservationGameDao(
+    private val delegate: GameDao,
+    private val failpoint: RawObservationFailpoint,
+) : GameDao by delegate {
+    override suspend fun updateSteamFields(
+        appId: Long,
+        name: String,
+        iconUrl: String,
+        playtimeForever: Int,
+        playtime2Weeks: Int,
+        lastPlaytime: Int,
+        lastSyncedAt: Long,
+        lastPlayedAt: Long?,
+        returnedToPlayAt: Long?,
+    ) {
+        delegate.updateSteamFields(
+            appId = appId,
+            name = name,
+            iconUrl = iconUrl,
+            playtimeForever = playtimeForever,
+            playtime2Weeks = playtime2Weeks,
+            lastPlaytime = lastPlaytime,
+            lastSyncedAt = lastSyncedAt,
+            lastPlayedAt = lastPlayedAt,
+            returnedToPlayAt = returnedToPlayAt,
+        )
+        if (failpoint == RawObservationFailpoint.GAME_STEAM_FIELDS) error("raw Steam detector pair failpoint")
+    }
 }
 
 /** A storage-level failpoint: every write works until the journal lands, then the commit breaks. */
