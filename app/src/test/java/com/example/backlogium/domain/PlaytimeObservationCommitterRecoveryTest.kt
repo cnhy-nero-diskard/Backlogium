@@ -21,6 +21,7 @@ import com.example.backlogium.data.local.entity.TimedContributionPlacement
 import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.data.local.entity.RecoverySnapshotClassifications
 import com.example.backlogium.data.repo.CloudPendingEvidencePruner
 import com.example.backlogium.data.repo.FakeCredentials
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
@@ -180,6 +181,63 @@ class PlaytimeObservationCommitterRecoveryTest {
         assertTrue(db.sessionDao().getAll().none { it.appId == appId })
         assertTrue(db.playtimeRecoveryDao().validateGraph(contribution.contributionId))
         assertEquals(2L, db.playtimeRecoveryDao().conservedAllocatedMinutes(contribution.contributionId))
+    }
+
+    @Test
+    fun unchangedRegressionAndMissingReadsNeverRewindTheHighWaterOrDuplicateCredit() = runTest {
+        seedGame(appId, playtime = 500, lastSyncAt = monday)
+        val committer = committer()
+        val sunday = atUtc(2026, 7, 26, 20, 0)
+
+        val firstIncrease = db.withTransaction {
+            committer.commit(obs(appId, 605), friday, friday)
+        }
+        assertEquals(105, firstIncrease.playedDeltaByAppId[appId])
+        assertEquals(1, db.playtimeRecoveryDao().contributionsForGame(account, appId).size)
+
+        db.playerProfileDao().updateSyncStatus(friday, null)
+        val unchangedAt = saturday
+        val unchanged = db.withTransaction {
+            committer.commit(obs(appId, 605), unchangedAt, unchangedAt)
+        }
+        assertFalse(unchanged.recordedPlay)
+        assertEquals(1, db.playtimeRecoveryDao().contributionsForGame(account, appId).size)
+        assertEquals(605L, db.playtimeRecoveryDao().state(account, appId)!!.highWaterMinutes)
+
+        db.playerProfileDao().updateSyncStatus(unchangedAt, null)
+        val regressed = db.withTransaction {
+            committer.commit(obs(appId, 600), sunday, sunday)
+        }
+        assertFalse(regressed.recordedPlay)
+        assertEquals(1, db.playtimeRecoveryDao().contributionsForGame(account, appId).size)
+        assertEquals(605L, db.playtimeRecoveryDao().state(account, appId)!!.highWaterMinutes)
+        assertEquals(605, db.gameDao().getById(appId)!!.lastPlaytime)
+        assertEquals(
+            RecoverySnapshotClassifications.REGRESSION,
+            db.playtimeRecoveryDao().snapshot(account, appId, "2026-07-26")!!.classification,
+        )
+
+        db.playerProfileDao().updateSyncStatus(sunday, null)
+        val stateBeforeMissing = db.playtimeRecoveryDao().state(account, appId)
+        val gameBeforeMissing = db.gameDao().getById(appId)
+        val contributionsBeforeMissing = db.playtimeRecoveryDao().contributionsForGame(account, appId)
+        val missing = db.withTransaction {
+            committer.commit(observed = emptyList(), observedPlayAt = monday, syncedAt = monday)
+        }
+        assertFalse(missing.recordedPlay)
+        assertEquals(stateBeforeMissing, db.playtimeRecoveryDao().state(account, appId))
+        assertEquals(gameBeforeMissing, db.gameDao().getById(appId))
+        assertEquals(contributionsBeforeMissing, db.playtimeRecoveryDao().contributionsForGame(account, appId))
+
+        val resumedAt = atUtc(2026, 7, 27, 12, 0)
+        val recovered = db.withTransaction {
+            committer.commit(obs(appId, 620), resumedAt, resumedAt)
+        }
+        assertEquals(15, recovered.playedDeltaByAppId[appId])
+        assertEquals(120L, db.playtimeRecoveryDao().contributionsForGame(account, appId)
+            .sumOf { it.authorizedMinutes })
+        assertEquals(620L, db.playtimeRecoveryDao().state(account, appId)!!.highWaterMinutes)
+        assertEquals(620, db.gameDao().getById(appId)!!.lastPlaytime)
     }
 
     @Test
