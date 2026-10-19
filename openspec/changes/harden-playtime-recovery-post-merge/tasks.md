@@ -1,6 +1,6 @@
 ## 1. Reconfirm the base and establish the audit record
 
-- [ ] 1.1 Reconfirm the implementation branch is newly based on current master, inspect any intervening changes, and record local/remote retained-feature-branch tips without modifying them; verify the scoped workspace and archived recovery dependency match the proposal or document the refreshed base in audit-notes.md.
+- [x] 1.1 Reconfirm the implementation branch is newly based on current master, inspect any intervening changes, and record local/remote retained-feature-branch tips without modifying them; verify the scoped workspace and archived recovery dependency match the proposal or document the refreshed base in audit-notes.md.
 - [ ] 1.2 Inventory the seven named recovery components, adapters, all raw/derived/restore/account writers and quantity/date consumers; verify audit-notes.md contains the actual data-flow/transaction/lock map and an evidence-ranked register separating D1, R1-R3, F1 and optional cleanup.
 - [ ] 1.3 Establish the baseline evidence matrix on the implementation head, including exact runtime/SDK/environment, existing test reports and current CI; verify each issue A-E item has a fixture or explicit pending verification and historical/user-reported results are labelled without closing new acceptance work.
 
