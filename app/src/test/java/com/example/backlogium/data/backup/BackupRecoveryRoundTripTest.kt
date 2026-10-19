@@ -1,12 +1,14 @@
 package com.example.backlogium.data.backup
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.PlaytimeContribution
 import com.example.backlogium.data.local.entity.PlaytimeRecoveryJournal
+import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.RecoveryJournalStatus
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.TimedContributionPlacement
@@ -14,8 +16,12 @@ import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
+import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import java.time.LocalDate
@@ -252,6 +258,131 @@ class BackupRecoveryRoundTripTest {
         // a future Steam read at 605 diffs to zero instead of re-crediting the imported quantity.
         assertEquals(605, restored.gameDao().getById(APP)!!.lastPlaytime)
         assertEquals(605L, restored.playtimeRecoveryDao().state(ACCOUNT, APP)!!.highWaterMinutes)
+    }
+
+    @Test
+    fun restoredPositiveEpoch_unchangedThenIncreasingSteamReadAndRepeatedImportStayConserved() = runBlocking {
+        source.gameDao().upsert(game(APP, "Game"))
+        seedContribution(source)
+        seedBaseline(source, highWater = 605, date = "2026-07-17")
+        val backup = exportMapper(source).buildExport()
+
+        // A pre-existing successful local poll supplies the ordinary diff boundary. Restore must
+        // adopt the recovery high-water into Game.lastPlaytime before the next Steam read.
+        restored.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT, lastSyncAt = FixedTime.nowMillis()))
+        mergeEngine(restored).merge(backup, RuleConfig())
+
+        val dao = restored.playtimeRecoveryDao()
+        val restoredBaseline = dao.state(ACCOUNT, APP)!!
+        assertEquals(1L, restoredBaseline.baselineEpoch)
+        assertEquals(605L, restoredBaseline.highWaterMinutes)
+        assertEquals(605, restored.gameDao().getById(APP)!!.lastPlaytime)
+        assertEquals(105L, dao.conservedAllocatedMinutes("c1"))
+        assertTrue(dao.validateGraph("c1"))
+
+        val committer = observationCommitter(restored)
+        val unchangedAt = iso("2026-07-17T13:00:00Z")
+        val unchanged = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 605)),
+                observedPlayAt = unchangedAt,
+                syncedAt = unchangedAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertFalse(unchanged.recordedPlay)
+        assertEquals(0, unchanged.playedDeltaByAppId[APP] ?: 0)
+        assertEquals(0, unchanged.recoveredContributions)
+        assertEquals(1, dao.contributionsForGame(ACCOUNT, APP).size)
+        assertEquals(605L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(605, restored.gameDao().getById(APP)!!.lastPlaytime)
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+
+        // The worker records the successful observation boundary after the raw commit. A later
+        // authoritative increase must be measured from the restored high-water, not from zero.
+        restored.playerProfileDao().updateSyncStatus(unchangedAt, null)
+        val increasedAt = iso("2026-07-17T13:30:00Z")
+        val increased = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 630)),
+                observedPlayAt = increasedAt,
+                syncedAt = increasedAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertTrue(increased.recordedPlay)
+        assertEquals(25, increased.playedDeltaByAppId[APP])
+        assertEquals(1, increased.recoveredContributions)
+
+        val afterIncrease = dao.contributionsForGame(ACCOUNT, APP)
+        assertEquals(2, afterIncrease.size)
+        assertEquals(130L, afterIncrease.sumOf { it.authorizedMinutes })
+        afterIncrease.forEach { contribution ->
+            assertTrue(dao.validateGraph(contribution.contributionId))
+            assertEquals(contribution.authorizedMinutes, dao.conservedAllocatedMinutes(contribution.contributionId))
+        }
+        assertEquals(130L, afterIncrease.sumOf { dao.conservedAllocatedMinutes(it.contributionId) })
+        assertEquals(630L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(630, restored.gameDao().getById(APP)!!.lastPlaytime)
+        val sessionsAfterIncrease = restored.sessionDao().getAll()
+
+        // Replaying the older, valid backup must neither re-fund its original range nor roll the
+        // detector pair back over the newer local observation.
+        repeat(2) {
+            mergeEngine(restored).merge(backup, RuleConfig())
+            val current = dao.contributionsForGame(ACCOUNT, APP)
+            assertEquals(2, current.size)
+            assertEquals(130L, current.sumOf { it.authorizedMinutes })
+            assertEquals(130L, current.sumOf { dao.conservedAllocatedMinutes(it.contributionId) })
+            assertEquals(630L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+            assertEquals(630, restored.gameDao().getById(APP)!!.lastPlaytime)
+            assertEquals(sessionsAfterIncrease, restored.sessionDao().getAll())
+        }
+    }
+
+    @Test
+    fun legacyV1AndV2Restore_firstSteamReadBaselinesWithoutLifetimeCredit() = runBlocking {
+        for ((version, database) in listOf(1 to source, 2 to restored)) {
+            val backup = legacyBackup(version)
+            assertTrue(BackupValidator.validate(backup) is BackupValidationResult.Valid)
+            mergeEngine(database).merge(backup, RuleConfig())
+            val legacySession = database.sessionDao().getAll().single()
+
+            val committer = observationCommitter(database)
+            val firstReadAt = iso("2026-07-17T13:00:00Z")
+            val firstRead = database.withTransaction {
+                committer.commit(
+                    observed = listOf(observed(APP, 605)),
+                    observedPlayAt = firstReadAt,
+                    syncedAt = firstReadAt,
+                    expectedAccount = ACCOUNT,
+                )
+            }
+            assertFalse("legacy history must not become a new lifetime delta", firstRead.recordedPlay)
+            assertEquals(0, firstRead.playedDeltaByAppId[APP] ?: 0)
+            assertTrue(database.playtimeRecoveryDao().contributionsForGame(ACCOUNT, APP).isEmpty())
+            assertEquals(605, database.gameDao().getById(APP)!!.lastPlaytime)
+            assertEquals(legacySession, database.sessionDao().findByNaturalKey(APP, legacySession.startAt, legacySession.endAt))
+            assertEquals(1, database.sessionDao().getAll().count { it.id == legacySession.id })
+
+            database.playerProfileDao().updateSyncStatus(firstReadAt, null)
+            val increaseAt = iso("2026-07-17T13:30:00Z")
+            val increase = database.withTransaction {
+                committer.commit(
+                    observed = listOf(observed(APP, 625)),
+                    observedPlayAt = increaseAt,
+                    syncedAt = increaseAt,
+                    expectedAccount = ACCOUNT,
+                )
+            }
+            assertTrue("only play newer than the legacy baseline is eligible", increase.recordedPlay)
+            assertEquals(20, increase.playedDeltaByAppId[APP])
+            assertEquals(20L, database.playtimeRecoveryDao()
+                .contributionsForGame(ACCOUNT, APP).sumOf { it.authorizedMinutes })
+            assertEquals(625L, database.playtimeRecoveryDao().state(ACCOUNT, APP)!!.highWaterMinutes)
+            assertEquals(625, database.gameDao().getById(APP)!!.lastPlaytime)
+            assertEquals(1, database.sessionDao().getAll().count { it.id == legacySession.id })
+        }
     }
 
     @Test
@@ -531,6 +662,50 @@ class BackupRecoveryRoundTripTest {
 
     private fun recoveryStore(db: BacklogiumDatabase) =
         DaoRecoveryBackupStore(db.playtimeRecoveryDao(), db.sessionDao())
+
+    private fun observationCommitter(db: BacklogiumDatabase) = PlaytimeObservationCommitter(
+        gameDao = db.gameDao(),
+        sessionDao = db.sessionDao(),
+        dailyProgressDao = db.dailyProgressDao(),
+        profileDao = db.playerProfileDao(),
+        hiddenGameDao = db.hiddenGameDao(),
+        differ = SessionDiffer(),
+        time = FixedTime,
+        sessionActionWriter = SessionActionWriter(
+            db.sessionDao(), db.dailyProgressDao(), db.hiddenGameDao(), FixedTime,
+        ),
+        recoveryAdapter = PlaytimeRecoveryCommitAdapter(db.playtimeRecoveryDao(), db.sessionDao()),
+    )
+
+    private fun observed(appId: Long, playtime: Int) =
+        PlaytimeObservationCommitter.ObservedGame(appId, "Game", "", playtime, 0)
+
+    private fun legacyBackup(version: Int) = BackupFile(
+        formatVersion = version,
+        exportedAt = "2026-07-17T12:00:00Z",
+        identity = BackupIdentity(steamId64 = ACCOUNT),
+        ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 0, 5, 10, 20, 40, 80),
+        games = listOf(BackupGame(appId = APP, name = "Game", isGoal = false, backfillMinutes = 0)),
+        achievements = emptyList(),
+        sessions = listOf(
+            BackupSession(
+                appId = APP,
+                startAt = "2026-07-16T10:00:00Z",
+                endAt = "2026-07-16T11:00:00Z",
+                minutes = 60,
+                cloudContribution = if (version == 1) null else BackupCloudContribution(
+                    BackupContributionState.UNKNOWN,
+                    BackupContributionState.UNKNOWN,
+                ),
+            ),
+        ),
+        dailyProgress = emptyList(),
+        hltbData = emptyList(),
+        librarySortPrefs = BackupLibrarySortPrefs(focus = "NAME", library = "PLAYTIME"),
+        playerProfile = BackupPlayerProfile(0, 1, 0, 0, false),
+        computed = BackupComputed(emptyList(), emptyList()),
+        recovery = null,
+    )
 
     private fun game(appId: Long, name: String) = Game(
         appId = appId,

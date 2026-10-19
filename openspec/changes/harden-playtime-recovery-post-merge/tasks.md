@@ -8,7 +8,7 @@
 
 - [x] 2.1 Add a full-file validation regression for D1 covering zero/negative observation and contribution epochs, including an observation-only v3 file; verify zero cases reproduce the existing acceptance mismatch and positive/legacy controls identify the intended contract.
 - [x] 2.2 Enforce positive recovery epochs in v3 preflight with record-specific diagnostics, retaining storage checks; verify all D1 regressions pass and rejected files mutate neither recovery nor unrelated games/sessions/daily/progression state through the real import boundary.
-- [ ] 2.3 Test real restore followed by unchanged and increasing Steam observations for valid positive epochs and repeated imports; verify no replayed quantity, coherent detector pairs and continued v1/v2 compatibility, including a newer local baseline over an older backup.
+- [x] 2.3 Test real restore followed by unchanged and increasing Steam observations for valid positive epochs and repeated imports; verify no replayed quantity, coherent detector pairs and continued v1/v2 compatibility, including a newer local baseline over an older backup.
 - [ ] 2.4 Investigate R3 with numeric-boundary, observation/contribution/epoch coherence, cross-account-link and malformed-reference fixtures; verify each observed failure is separately recorded and narrowly fixed with regressions, or explicitly proved safe, without silently clamping supported saved history or changing compatibility policy without a spec revision.
 
 ## 3. Verify canonical quantity, placement and projection consistency

@@ -70,6 +70,16 @@ Inspection head: `3690fc944ecb32931e4472f373e9b2af541ce183` (`docs: record recov
 - **Post-fix focused gate:** ran `:app:testDebugUnitTest --tests com.example.backlogium.data.backup.BackupRecoveryValidatorTest --tests com.example.backlogium.data.backup.BackupRepositoryRecoveryPreflightTest --tests com.example.backlogium.data.backup.BackupRecoveryRoundTripTest --tests com.example.backlogium.data.local.dao.PlaytimeRecoveryDaoTest --max-workers=1 --rerun-tasks` on the 2.1–2.2 working tree. `BUILD SUCCESSFUL` (1m50s); XML reports: validator 23, real-import preflight 2, positive round trip 8, DAO 45; **78 passed, 0 failures, 0 errors, 0 skipped**. This includes positive v3 and legacy v1/v2 no-recovery controls, but is a focused D1/storage subset—not the full task 8 gate.
 - Remaining: task 2.3 still needs restore followed by unchanged/increasing Steam observations, repeated imports, and older-backup/local-baseline behavior. Task 2.4 still needs the broader R3 input-boundary investigation.
 
+## 2.3 Restored detector and legacy compatibility verification
+
+- Extended `BackupRecoveryRoundTripTest` using real in-memory Room, `RoomDatabaseTransactionScope`, `DaoRecoveryBackupStore`, `BackupMergeEngine`, and the shared `PlaytimeObservationCommitter` / `SessionDiffer` path.
+- For positive v3 recovery epoch 1, restored the `(500,605]` contribution (105 conserved minutes) with high-water 605, verified `Game.lastPlaytime==605`, then submitted an unchanged 605 Steam observation. The commit produced no play delta or contribution and kept the detector pair at 605. After recording that successful poll boundary, a 630 reading produced only the fresh 25-minute delta; the contribution graph conserved 130 total minutes and both recovery high-water and `Game.lastPlaytime` advanced to 630.
+- Re-imported the older 605 backup twice after the increase. Both retries retained exactly two contributions / 130 authorized and conserved minutes, preserved the newer 630 baseline and detector pair, and did not add sessions.
+- Added real Room merge + observation coverage for v1 and v2 files without a recovery section. Each restored a legacy 60-minute session; the first 605 Steam read established a baseline with no new delta/contribution, while a later 625 reading funded only 20 new minutes and preserved the legacy session.
+- Existing `newerSameAccountBaseline_isNotRolledBackByAnOlderRestore` also ran in the same class, retaining local 700 over imported 605.
+- Verification: `:app:testDebugUnitTest --tests com.example.backlogium.data.backup.BackupRecoveryRoundTripTest --max-workers=1 --rerun-tasks` completed `BUILD SUCCESSFUL` (1m45s); XML report **10 passed, 0 failures, 0 errors, 0 skipped**. This is focused restore/committer coverage, not the full task 8 gate.
+- Task 2.4 R3 boundary investigation remains open; no numeric, account-link, or malformed-reference policy is changed by these restore tests.
+
 ## 1.3 Baseline environment and evidence matrix
 
 Baseline captured on implementation HEAD `3690fc944ecb32931e4472f373e9b2af541ce183` (after the task 1.1 documentation checkpoint), host Windows 11 build `10.0.22631` / x64. No application code changed at this head.
