@@ -86,7 +86,9 @@ class GameRepositoryGenreJoinTest {
             ),
             hiddenGamesRepository = hidden,
             steamApi = OfflineSteamApi,
-            sessionRepository = SessionRepository(db.sessionDao(), hidden, time = OfflineTime),
+            sessionRepository = SessionRepository(
+                db.sessionDao(), hidden, time = OfflineTime, database = db,
+            ),
             time = OfflineTime,
         )
     }

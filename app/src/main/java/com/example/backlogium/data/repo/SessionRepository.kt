@@ -1,5 +1,7 @@
 package com.example.backlogium.data.repo
 
+import androidx.room.withTransaction
+import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.RecoveryReadStatusStore
@@ -81,6 +83,8 @@ class SessionRepository @Inject constructor(
     private val time: TimeProvider,
     private val playerProfileDao: PlayerProfileDao? = null,
     private val recoveryReadStatusStore: RecoveryReadStatusStore? = null,
+    /** Production recovery projections use one Room transaction snapshot per invalidation. */
+    private val database: BacklogiumDatabase? = null,
 ) {
     /** Device zone used to derive session-start dates for dated canonical projections. */
     private val zone: ZoneId get() = time.zone()
@@ -129,7 +133,18 @@ class SessionRepository @Inject constructor(
      * total — shared-session figures are unchanged. Games with no activity are absent rather than
      * zero — a caller deriving XP treats a missing entry as zero credited minutes.
      */
-    val trackedMinutesByGame: Flow<Map<Long, Int>> =
+    val trackedMinutesByGame: Flow<Map<Long, Int>> = if (database != null) {
+        coherentRecoverySnapshot { dao ->
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            PlaytimeReadProjector.creditedMinutesByGame(
+                contributions = dao.activeRecoveryContributionsSnapshot().map(PlaytimeContribution::toCredit),
+                sessions = dao.getAll().map(Session::toCredit),
+                timedShares = dao.activeRecoveryTimedPlacementsSnapshot().map(TimedContributionPlacement::toCredit),
+            ).filterKeys { it !in hidden }
+        }.map { it.toTrackedMinutesByGame() }
+    } else {
+        // Fake-DAO/unit consumers without Room retain the adapter flow; production Hilt always
+        // supplies [database] and uses a coherent transaction snapshot above.
         combine(
             sessionDao.observeSince(Long.MIN_VALUE),
             sessionDao.observeActiveRecoveryContributions(),
@@ -141,15 +156,25 @@ class SessionRepository @Inject constructor(
                 timedShares = timedPlacements.map(TimedContributionPlacement::toCredit),
             )
         }
-            .map { byAppId ->
-                byAppId.mapValues { (_, minutes) ->
-                    minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                }
-            }
+            .map { it.toTrackedMinutesByGame() }
             .visibleKeys()
+    }
 
     /** The same canonical per-game totals, as a one-shot read for non-flow consumers. */
     suspend fun creditedMinutesByGameOnce(): Map<Long, Int> {
+        database?.let { db ->
+            return db.withTransaction {
+                val hidden = db.sessionDao().hiddenAppIdsSnapshot().toSet()
+                PlaytimeReadProjector.creditedMinutesByGame(
+                    contributions = db.sessionDao().activeRecoveryContributionsSnapshot()
+                        .map(PlaytimeContribution::toCredit),
+                    sessions = db.sessionDao().getAll().map(Session::toCredit),
+                    timedShares = db.sessionDao().activeRecoveryTimedPlacementsSnapshot()
+                        .map(TimedContributionPlacement::toCredit),
+                ).filterKeys { it !in hidden }
+                    .toTrackedMinutesByGame()
+            }
+        }
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
         return sessionDao.creditedMinutesByGame()
             .associate { it.appId to it.minutes }
@@ -199,7 +224,23 @@ class SessionRepository @Inject constructor(
      * the first timestamped session. Excluded/zero rows never anchor history. Bounded reads: each
      * source contributes one min row (or the small recipe set), never the whole ledger.
      */
-    val earliestCanonicalActivityDate: Flow<LocalDate?> =
+    val earliestCanonicalActivityDate: Flow<LocalDate?> = if (database != null) {
+        coherentRecoverySnapshot { dao ->
+            val earliestSessionMillis = dao.earliestVisibleSessionStartSnapshot()
+            val earliestAllocationDate = dao.earliestDatedAllocationDateSnapshot()
+            val earliestTimedShareDate = dao.earliestTimedShareDateSnapshot()
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            val recipes = dao.activeRecoveryRecipesSnapshot()
+            buildSet {
+                earliestSessionMillis?.let { add(PlaytimeReadProjector.sessionDate(it, zone)) }
+                earliestAllocationDate?.toLocalDateOrNull()?.let(::add)
+                earliestTimedShareDate?.toLocalDateOrNull()?.let(::add)
+                recipes.filterNot { it.appId in hidden }
+                    .mapNotNull { PlaytimeReadProjector.earliestPositiveRecipeDate(it.toCredit()) }
+                    .forEach(::add)
+            }.minOrNull()
+        }
+    } else {
         combine(
             sessionDao.observeEarliestVisibleSessionStart(),
             sessionDao.observeEarliestDatedAllocationDate(),
@@ -216,6 +257,7 @@ class SessionRepository @Inject constructor(
                     .forEach(::add)
             }.minOrNull()
         }
+    }
 
     /**
      * Canonical dated activity for [startDateInclusive, endDateExclusive) evaluated in [zone]:
@@ -236,6 +278,35 @@ class SessionRepository @Inject constructor(
         val toExclusiveIso = endDateExclusive.toString()
         val startMillis = startDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli() - DAY_MILLIS
         val endMillis = endDateExclusive.atStartOfDay(zone).toInstant().toEpochMilli() + DAY_MILLIS
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                val input = ActivityInput(
+                    windowSessions = dao.sessionsBetweenSnapshot(startMillis, endMillis),
+                    hostSessions = dao.hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
+                    placements = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
+                    allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
+                    recipes = dao.activeRecoveryRecipesSnapshot(),
+                )
+                val relevantSessions = input.relevantSessions(hidden)
+                val relevantIds = relevantSessions.map(Session::id).distinct()
+                val allHostPlacements = dao.activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
+                PlaytimeReadProjector.datedActivityBetween(
+                    sessions = relevantSessions.map(Session::toCredit),
+                    timedShares = input.placements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                    allocations = input.allocations.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocation::toCredit),
+                    recipes = input.recipes.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocationRecipe::toCredit),
+                    zone = zone,
+                    startDateInclusive = startDateInclusive,
+                    endDateExclusive = endDateExclusive,
+                    allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                )
+            }
+        }
         return combine(
             combine(
                 sessionDao.observeBetween(startMillis, endMillis),
@@ -269,9 +340,13 @@ class SessionRepository @Inject constructor(
         }
     }
 
-    /** Canonical dated activity from [cutoffDate] onward (inclusive), newest first. */
+    /** Canonical dated activity from [cutoffDate] through the supported recovery-date ceiling. */
     fun activitySince(zone: ZoneId, cutoffDate: LocalDate): Flow<List<PlaytimeActivity>> =
-        activityBetween(zone, cutoffDate, LocalDate.MAX)
+        if (cutoffDate >= MAX_SUPPORTED_ACTIVITY_DATE_EXCLUSIVE) {
+            flowOf(emptyList())
+        } else {
+            activityBetween(zone, cutoffDate, MAX_SUPPORTED_ACTIVITY_DATE_EXCLUSIVE)
+        }
 
     /**
      * Dated unknown-time allocations over an *inclusive* `[startInclusiveDate, endInclusiveDate]`
@@ -285,6 +360,24 @@ class SessionRepository @Inject constructor(
         endInclusiveDate: LocalDate,
     ): Flow<List<CreditedAllocation>> {
         val toExclusiveIso = endInclusiveDate.plusDays(1).toString()
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                PlaytimeReadProjector.creditedAllocationsBetween(
+                    timedShares = dao.timedPlacementsByDateSnapshot(startInclusiveDate.toString(), toExclusiveIso)
+                        .filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                    allocations = dao.datedAllocationsBetweenSnapshot(startInclusiveDate.toString(), toExclusiveIso)
+                        .filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocation::toCredit),
+                    recipes = dao.activeRecoveryRecipesSnapshot()
+                        .filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocationRecipe::toCredit),
+                    startDateInclusive = startInclusiveDate,
+                    endDateInclusive = endInclusiveDate,
+                )
+            }
+        }
         return combine(
             combine(
                 sessionDao.observeDatedAllocationsBetween(startInclusiveDate.toString(), toExclusiveIso),
@@ -312,7 +405,16 @@ class SessionRepository @Inject constructor(
      * Pending date-unknown quantity (inverted/no-window recovery): eligible for cumulative XP,
      * disclosed separately from dated rows, never a dated quest/chart or habit observation.
      */
-    val pendingDateUnknownQuantity: Flow<Int> =
+    val pendingDateUnknownQuantity: Flow<Int> = if (database != null) {
+        coherentRecoverySnapshot { dao ->
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            dao.activeRecoveryAllocationsSnapshot().asSequence()
+                .filter { it.pendingDate && it.appId !in hidden }
+                .sumOf { it.minutes }
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        }
+    } else {
         combine(
             sessionDao.observeActiveRecoveryAllocations(),
             hiddenGamesRepository.hiddenAppIds,
@@ -323,6 +425,7 @@ class SessionRepository @Inject constructor(
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
         }
+    }
 
     /**
      * Recovery availability status for the honest disclosure vocabulary (task 7.4).
@@ -364,6 +467,35 @@ class SessionRepository @Inject constructor(
         val toExclusiveIso = endDateExclusive.toString()
         val startMillis = startDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli() - DAY_MILLIS
         val endMillis = endDateExclusive.atStartOfDay(zone).toInstant().toEpochMilli() + DAY_MILLIS
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                val input = ActivityInput(
+                    windowSessions = dao.sessionsBetweenSnapshot(startMillis, endMillis),
+                    hostSessions = dao.hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
+                    placements = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
+                    allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
+                    recipes = dao.activeRecoveryRecipesSnapshot(),
+                )
+                val relevantSessions = input.relevantSessions(hidden)
+                val relevantIds = relevantSessions.map(Session::id).distinct()
+                val allHostPlacements = dao.activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
+                PlaytimeReadProjector.datedCreditedTotals(
+                    sessions = relevantSessions.map(Session::toCredit),
+                    timedShares = input.placements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                    allocations = input.allocations.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocation::toCredit),
+                    recipes = input.recipes.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocationRecipe::toCredit),
+                    zone = zone,
+                    startDateInclusive = startDateInclusive,
+                    endDateExclusive = endDateExclusive,
+                    allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                )
+            }
+        }
         return combine(
             combine(
                 sessionDao.observeBetween(startMillis, endMillis),
@@ -411,6 +543,38 @@ class SessionRepository @Inject constructor(
         lastDateInclusive: LocalDate,
     ): Flow<List<DatedPlayTotal>> {
         val toExclusiveIso = lastDateInclusive.plusDays(1).toString()
+        if (database != null) {
+            val startMillis = firstDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli()
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                val input = TrainingTotalsInput(
+                    closedSessions = dao.closedSessionsSinceSnapshot(startMillis),
+                    hostSessions = dao.hostSessionsForDatesSnapshot(firstDateInclusive.toString(), toExclusiveIso),
+                    placements = dao.timedPlacementsByDateSnapshot(firstDateInclusive.toString(), toExclusiveIso),
+                    allocations = dao.datedAllocationsBetweenSnapshot(firstDateInclusive.toString(), toExclusiveIso),
+                    recipes = dao.activeRecoveryRecipesSnapshot(),
+                )
+                val relevantSessions = input.relevantSessions(hidden)
+                val relevantIds = relevantSessions.map(Session::id).distinct()
+                val allHostPlacements = dao.activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
+                PlaytimeReadProjector.trainingTotalsBetween(
+                    sessions = relevantSessions.map(Session::toCredit),
+                    timedShares = input.placements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                    allocations = input.allocations.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocation::toCredit),
+                    recipes = input.recipes.filterNot { it.appId in hidden }
+                        .map(UnknownTimeAllocationRecipe::toCredit),
+                    zone = zone,
+                    firstDateInclusive = firstDateInclusive,
+                    lastDateInclusive = lastDateInclusive,
+                    allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+                        .map(TimedContributionPlacement::toCredit),
+                ).entries.sortedBy { it.key }.map { (date, minutes) ->
+                    DatedPlayTotal(date, minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                }
+            }
+        }
         return combine(
             combine(
                 sessionDao.observeClosedSince(firstDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli()),
@@ -455,6 +619,25 @@ class SessionRepository @Inject constructor(
         firstDateInclusive: LocalDate,
         lastDateInclusive: LocalDate,
     ): Flow<Set<LocalDate>> {
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                buildSet {
+                    dao.allOpenSessionsSnapshot().filterNot { it.appId in hidden }.forEach { session ->
+                        val firstUnknown = maxOf(
+                            firstDateInclusive,
+                            PlaytimeReadProjector.sessionDate(session.startAt, zone),
+                        )
+                        if (firstUnknown > lastDateInclusive) return@forEach
+                        var date = firstUnknown
+                        while (!date.isAfter(lastDateInclusive)) {
+                            add(date)
+                            date = date.plusDays(1)
+                        }
+                    }
+                }
+            }
+        }
         return combine(
             sessionDao.observeAllOpenSessions(),
             hiddenGamesRepository.hiddenAppIds,
@@ -481,7 +664,16 @@ class SessionRepository @Inject constructor(
      * funded timed shares by their frozen credited date. Personal Pace combines these with closed
      * sessions; hidden games are excluded.
      */
-    fun datedRecoveryActivity(): Flow<List<PlaytimeActivity.DatedAllocation>> =
+    fun datedRecoveryActivity(): Flow<List<PlaytimeActivity.DatedAllocation>> = if (database != null) {
+        coherentRecoverySnapshot { dao ->
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            (PlaytimeReadProjector.allocationActivities(
+                dao.activeRecoveryAllocationsSnapshot().map(UnknownTimeAllocation::toCredit),
+            ) + PlaytimeReadProjector.detachedTimedActivities(
+                dao.activeRecoveryTimedPlacementsSnapshot().map(TimedContributionPlacement::toCredit),
+            )).filterNot { it.appId in hidden }
+        }
+    } else {
         combine(
             sessionDao.observeActiveRecoveryAllocations(),
             sessionDao.observeActiveRecoveryTimedPlacements(),
@@ -494,6 +686,7 @@ class SessionRepository @Inject constructor(
             ))
                 .filterNot { it.appId in hidden }
         }
+    }
 
     /**
      * Unresolved multi-day estimate windows for Personal Pace eligibility (design.md Decision 9).
@@ -501,32 +694,68 @@ class SessionRepository @Inject constructor(
      * independently fully resolved; [RecoveryEstimateWindow.unknownDatesBetween] yields the mask
      * bounded to the lookback horizon.
      */
-    fun unresolvedRecoveryWindows(): Flow<List<RecoveryEstimateWindow>> =
+    fun unresolvedRecoveryWindows(): Flow<List<RecoveryEstimateWindow>> = if (database != null) {
+        coherentRecoverySnapshot { dao ->
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            unresolvedRecoveryWindows(
+                recipes = dao.activeRecoveryRecipesSnapshot(),
+                allocations = dao.activeRecoveryAllocationsSnapshot(),
+                hidden = hidden,
+            )
+        }
+    } else {
         combine(
             sessionDao.observeActiveRecoveryRecipes(),
             sessionDao.observeActiveRecoveryAllocations(),
             hiddenGamesRepository.hiddenAppIds,
         ) { recipes, allocations, hidden ->
-            val fromRecipes = PlaytimeReadProjector.recoveryEstimateWindows(
-                recipes.filterNot { it.appId in hidden }.map(UnknownTimeAllocationRecipe::toCredit),
-            )
-            // A multi-day estimate materialized without a retained recipe still owns its positive
-            // dates; without a recipe those dates are at least masked. When a recipe IS retained it
-            // is authoritative (its fully-resolved exclusions restore eligibility), so the same
-            // dates are not re-added by their allocation rows.
-            // Without a retained recipe the allocation rows still own the *full* observed window
-            // (window instants + frozen zone), so zero-share gap dates stay unknown - masking only
-            // positive-share dates would synthesize invented zero-play days for the gap. A recipe
-            // for the same contribution wins because its fully-resolved exclusions are known.
-            val recipeContributions = fromRecipes.map { it.contributionId }.toSet()
-            val fromAllocations = PlaytimeReadProjector.allocationEstimateWindows(
-                allocations
-                    .filterNot { it.appId in hidden }
-                    .filter { it.contributionId !in recipeContributions }
-                    .map(UnknownTimeAllocation::toCredit),
-            )
-            fromRecipes + fromAllocations
+            unresolvedRecoveryWindows(recipes, allocations, hidden)
         }
+    }
+
+    /** One table invalidation triggers a single transactional re-read of the supplied bundle. */
+    private fun <T> coherentRecoverySnapshot(read: suspend (SessionDao) -> T): Flow<T> {
+        val db = requireNotNull(database)
+        return sessionDao.observeRecoveryProjectionInvalidation().map {
+            db.withTransaction { read(db.sessionDao()) }
+        }
+    }
+
+    private fun unresolvedRecoveryWindows(
+        recipes: List<UnknownTimeAllocationRecipe>,
+        allocations: List<UnknownTimeAllocation>,
+        hidden: Set<Long>,
+    ): List<RecoveryEstimateWindow> {
+        val fromRecipes = PlaytimeReadProjector.recoveryEstimateWindows(
+            recipes.filterNot { it.appId in hidden }.map(UnknownTimeAllocationRecipe::toCredit),
+        )
+        // A multi-day estimate materialized without a retained recipe still owns its positive
+        // dates; without a recipe those dates are at least masked. When a recipe IS retained it
+        // is authoritative (its fully-resolved exclusions restore eligibility), so the same
+        // dates are not re-added by their allocation rows.
+        // Without a retained recipe the allocation rows still own the *full* observed window
+        // (window instants + frozen zone), so zero-share gap dates stay unknown - masking only
+        // positive-share dates would synthesize invented zero-play days for the gap. A recipe
+        // for the same contribution wins because its fully-resolved exclusions are known.
+        val recipeContributions = fromRecipes.map { it.contributionId }.toSet()
+        val fromAllocations = PlaytimeReadProjector.allocationEstimateWindows(
+            allocations
+                .filterNot { it.appId in hidden }
+                .filter { it.contributionId !in recipeContributions }
+                .map(UnknownTimeAllocation::toCredit),
+        )
+        return fromRecipes + fromAllocations
+    }
+
+    /** Keep SQLite's bind list bounded without leaving the enclosing Room snapshot. */
+    private suspend fun SessionDao.activeTimedPlacementsForSessionsSnapshotChunked(
+        sessionIds: List<Long>,
+    ): List<TimedContributionPlacement> =
+        sessionIds.distinct().chunked(SESSION_ID_QUERY_CHUNK_SIZE)
+            .flatMap { chunk -> activeTimedPlacementsForSessionsSnapshot(chunk) }
+
+    private fun Map<Long, Long>.toTrackedMinutesByGame(): Map<Long, Int> =
+        mapValues { (_, minutes) -> minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
 
     private fun Flow<List<Session>>.visibleSessions(): Flow<List<PlaySession>> =
         combine(hiddenGamesRepository.hiddenAppIds) { rows, hidden ->
@@ -591,6 +820,8 @@ private class TrainingTotalsInput(
 private const val DAY_MILLIS: Long = 24L * 60 * 60 * 1000
 /** Leaves headroom below SQLite's bind-parameter limit for Room's generated account subquery. */
 private const val SESSION_ID_QUERY_CHUNK_SIZE = 900
+/** Backup preflight's latest plausible recovery date (2100-01-01), plus one for half-open windows. */
+private val MAX_SUPPORTED_ACTIVITY_DATE_EXCLUSIVE = LocalDate.of(2100, 1, 2)
 
 private fun Session.toDomain() = PlaySession(
     id = id,
