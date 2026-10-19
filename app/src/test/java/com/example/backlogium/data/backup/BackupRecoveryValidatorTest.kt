@@ -17,6 +17,55 @@ class BackupRecoveryValidatorTest {
     }
 
     @Test
+    fun observationOnlyZeroEpoch_rejectedByFullFilePreflight() {
+        val problems = v3(recovery = observationOnlyRecovery(epoch = 0L)).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryObservation" && it.detail.contains("baselineEpoch")
+        })
+    }
+
+    @Test
+    fun negativeObservationEpoch_rejectedByFullFilePreflight() {
+        val problems = v3(recovery = observationOnlyRecovery(epoch = -1L)).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryObservation" && it.detail.contains("baselineEpoch")
+        })
+    }
+
+    @Test
+    fun zeroContributionEpoch_rejectedByFullFilePreflight() {
+        val recovery = validRecovery().copy(
+            contributions = listOf(validContribution().copy(baselineEpoch = 0L)),
+        )
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("baselineEpoch")
+        })
+    }
+
+    @Test
+    fun negativeContributionEpoch_rejectedByFullFilePreflight() {
+        val recovery = validRecovery().copy(
+            contributions = listOf(validContribution().copy(baselineEpoch = -1L)),
+        )
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any {
+            it.recordType == "recoveryContribution" && it.detail.contains("baselineEpoch")
+        })
+    }
+
+    @Test
+    fun positiveRecoveryAndLegacyWithoutRecovery_remainValid() {
+        assertTrue(BackupValidator.validate(v3(recovery = validRecovery())) is BackupValidationResult.Valid)
+        assertTrue(BackupValidator.validate(v3(recovery = null).copy(formatVersion = 1)) is BackupValidationResult.Valid)
+        assertTrue(BackupValidator.validate(v3(recovery = null).copy(formatVersion = 2)) is BackupValidationResult.Valid)
+    }
+
+    @Test
     fun v3WithoutRecoverySection_rejected() {
         val problems = v3(recovery = null).assertRejected()
         assertEquals("recovery", problems.single().recordType)
@@ -202,6 +251,15 @@ class BackupRecoveryValidatorTest {
         unknownAllocations = validAllocations(),
         recipes = emptyList(),
         replacements = listOf(validReplacement()),
+    )
+
+    private fun observationOnlyRecovery(epoch: Long) = BackupRecovery(
+        observations = listOf(validObservation().copy(baselineEpoch = epoch)),
+        contributions = emptyList(),
+        timedPlacements = emptyList(),
+        unknownAllocations = emptyList(),
+        recipes = emptyList(),
+        replacements = emptyList(),
     )
 
     private fun validObservation() = BackupRecoveryObservation(

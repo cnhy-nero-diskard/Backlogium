@@ -84,8 +84,8 @@ internal object BackupRecoveryValidator {
             if (observation.account.isBlank()) {
                 problems += problem("recoveryObservation", index, "blank account")
             }
-            if (observation.baselineEpoch < 0L) {
-                problems += problem("recoveryObservation", index, "negative baselineEpoch")
+            if (observation.baselineEpoch <= 0L) {
+                problems += problem("recoveryObservation", index, "non-positive baselineEpoch")
             }
             if (observation.highWaterMinutes < 0L) {
                 problems += problem("recoveryObservation", index, "negative highWaterMinutes")
@@ -134,8 +134,8 @@ internal object BackupRecoveryValidator {
             if (contribution.appId <= 0L) {
                 problems += problem("recoveryContribution", index, "malformed appId ${contribution.appId}")
             }
-            if (contribution.baselineEpoch < 0L) {
-                problems += problem("recoveryContribution", index, "negative baselineEpoch")
+            if (contribution.baselineEpoch <= 0L) {
+                problems += problem("recoveryContribution", index, "non-positive baselineEpoch")
             }
             if (contribution.fromMinutes < 0L || contribution.toMinutes <= contribution.fromMinutes) {
                 problems += problem(
