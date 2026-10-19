@@ -850,6 +850,10 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
             }
             recoveryDao.upsertRecipe(plan.newRecipe)
         } else {
+            // A fully materialized compact recipe may be replaced by explicit rows. The old
+            // recipe is keyed only by contribution id, so it must be removed with its old
+            // revision's rows or validation will count a stale residual beside the new graph.
+            recoveryDao.deleteRecipe(contribution.contributionId)
             recoveryDao.insertAllocations(plan.keptAllocationRows + plan.newAllocationRows)
         }
 
@@ -858,11 +862,22 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
         // whose minutes were entirely the superseded share (no independent state references it).
         val sessionsById = sessionDao.getAll().associateBy { it.id }
         plan.sessionShareChanges.forEach { change ->
-            val after = change.afterMinutes.coerceAtLeast(0)
+            check(change.afterMinutes >= 0) {
+                "session ${change.sessionId} share replacement produced negative minutes ${change.afterMinutes}"
+            }
+            val after = change.afterMinutes
+            val remainingFundedMinutes = recoveryDao.activeTimedSharesForSession(change.sessionId)
+                .fold(0L) { total, share -> Math.addExact(total, share.minutes) }
+            check(remainingFundedMinutes <= after.toLong()) {
+                "session ${change.sessionId} retains $remainingFundedMinutes funded minutes after " +
+                    "replacement but only $after session minutes"
+            }
+            val stored = checkNotNull(sessionsById[change.sessionId]) {
+                "mapped synthetic session ${change.sessionId} disappeared during replacement"
+            }
             if (after <= 0) {
                 sessionDao.deleteById(change.sessionId)
             } else {
-                val stored = sessionsById[change.sessionId] ?: return@forEach
                 sessionDao.update(stored.copy(minutes = after))
             }
         }

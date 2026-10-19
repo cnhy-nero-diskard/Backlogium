@@ -460,6 +460,10 @@ interface PlaytimeRecoveryDao {
     @Query("SELECT * FROM recovery_allocation_recipes WHERE contributionId = :contributionId")
     suspend fun recipe(contributionId: String): UnknownTimeAllocationRecipe?
 
+    /** Remove the prior compact graph when a placement revision becomes fully row-materialized. */
+    @Query("DELETE FROM recovery_allocation_recipes WHERE contributionId = :contributionId")
+    suspend fun deleteRecipe(contributionId: String)
+
     /** The exact residual a compact recipe still owes: total minus materialized minutes. */
     @Transaction
     suspend fun recipeResidual(contributionId: String): Long {
