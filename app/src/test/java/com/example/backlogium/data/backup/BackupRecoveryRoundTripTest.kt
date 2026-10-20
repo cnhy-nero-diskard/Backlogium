@@ -319,6 +319,55 @@ class BackupRecoveryRoundTripTest {
         assertEquals(105L, restored.playtimeRecoveryDao().conservedAllocatedMinutes("foreign-contribution"))
         assertEquals(foreignAccount, restored.playtimeRecoveryDao().contribution("foreign-contribution")!!.account)
         assertEquals(ACCOUNT, restored.playerProfileDao().get()!!.steamId)
+        assertTrue(restored.playtimeRecoveryDao().contributionsForGame(ACCOUNT, APP).isEmpty())
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+        assertTrue(restored.sessionDao().creditedMinutesByGame().isEmpty())
+
+        // The first local Steam observation cannot diff against the foreign graph or turn the
+        // imported lifetime total into new local recovery credit; it establishes account A's own
+        // detector boundary without fabricating session or recency facts.
+        val committer = observationCommitter(restored)
+        val localBaselineAt = iso("2026-07-17T13:00:00Z")
+        val firstLocalRead = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 605)),
+                observedPlayAt = localBaselineAt,
+                syncedAt = localBaselineAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertFalse(firstLocalRead.recordedPlay)
+        assertEquals(0, firstLocalRead.playedDeltaByAppId[APP] ?: 0)
+        assertEquals(0, firstLocalRead.recoveredContributions)
+        assertEquals(605L, restored.playtimeRecoveryDao().state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertNull(restored.playtimeRecoveryDao().state(foreignAccount, APP))
+        assertTrue(restored.playtimeRecoveryDao().contributionsForGame(ACCOUNT, APP).isEmpty())
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+        val skeleton = restored.gameDao().getById(APP)!!
+        assertEquals(605, skeleton.lastPlaytime)
+        assertNull(skeleton.firstSeenAt)
+        assertNull(skeleton.lastPlayedAt)
+        assertNull(skeleton.returnedToPlayAt)
+
+        restored.playerProfileDao().updateSyncStatus(localBaselineAt, null)
+        val localIncreaseAt = iso("2026-07-17T13:30:00Z")
+        val localIncrease = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 625)),
+                observedPlayAt = localIncreaseAt,
+                syncedAt = localIncreaseAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertTrue(localIncrease.recordedPlay)
+        assertEquals(20, localIncrease.playedDeltaByAppId[APP])
+        assertEquals(20L, restored.playtimeRecoveryDao().contributionsForGame(ACCOUNT, APP).single().authorizedMinutes)
+        assertEquals(105L, restored.playtimeRecoveryDao().conservedAllocatedMinutes("foreign-contribution"))
+        assertEquals(foreignAccount, restored.playtimeRecoveryDao().contribution("foreign-contribution")!!.account)
+        assertTrue(restored.playtimeRecoveryDao().validateGraph("foreign-contribution"))
+        assertEquals(625L, restored.playtimeRecoveryDao().state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(625, restored.gameDao().getById(APP)!!.lastPlaytime)
+        assertEquals(20, restored.sessionDao().getAll().sumOf { it.minutes })
     }
 
     @Test

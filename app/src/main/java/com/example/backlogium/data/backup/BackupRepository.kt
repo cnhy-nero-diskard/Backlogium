@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.example.backlogium.data.local.SettingsDataStore
-import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.work.SteamSyncCoordinator
@@ -59,7 +59,7 @@ class BackupRepository @Inject constructor(
     private val mergeEngine: BackupMergeEngine,
     private val snapshotStore: SnapshotStore,
     private val settings: SettingsDataStore,
-    private val credentials: CredentialsRepository,
+    private val credentials: CredentialsProvider,
     private val time: TimeProvider,
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,

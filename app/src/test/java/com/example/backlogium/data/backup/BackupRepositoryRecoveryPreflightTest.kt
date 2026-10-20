@@ -4,7 +4,6 @@ import androidx.room.Room
 import androidx.work.Configuration
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
-import com.example.backlogium.data.credentials.EncryptedCredentialStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.DailyProgress
@@ -14,7 +13,6 @@ import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.repo.CredentialsProvider
-import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
@@ -37,6 +35,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -125,6 +124,37 @@ class BackupRepositoryRecoveryPreflightTest {
         assertTrue("inconsistent source account linkage must fail preflight", failure is IllegalArgumentException)
         assertEquals("Invalid backup", failure?.message)
         assertEquals(before, snapshot())
+    }
+
+    @Test
+    fun confirmedForeignBackupWarnsBeforeConfirmationThenKeepsItsBaselineInactive() = runBlocking {
+        val foreignFile = observationBackup(highWater = 605L).let { backup ->
+            backup.copy(
+                identity = BackupIdentity(steamId64 = FOREIGN_ACCOUNT),
+                recovery = backup.recovery!!.copy(
+                    observations = backup.recovery.observations!!.map { it.copy(account = FOREIGN_ACCOUNT) },
+                ),
+            )
+        }
+        val before = snapshot()
+
+        assertTrue(repository.isMismatched(foreignFile))
+        // SettingsViewModel holds this valid file for explicit confirmation; only the subsequent
+        // onConfirmMismatchImport path invokes importBackup. No receiving write precedes consent.
+        assertEquals(before, snapshot())
+
+        val summary = repository.importBackup(foreignFile)
+
+        assertTrue(summary.recoveryWarnings.any {
+            it.account == FOREIGN_ACCOUNT && it.detail.contains("kept inactive")
+        })
+        assertEquals(ACCOUNT, database.playerProfileDao().get()!!.steamId)
+        assertNull(database.playtimeRecoveryDao().state(ACCOUNT, IMPORTED_APP))
+        assertNull(database.playtimeRecoveryDao().state(FOREIGN_ACCOUNT, IMPORTED_APP))
+        assertTrue(database.playtimeRecoveryDao().contributionsForGame(ACCOUNT, IMPORTED_APP).isEmpty())
+        assertEquals("the permitted imported session remains preserved", 60,
+            database.sessionDao().creditedMinutesByGame().single { it.appId == IMPORTED_APP }.minutes)
+        assertEquals(60, database.dailyProgressDao().getByDate("2026-07-17")!!.minutesPlayed)
     }
 
     private suspend fun seedReceivingState() {
@@ -359,10 +389,6 @@ class BackupRepositoryRecoveryPreflightTest {
             recoveryStore = recoveryStore,
             credentials = credentialsProvider,
         )
-        val credentialsRepository = CredentialsRepository(
-            EncryptedCredentialStore(context),
-            unusedSteamApi(),
-        )
         return BackupRepository(
             context = context,
             json = json,
@@ -370,7 +396,7 @@ class BackupRepositoryRecoveryPreflightTest {
             mergeEngine = mergeEngine,
             snapshotStore = SnapshotStore(context, json),
             settings = settingsDataStore,
-            credentials = credentialsRepository,
+            credentials = ConfiguredCredentials,
             time = FixedTime,
             syncScheduler = SyncScheduler(context, appScope),
             derivedStateWrites = DerivedStateWriteCoordinator(),
