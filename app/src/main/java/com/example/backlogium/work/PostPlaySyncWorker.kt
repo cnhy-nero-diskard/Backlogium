@@ -286,101 +286,104 @@ class PostPlaySyncWorker @AssistedInject constructor(
         placement: CloudPresencePlaytimePlacement.Input?,
         configAtCompute: VersionedRuleConfig,
     ): PostPlayCommitResult? {
-        val rawCommit = syncCoordinator.withLock {
-            if (!isAccountActive(steamId)) {
-                null
-            } else {
-                generations.ifActive(appId, generation) {
-                    withContext(NonCancellable) {
-                        committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
-                            val observedAt = time.nowMillis()
-                            val lateEvidence = committer.recoveryEvidenceForReconciliation(
+        // Keep the account/sync barrier from the final pending-operation drain, through this raw
+        // observation, and into its derived tail. A generation lock guards only the raw commit: a
+        // schedule superseded after its quantity commits must still finish that operation's owed
+        // derived stages before another observer may change their inputs.
+        return withContext(NonCancellable) {
+            syncCoordinator.withLock {
+                if (!isAccountActive(steamId)) return@withLock null
+
+                val generationStillActive = generations.ifActive(appId, generation) { true }
+                    ?: return@withLock null
+                if (!generationStillActive) return@withLock null
+
+                val beforeRawAt = time.nowMillis()
+                unknownTimeMaterializer.materializeAll(steamId, beforeRawAt)
+                recoveryDerivedFinalizer.resumePending(steamId, beforeRawAt)
+
+                val rawCommit = generations.ifActive(appId, generation) {
+                    committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                        val observedAt = time.nowMillis()
+                        val lateEvidence = committer.recoveryEvidenceForReconciliation(
+                            account = steamId,
+                            placement = validatedPlacement,
+                            activeReaderIdentity = pruningIdentity,
+                            observedAt = observedAt,
+                        )
+                        if (lateEvidence.isNotEmpty()) {
+                            recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
                                 account = steamId,
-                                placement = validatedPlacement,
+                                appId = appId,
+                                evidence = lateEvidence,
                                 activeReaderIdentity = pruningIdentity,
-                                observedAt = observedAt,
                             )
-                            if (lateEvidence.isNotEmpty()) {
-                                recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
-                                    account = steamId,
-                                    appId = appId,
-                                    evidence = lateEvidence,
-                                    activeReaderIdentity = pruningIdentity,
+                        }
+                        database.withTransaction {
+                            // Targeted work is admitted only for the active credential pair.
+                            // Persist that identity before account-scoped recovery writes so a
+                            // blank-profile fresh install can establish its first baseline;
+                            // a nonblank foreign profile is never overwritten.
+                            var admittedProfile = profileDao.get()
+                            if (admittedProfile == null) {
+                                profileDao.insertIfMissing()
+                                admittedProfile = profileDao.get()
+                            }
+                            val existingAccount = admittedProfile?.steamId?.trim().orEmpty()
+                            if (existingAccount.isNotEmpty() && existingAccount != steamId) {
+                                return@withTransaction null
+                            }
+                            if (existingAccount.isEmpty()) {
+                                val profile = admittedProfile ?: com.example.backlogium.data.local.entity.PlayerProfile()
+                                profileDao.updateSteamIdentity(
+                                    steamId = steamId,
+                                    steamLevel = profile.steamLevel,
+                                    personaName = profile.personaName,
+                                    avatarUrl = profile.avatarUrl,
+                                    storeRegion = profile.storeRegion,
                                 )
                             }
-                             database.withTransaction {
-                                // Targeted work is admitted only for the active credential pair.
-                                // Persist that identity before account-scoped recovery writes so a
-                                // blank-profile fresh install can establish its first baseline;
-                                // a nonblank foreign profile is never overwritten.
-                                var admittedProfile = profileDao.get()
-                                if (admittedProfile == null) {
-                                    profileDao.insertIfMissing()
-                                    admittedProfile = profileDao.get()
-                                }
-                                val existingAccount = admittedProfile?.steamId?.trim().orEmpty()
-                                if (existingAccount.isNotEmpty() && existingAccount != steamId) {
-                                    return@withTransaction null
-                                }
-                                if (existingAccount.isEmpty()) {
-                                    val profile = admittedProfile ?: com.example.backlogium.data.local.entity.PlayerProfile()
-                                    profileDao.updateSteamIdentity(
-                                        steamId = steamId,
-                                        steamLevel = profile.steamLevel,
-                                        personaName = profile.personaName,
-                                        avatarUrl = profile.avatarUrl,
-                                        storeRegion = profile.storeRegion,
-                                    )
-                                }
-                                val commit = committer.commit(
-                                    observed = listOf(
-                                        PlaytimeObservationCommitter.ObservedGame(
-                                            appId = observed.appId,
-                                            name = observed.name,
-                                            // This endpoint carries no icon, and blank leaves the stored one
-                                            // alone. Steam owns the field; the next periodic poll sets it.
-                                            iconUrl = "",
-                                            playtimeForever = observed.playtimeForever,
-                                            playtime2Weeks = observed.playtime2Weeks
-                                                ?: gameDao.getById(observed.appId)?.playtime2Weeks
-                                                ?: 0,
-                                        ),
+                            val commit = committer.commit(
+                                observed = listOf(
+                                    PlaytimeObservationCommitter.ObservedGame(
+                                        appId = observed.appId,
+                                        name = observed.name,
+                                        // This endpoint carries no icon, and blank leaves the stored one
+                                        // alone. Steam owns the field; the next periodic poll sets it.
+                                        iconUrl = "",
+                                        playtimeForever = observed.playtimeForever,
+                                        playtime2Weeks = observed.playtime2Weeks
+                                            ?: gameDao.getById(observed.appId)?.playtime2Weeks
+                                            ?: 0,
                                     ),
-                                    // The session end this schedule was triggered by, not this attempt's own
-                                    // clock: attempt four runs eight minutes after the play, and recording it
-                                    // eight minutes late would make one game's history disagree with itself
-                                    // depending on which attempt happened to see the increase.
-                                    observedPlayAt = sessionEndAt,
-                                    syncedAt = observedAt,
-                                    placement = validatedPlacement,
-                                    pruningIdentity = pruningIdentity,
-                                    expectedAccount = steamId,
-                                    knownPlayInstantAt = sessionEndAt,
-                                    ruleConfig = configAtCompute.config,
-                                    ruleConfigVersion = configAtCompute.version,
-                                )
-                                commit.clockRollbacks.forEach { scope.recordClockRollback() }
-                                PostPlayCommitResult(
-                                    creditedIncreaseAppIds = commit.playedDeltaByAppId
-                                        .filterValues { it > 0 }.keys,
-                                    finalizationOperationId = commit.finalizationOperationId,
-                                    alreadyCommittedIncrease = baselineBeforeFetch != null &&
-                                        observed.playtimeForever > baselineBeforeFetch &&
-                                        !commit.recordedPlay,
-                                    baselineEstablishedAppIds = commit.baselineEstablishedAppIds,
-                                )
-                            }
+                                ),
+                                // The session end this schedule was triggered by, not this attempt's own
+                                // clock: attempt four runs eight minutes after the play, and recording it
+                                // eight minutes late would make one game's history disagree with itself
+                                // depending on which attempt happened to see the increase.
+                                observedPlayAt = sessionEndAt,
+                                syncedAt = observedAt,
+                                placement = validatedPlacement,
+                                pruningIdentity = pruningIdentity,
+                                expectedAccount = steamId,
+                                knownPlayInstantAt = sessionEndAt,
+                                ruleConfig = configAtCompute.config,
+                                ruleConfigVersion = configAtCompute.version,
+                            )
+                            commit.clockRollbacks.forEach { scope.recordClockRollback() }
+                            PostPlayCommitResult(
+                                creditedIncreaseAppIds = commit.playedDeltaByAppId
+                                    .filterValues { it > 0 }.keys,
+                                finalizationOperationId = commit.finalizationOperationId,
+                                alreadyCommittedIncrease = baselineBeforeFetch != null &&
+                                    observed.playtimeForever > baselineBeforeFetch &&
+                                    !commit.recordedPlay,
+                                baselineEstablishedAppIds = commit.baselineEstablishedAppIds,
+                            )
                         }
                     }
-                }
-            }
-        } ?: return null
+                } ?: return@withLock null
 
-        // Finish durable recipe and journaled derived stages before another sync can re-base this
-        // operation. The account lock remains the reset barrier; generation need not remain live
-        // once its raw commit has succeeded.
-        syncCoordinator.withLock {
-            if (isAccountActive(steamId)) {
                 val now = time.nowMillis()
                 runCatching {
                     recoveryReadStatus.successfulRead(
@@ -397,9 +400,9 @@ class PostPlaySyncWorker @AssistedInject constructor(
                         derivedStateWriter.persist(time.today(), configAtCompute)
                     }
                 }
+                rawCommit
             }
         }
-        return rawCommit
     }
 
     private data class PostPlayCommitResult(
