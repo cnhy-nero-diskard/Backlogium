@@ -18,10 +18,12 @@ import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
 import com.example.backlogium.data.local.recovery.PlaytimeRecoveryIdentity
 import com.example.backlogium.data.repo.DataStoreProgressMarksStore
+import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.data.repo.ProgressEventRepository
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.work.SteamSyncCoordinator
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -31,6 +33,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,6 +43,141 @@ import org.robolectric.RuntimeEnvironment
 /** File-backed Room + Preferences DataStore crash/restart evidence for task 5.3. */
 @RunWith(RobolectricTestRunner::class)
 class RecoveryFinalizationCrashReplayTest {
+
+    @Test
+    fun resumeAfterDateAndZoneChangeUsesCapturedDateAndKeepsHistoricalCorrectionSilent() = runBlocking {
+        val fixture = Fixture.open()
+        try {
+            fixture.seedInitialState()
+            fixture.seedHistoricalContext()
+            val baselineXp = fixture.updater.compute(TODAY, CONFIG).xpState.totalXp
+            assertEquals(100L, baselineXp)
+
+            val raw = fixture.rawMixedCommit()
+            val inputs = fixture.inputs(raw)
+            assertEquals(TODAY, inputs.evaluationDate)
+            assertEquals(CONFIG, inputs.config)
+            assertEquals(CONFIG_VERSION, inputs.configVersion)
+            val operationId = requireNotNull(raw.finalizationOperationId)
+            val beforeStageCrash = runCatching {
+                fixture.finalizer(
+                    compute = CrashAroundPersist(
+                        delegate = GamificationRecoveryDerivedCompute(fixture.updater),
+                        source = RecomputeSource.RETROACTIVE_PLAY,
+                        afterPersist = true,
+                    ),
+                ).finalize(inputs, FIRST_NOW)
+            }.exceptionOrNull()
+            assertTrue(beforeStageCrash?.message.orEmpty().contains("injected process death after persist"))
+            assertEquals(RecoveryJournalStatus.RAW_COMMITTED,
+                fixture.database.playtimeRecoveryDao().journal(operationId)!!.derivedStatus)
+
+            // Placement-only correction re-dates old pending quantity but stays silent, leaves the
+            // fresh current-day play excluded, and never lowers the stored longest-streak record.
+            assertEquals(baselineXp, fixture.database.playerProfileDao().get()!!.totalXp)
+            assertEquals(12, fixture.database.playerProfileDao().get()!!.longestStreak)
+            assertEquals(35, fixture.database.dailyProgressDao().getByDate("2026-09-09")!!.minutesPlayed)
+            assertTrue(fixture.database.dailyProgressDao().getByDate("2026-09-09")!!.questMet)
+            val marksAfterCorrection = fixture.marksStore.read()
+            assertEquals(setOf(TODAY.minusDays(3)), marksAfterCorrection.pendingQuestDates)
+            assertFalse(TODAY.minusDays(2) in marksAfterCorrection.pendingQuestDates)
+
+            // Simulate a device-zone rollover and a later calendar day after the corrective write.
+            fixture.clock.evaluationDate = NEXT_DAY
+            fixture.clock.currentZone = ZoneId.of("Asia/Tokyo")
+            fixture.reopen()
+            val decoded = fixture.inputs(raw)
+            assertEquals("resume must retain the raw operation's date", TODAY, decoded.evaluationDate)
+            assertEquals("resume must retain the raw operation's rules", CONFIG, decoded.config)
+            fixture.finalizer().resumePending(ACCOUNT, NEXT_DAY_NOW)
+
+            val dao = fixture.database.playtimeRecoveryDao()
+            assertEquals(RecoveryJournalStatus.FINALIZED, dao.journal(operationId)!!.derivedStatus)
+            fixture.assertConservedGraphs()
+            assertEquals(12, fixture.database.playerProfileDao().get()!!.longestStreak)
+            assertEquals(30, fixture.database.dailyProgressDao().getByDate(TODAY.toString())!!.minutesPlayed)
+            assertTrue(fixture.database.dailyProgressDao().getByDate(TODAY.toString())!!.questMet)
+            assertNull("no credit or quest row is invented on the new device-local date",
+                fixture.database.dailyProgressDao().getByDate(NEXT_DAY.toString()))
+            val activeAllocations = dao.contributionsForAccount(ACCOUNT).flatMap {
+                dao.activeAllocations(it.contributionId)
+            }
+            assertTrue(activeAllocations.all { it.zone == "UTC" || it.zone == "Z" })
+            val correctedAllocations = dao.activeAllocations(
+                PlaytimeRecoveryIdentity.contributionId(ACCOUNT, APP, 1L, 490L, 500L),
+            )
+            assertTrue("the pending contribution must retain its original frozen zone",
+                correctedAllocations.all { it.zone == "UTC" })
+            assertFalse(activeAllocations.any { it.date == NEXT_DAY.toString() })
+
+            val finalMarks = fixture.marksStore.read()
+            assertEquals(setOf(TODAY.minusDays(3), TODAY), finalMarks.pendingQuestDates)
+            assertFalse(TODAY.minusDays(2) in finalMarks.pendingQuestDates)
+            assertTrue(finalMarks.pendingLevelUps.contains(PendingLevelUp(1, 2)))
+            assertTrue(finalMarks.pendingLevelUps.any {
+                it.from == 2 && it.to == fixture.database.playerProfileDao().get()!!.level
+            })
+            val events = fixture.eventRepository.pendingEvents.first()
+            assertTrue(events.contains(ProgressEvent.QuestMet(TODAY.minusDays(3))))
+            assertTrue(events.any { it is ProgressEvent.LevelUp })
+            assertFalse(events.any { it == ProgressEvent.QuestMet(TODAY.minusDays(2)) })
+        } finally {
+            fixture.closeAndDelete()
+        }
+    }
+
+    @Test
+    fun ruleChangeBetweenCorrectiveAndEarnedStagesCannotConsumeCapturedFreshEligibility() = runBlocking {
+        val fixture = Fixture.open()
+        try {
+            fixture.seedInitialState()
+            val capturedRules = fixture.setRuleConfig(CONFIG)
+            val raw = fixture.rawMixedCommit(
+                ruleConfig = capturedRules.config,
+                ruleConfigVersion = capturedRules.version,
+            )
+            val inputs = fixture.inputs(raw)
+            assertEquals(TODAY, inputs.evaluationDate)
+            assertEquals(capturedRules, VersionedRuleConfig(inputs.config, inputs.configVersion))
+            val operationId = requireNotNull(raw.finalizationOperationId)
+            val beforeEarned = runCatching {
+                fixture.finalizer(
+                    recoveryDao = CrashAfterJournalMark(
+                        fixture.database.playtimeRecoveryDao(), RecoveryJournalStatus.CORRECTIVE_DONE,
+                    ),
+                ).finalize(inputs, FIRST_NOW)
+            }.exceptionOrNull()
+            assertTrue(beforeEarned?.message.orEmpty().contains("injected process death after journal mark"))
+            assertEquals(RecoveryJournalStatus.CORRECTIVE_DONE,
+                fixture.database.playtimeRecoveryDao().journal(operationId)!!.derivedStatus)
+
+            fixture.reopen()
+            // Lowering the rule would make the raw daily row appear met in a RULE_CHANGE baseline.
+            // A pending earned operation must finish under its captured version before this write.
+            fixture.applyRuleChange(CONFIG.copy(questThresholdMin = 20))
+            val changedRules = fixture.currentRuleConfig()
+            assertEquals(20, changedRules.config.questThresholdMin)
+            assertTrue(changedRules.version > capturedRules.version)
+            fixture.reopen()
+            fixture.finalizer().resumePending(ACCOUNT, SECOND_NOW)
+
+            assertEquals(RecoveryJournalStatus.FINALIZED,
+                fixture.database.playtimeRecoveryDao().journal(operationId)!!.derivedStatus)
+            fixture.assertConservedGraphs()
+            val marks = fixture.marksStore.read()
+            assertTrue("captured earned quest must be delivered under the raw version", TODAY in marks.pendingQuestDates)
+            assertTrue(marks.pendingLevelUps.isNotEmpty())
+            val events = fixture.eventRepository.pendingEvents.first()
+            assertTrue(events.contains(ProgressEvent.QuestMet(TODAY)))
+            assertTrue(events.any { it is ProgressEvent.LevelUp })
+            assertEquals(changedRules.version, fixture.currentRuleConfig().version)
+            assertEquals(changedRules.version,
+                fixture.database.playerProfileDao().get()!!.gamificationConfigVersion)
+            assertEquals(30, fixture.database.dailyProgressDao().getByDate(TODAY.toString())!!.minutesPlayed)
+        } finally {
+            fixture.closeAndDelete()
+        }
+    }
 
     @Test
     fun failedRawGraphWriteRollsBackBeforeRestartThenRetryEarnsExactlyOnce() = runBlocking {
@@ -358,6 +496,7 @@ class RecoveryFinalizationCrashReplayTest {
         private val databaseName: String,
         var database: BacklogiumDatabase,
         private val settings: SettingsDataStore,
+        val clock: MutableTestTime,
     ) {
         lateinit var marksStore: DataStoreProgressMarksStore
             private set
@@ -367,6 +506,7 @@ class RecoveryFinalizationCrashReplayTest {
             private set
         private lateinit var transitionCoordinator: ProgressTransitionCoordinator
         private lateinit var derivedStateWrites: DerivedStateWriteCoordinator
+        private lateinit var syncCoordinator: SteamSyncCoordinator
         private lateinit var committer: PlaytimeObservationCommitter
 
         companion object {
@@ -374,8 +514,9 @@ class RecoveryFinalizationCrashReplayTest {
                 val app = RuntimeEnvironment.getApplication()
                 val databaseName = "fr${System.nanoTime()}.db"
                 val settings = SettingsDataStore(app)
+                val clock = MutableTestTime()
                 settings.writeProgressMarks(initialMarks())
-                val fixture = Fixture(app, databaseName, openDatabase(app, databaseName), settings)
+                val fixture = Fixture(app, databaseName, openDatabase(app, databaseName), settings, clock)
                 fixture.wire()
                 return fixture
             }
@@ -396,6 +537,7 @@ class RecoveryFinalizationCrashReplayTest {
             marksStore = DataStoreProgressMarksStore(settings)
             transitionCoordinator = ProgressTransitionCoordinator()
             derivedStateWrites = DerivedStateWriteCoordinator()
+            syncCoordinator = SteamSyncCoordinator()
             updater = GamificationUpdater(
                 sessionDao = database.sessionDao(),
                 dailyProgressDao = database.dailyProgressDao(),
@@ -416,6 +558,56 @@ class RecoveryFinalizationCrashReplayTest {
             committer = newCommitter(database.playtimeRecoveryDao())
         }
 
+        suspend fun seedHistoricalContext() {
+            val profile = requireNotNull(database.playerProfileDao().get())
+            database.playerProfileDao().upsert(
+                profile.copy(totalXp = 100L, level = 2, currentStreak = 0, longestStreak = 12),
+            )
+            val game = requireNotNull(database.gameDao().getById(APP))
+            database.gameDao().upsert(game.copy(backfillMinutes = 90))
+            listOf(
+                DailyProgress(TODAY.minusDays(3).toString(), minutesPlayed = 30, questMet = true),
+                DailyProgress(TODAY.minusDays(2).toString(), minutesPlayed = 0, questMet = false),
+                DailyProgress(TODAY.minusDays(1).toString(), minutesPlayed = 25, questMet = false),
+            ).forEach { database.dailyProgressDao().upsert(it) }
+            settings.writeProgressMarks(
+                ProgressMarks(
+                    lastCelebratedLevel = 1,
+                    lastQuestCelebratedDate = TODAY.minusDays(4),
+                    initialized = true,
+                    pendingQuestDates = setOf(TODAY.minusDays(3)),
+                    pendingLevelUps = setOf(PendingLevelUp(1, 2)),
+                ),
+            )
+        }
+
+        suspend fun setRuleConfig(config: RuleConfig): VersionedRuleConfig =
+            settings.setRuleConfigAndGetVersion(config)
+
+        suspend fun currentRuleConfig(): VersionedRuleConfig = settings.ruleConfigWithVersionFlow.first()
+
+        suspend fun applyRuleChange(config: RuleConfig) {
+            UpdateRuleConfigUseCase(
+                settings = DataStoreSettingsRepository(settings),
+                gamificationUpdater = updater,
+                time = clock,
+                derivedStateWrites = derivedStateWrites,
+                syncCoordinator = syncCoordinator,
+                playerProfileDao = database.playerProfileDao(),
+                materializer = UnknownTimeMaterializer(
+                    database,
+                    database.playtimeRecoveryDao(),
+                    RecoveryDailyCreditCoordinator(database.dailyProgressDao()),
+                ),
+                recoveryFinalizer = finalizer(),
+            ).apply(config)
+        }
+
+        fun changeClock(date: LocalDate, zone: ZoneId) {
+            clock.evaluationDate = date
+            clock.currentZone = zone
+        }
+
         private fun newCommitter(recoveryDao: PlaytimeRecoveryDao) = PlaytimeObservationCommitter(
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
@@ -423,9 +615,9 @@ class RecoveryFinalizationCrashReplayTest {
             profileDao = database.playerProfileDao(),
             hiddenGameDao = database.hiddenGameDao(),
             differ = SessionDiffer(),
-            time = FixedTime,
+            time = clock,
             sessionActionWriter = SessionActionWriter(
-                database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), FixedTime,
+                database.sessionDao(), database.dailyProgressDao(), database.hiddenGameDao(), clock,
             ),
             recoveryAdapter = PlaytimeRecoveryCommitAdapter(recoveryDao, database.sessionDao()),
         )
@@ -529,6 +721,8 @@ class RecoveryFinalizationCrashReplayTest {
             highWater: Int = 530,
             at: Long = FIRST_NOW,
             recoveryDao: PlaytimeRecoveryDao = database.playtimeRecoveryDao(),
+            ruleConfig: RuleConfig = CONFIG,
+            ruleConfigVersion: Long = CONFIG_VERSION,
         ): PlaytimeObservationCommitter.Commit = database.withTransaction {
             val achievements = freshAchievements(appId, at)
             database.achievementDao().upsertAll(achievements)
@@ -553,8 +747,8 @@ class RecoveryFinalizationCrashReplayTest {
                 observedPlayAt = at,
                 syncedAt = at,
                 expectedAccount = ACCOUNT,
-                ruleConfig = CONFIG,
-                ruleConfigVersion = CONFIG_VERSION,
+                ruleConfig = ruleConfig,
+                ruleConfigVersion = ruleConfigVersion,
                 earnedAchievements = snapshots,
             )
             database.playerProfileDao().updateSyncStatus(lastSyncAt = at, lastSyncError = null)
@@ -653,10 +847,12 @@ class RecoveryFinalizationCrashReplayTest {
         val allocations: List<UnknownTimeAllocation>,
     )
 
-    private object FixedTime : TimeProvider {
+    private class MutableTestTime : TimeProvider {
+        var evaluationDate: LocalDate = TODAY
+        var currentZone: ZoneId = ZoneOffset.UTC
         override fun nowMillis(): Long = FIRST_NOW
-        override fun zone(): ZoneId = ZoneOffset.UTC
-        override fun today(): LocalDate = TODAY
+        override fun zone(): ZoneId = currentZone
+        override fun today(): LocalDate = evaluationDate
     }
 
     private companion object {
@@ -666,9 +862,11 @@ class RecoveryFinalizationCrashReplayTest {
         const val ACHIEVEMENTS_PER_OPERATION = 4
         const val CONFIG_VERSION = 7L
         val TODAY = LocalDate.parse("2026-09-10")
+        val NEXT_DAY = TODAY.plusDays(1)
         val BASELINE_AT = Instant.parse("2026-09-10T11:00:00Z").toEpochMilli()
         val FIRST_NOW = Instant.parse("2026-09-10T12:00:00Z").toEpochMilli()
         val SECOND_NOW = Instant.parse("2026-09-10T12:01:00Z").toEpochMilli()
+        val NEXT_DAY_NOW = Instant.parse("2026-09-11T12:00:00Z").toEpochMilli()
         val OLD_WINDOW_START = Instant.parse("2026-09-08T12:00:00Z").toEpochMilli()
         val OLD_WINDOW_END = Instant.parse("2026-09-09T12:00:00Z").toEpochMilli()
         val CONFIG = RuleConfig(questThresholdMin = 30)
