@@ -383,6 +383,418 @@ class BackupRecoveryRoundTripTest {
     }
 
     @Test
+    fun differentlyPartitionedOverlappingRoomMergeKeepsUnionAndIgnoresAnOlderReplay() = runBlocking {
+        restored.gameDao().upsert(game(APP, "Game").copy(playtimeForever = 605, lastPlaytime = 605))
+        restored.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        seedBaseline(restored, highWater = 605, date = "2026-07-17")
+        seedContribution(
+            restored,
+            from = 500L,
+            to = 540L,
+            contributionId = "local-left",
+            zone = "UTC",
+            provenance = "RETROACTIVE_PLAY",
+        )
+        seedContribution(
+            restored,
+            from = 540L,
+            to = 605L,
+            contributionId = "local-right",
+            zone = "UTC",
+            provenance = "RETROACTIVE_PLAY",
+        )
+
+        source.gameDao().upsert(game(APP, "Game").copy(playtimeForever = 630, lastPlaytime = 630))
+        source.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        seedBaseline(source, highWater = 630, date = "2026-07-18")
+        seedContribution(
+            source,
+            from = 500L,
+            to = 530L,
+            contributionId = "file-left",
+            zone = "Asia/Tokyo",
+            observedZone = "Europe/Paris",
+            provenance = "SYNC",
+        )
+        seedContribution(
+            source,
+            from = 530L,
+            to = 630L,
+            contributionId = "file-right",
+            zone = "Pacific/Auckland",
+            observedZone = "America/Los_Angeles",
+            provenance = "SYNC",
+        )
+        val olderBackup = exportMapper(source).buildExport()
+        assertTrue(BackupValidator.validate(olderBackup) is BackupValidationResult.Valid)
+
+        val summary = mergeEngine(restored).merge(olderBackup, RuleConfig())
+        assertTrue(
+            "equal-precedence overlapping estimates are surfaced while deterministic local quantity wins",
+            summary.conflicts.isNotEmpty(),
+        )
+        val dao = restored.playtimeRecoveryDao()
+        val merged = dao.contributionsForGame(ACCOUNT, APP).sortedBy { it.fromMinutes }
+        assertEquals("two retained local partitions and one uncovered imported tail", 3, merged.size)
+        assertEquals(listOf(500L, 540L, 605L), merged.map { it.fromMinutes })
+        assertEquals(listOf(540L, 605L, 630L), merged.map { it.toMinutes })
+        assertEquals(130L, merged.sumOf { it.authorizedMinutes })
+        merged.forEach { contribution ->
+            assertTrue(dao.validateGraph(contribution.contributionId))
+            assertEquals(contribution.authorizedMinutes, dao.conservedAllocatedMinutes(contribution.contributionId))
+        }
+        val importedTail = merged.single { it.fromMinutes == 605L }
+        assertEquals("SYNC", importedTail.provenance)
+        assertEquals("Pacific/Auckland", importedTail.zone)
+        assertEquals("America/Los_Angeles", importedTail.observedZone)
+        assertEquals(630L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(630, restored.gameDao().getById(APP)!!.lastPlaytime)
+        val afterFirstMerge = recoveryStore(restored).read(ACCOUNT)
+        val sessionsAfterFirstMerge = restored.sessionDao().getAll()
+        val dailyAfterFirstMerge = restored.dailyProgressDao().getAllOrdered()
+        val reexported = exportMapper(restored).buildExport()
+        assertTrue(BackupValidator.validate(reexported) is BackupValidationResult.Valid)
+        assertEquals(130L, reexported.recovery!!.contributions!!.sumOf { it.authorizedMinutes })
+
+        // Make the incoming file older than the receiving detector, then replay it. Neither its
+        // old baseline nor its differently partitioned graph may add quantity or rewrite rows.
+        seedBaseline(restored, highWater = 700, date = "2026-07-19")
+        restored.gameDao().upsert(restored.gameDao().getById(APP)!!.copy(
+            playtimeForever = 700,
+            lastPlaytime = 700,
+        ))
+        val beforeReplay = recoveryStore(restored).read(ACCOUNT)
+        val sessionsBeforeReplay = restored.sessionDao().getAll()
+        val dailyBeforeReplay = restored.dailyProgressDao().getAllOrdered()
+        mergeEngine(restored).merge(olderBackup, RuleConfig())
+        assertEquals(beforeReplay, recoveryStore(restored).read(ACCOUNT))
+        assertEquals(sessionsBeforeReplay, restored.sessionDao().getAll())
+        assertEquals(dailyBeforeReplay, restored.dailyProgressDao().getAllOrdered())
+        assertEquals(700L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(700, restored.gameDao().getById(APP)!!.lastPlaytime)
+        assertEquals(130L, dao.contributionsForGame(ACCOUNT, APP).sumOf { it.authorizedMinutes })
+        assertEquals(sessionsAfterFirstMerge, sessionsBeforeReplay)
+        assertEquals(dailyAfterFirstMerge, dailyBeforeReplay)
+    }
+
+    @Test
+    fun olderCloudPlacementCannotResurrectATombstoneOrLeaveTheExportInvalid() = runBlocking {
+        val contributionId = "c-placement-alias"
+        val from = 500L
+        val to = 605L
+        val start = iso("2026-07-13T12:00:00Z")
+        val end = iso("2026-07-17T12:00:00Z")
+
+        restored.gameDao().upsert(game(APP, "Game").copy(playtimeForever = 605, lastPlaytime = 605))
+        restored.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        seedBaseline(restored, highWater = 605, date = "2026-07-17")
+        val currentContribution = recoveryContribution(
+            id = contributionId,
+            from = from,
+            to = to,
+            revision = 2L,
+            windowStartAt = start,
+            windowEndAt = end,
+        )
+        restored.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = currentContribution,
+            timed = emptyList(),
+            allocations = listOf(
+                allocation("2026-07-16", 105L, contributionId).copy(
+                    revision = 2L,
+                    placementId = "current-estimate",
+                ),
+            ),
+        )
+        restored.playtimeRecoveryDao().upsertJournal(
+            PlaytimeRecoveryJournal(
+                operationId = "replace-old-cloud-placement",
+                contributionId = contributionId,
+                account = ACCOUNT,
+                appId = APP,
+                priorRevision = 1L,
+                currentRevision = 2L,
+                affectedDatesCsv = "2026-07-15",
+                replacedPlacementIdsCsv = "retired-cloud-placement",
+                replacedRecipeJson = null,
+                payloadJson = null,
+                derivedStatus = RecoveryJournalStatus.FINALIZED,
+                createdAt = 1L,
+                updatedAt = 1L,
+            ),
+        )
+
+        source.gameDao().upsert(game(APP, "Game").copy(playtimeForever = 605, lastPlaytime = 605))
+        source.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        seedBaseline(source, highWater = 605, date = "2026-07-17")
+        val olderCloudContribution = recoveryContribution(
+            id = contributionId,
+            from = from,
+            to = to,
+            revision = 1L,
+            windowStartAt = start,
+            windowEndAt = end,
+            zone = "UTC",
+            observedZone = "Europe/Paris",
+        )
+        source.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = olderCloudContribution,
+            timed = listOf(
+                TimedContributionPlacement(
+                    placementId = "retired-cloud-placement",
+                    contributionId = contributionId,
+                    account = ACCOUNT,
+                    appId = APP,
+                    revision = 1L,
+                    sessionId = null,
+                    minutes = 105L,
+                    creditedDate = "2026-07-15",
+                    zone = "Pacific/Auckland",
+                    evidenceIdentity = "cloud:older-backup",
+                    evidenceQuality = "CLOUD",
+                    goalAtCredit = true,
+                    createdAt = 0L,
+                ),
+            ),
+            allocations = emptyList(),
+        )
+        val olderBackup = exportMapper(source).buildExport()
+        assertTrue(BackupValidator.validate(olderBackup) is BackupValidationResult.Valid)
+
+        mergeEngine(restored).merge(olderBackup, RuleConfig())
+
+        val dao = restored.playtimeRecoveryDao()
+        val mergedContribution = dao.contribution(contributionId)!!
+        assertEquals("the active local replacement revision stays authoritative", 2L, mergedContribution.revision)
+        assertEquals(105L, dao.conservedAllocatedMinutes(contributionId))
+        assertTrue(dao.validateGraph(contributionId))
+        assertTrue(dao.activeTimedPlacements(contributionId).isEmpty())
+        val alias = dao.activeAllocations(contributionId).single()
+        assertEquals(105L, alias.minutes)
+        assertEquals("current-estimate", alias.placementId)
+        assertEquals("2026-07-16", alias.date)
+        assertEquals("UTC", alias.zone)
+        assertEquals(2L, dao.journalsForContribution(contributionId).single().currentRevision)
+        assertTrue(
+            "selected older evidence must not leave its carried replacement newer than the contribution",
+            dao.journalsForContribution(contributionId).single().currentRevision <= mergedContribution.revision,
+        )
+        val exportedAfterAlias = exportMapper(restored).buildExport()
+        assertTrue(
+            "the complete merged state must remain a valid v3 export",
+            BackupValidator.validate(exportedAfterAlias) is BackupValidationResult.Valid,
+        )
+        assertFalse(exportedAfterAlias.recovery!!.timedPlacements!!.any {
+            it.placementId == "retired-cloud-placement"
+        })
+        assertTrue(exportedAfterAlias.recovery!!.replacements!!.any {
+            it.replacedPlacementIdsCsv.orEmpty().contains("retired-cloud-placement")
+        })
+
+        val recoveryBeforeReplay = recoveryStore(restored).read(ACCOUNT)
+        val replaySummary = mergeEngine(restored).merge(olderBackup, RuleConfig())
+        assertTrue(replaySummary.conflicts.isEmpty())
+        assertEquals(recoveryBeforeReplay, recoveryStore(restored).read(ACCOUNT))
+        assertEquals(105L, dao.conservedAllocatedMinutes(contributionId))
+        assertTrue(dao.validateGraph(contributionId))
+    }
+
+    @Test
+    fun v3RoomRoundTripPreservesLinkedDetachedDatedPendingAndMaterializedRecipeGraphs() = runBlocking {
+        source.gameDao().upsert(game(APP, "Graph game").copy(playtimeForever = 625, lastPlaytime = 625))
+        source.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT))
+        seedBaseline(source, highWater = 625, date = "2026-07-17")
+        val windowStart = iso("2026-07-13T12:00:00Z")
+        val windowEnd = iso("2026-07-17T12:00:00Z")
+
+        val linkedSessionId = source.sessionDao().insert(
+            session(APP, minutes = 20, startAt = "2026-07-14T10:00:00Z", endAt = "2026-07-14T11:00:00Z"),
+        )
+        val linkedContribution = recoveryContribution(
+            id = "c-linked",
+            from = 500L,
+            to = 535L,
+            windowStartAt = windowStart,
+            windowEndAt = windowEnd,
+            zone = "Europe/Paris",
+            observedZone = "America/Los_Angeles",
+        )
+        source.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = linkedContribution,
+            timed = listOf(
+                TimedContributionPlacement(
+                    placementId = "c-linked:1:linked",
+                    contributionId = linkedContribution.contributionId,
+                    account = ACCOUNT,
+                    appId = APP,
+                    revision = 1L,
+                    sessionId = linkedSessionId,
+                    minutes = 10L,
+                    creditedDate = "2026-07-14",
+                    zone = "Europe/Paris",
+                    evidenceIdentity = "local|linked",
+                    evidenceQuality = "LOCAL",
+                    goalAtCredit = true,
+                    createdAt = 1L,
+                ),
+                TimedContributionPlacement(
+                    placementId = "c-linked:1:detached",
+                    contributionId = linkedContribution.contributionId,
+                    account = ACCOUNT,
+                    appId = APP,
+                    revision = 1L,
+                    sessionId = null,
+                    minutes = 5L,
+                    creditedDate = "2026-07-15",
+                    zone = "Europe/Paris",
+                    evidenceIdentity = "cloud|detached",
+                    evidenceQuality = "CLOUD",
+                    hiddenAtCredit = true,
+                    createdAt = 2L,
+                ),
+            ),
+            allocations = listOf(
+                allocation("2026-07-16", 20L, linkedContribution.contributionId, "Europe/Paris")
+                    .copy(goalAtCredit = true),
+            ),
+        )
+
+        val recipeContribution = recoveryContribution(
+            id = "c-recipe-prefix",
+            from = 535L,
+            to = 605L,
+            windowStartAt = windowStart,
+            windowEndAt = windowEnd,
+            zone = "Pacific/Auckland",
+            observedZone = "Europe/Paris",
+        )
+        val recipe = UnknownTimeAllocationRecipe(
+            contributionId = recipeContribution.contributionId,
+            account = ACCOUNT,
+            appId = APP,
+            revision = 1L,
+            method = "MULTI_DAY_ESTIMATE",
+            quotient = 17L,
+            remainderCount = 2L,
+            dateStart = "2026-07-14",
+            dateEnd = "2026-07-17",
+            eligibleCount = 4,
+            zone = "Pacific/Auckland",
+            windowStartAt = windowStart,
+            windowEndAt = windowEnd,
+            materializedMinutes = 18L,
+            materializedThroughDate = "2026-07-14",
+            goalAtCredit = true,
+            updatedAt = 3L,
+        )
+        source.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = recipeContribution,
+            timed = emptyList(),
+            allocations = listOf(
+                allocation("2026-07-14", 18L, recipeContribution.contributionId, "Pacific/Auckland")
+                    .copy(goalAtCredit = true),
+            ),
+            recipe = recipe,
+        )
+
+        val pendingEnd = iso("2026-07-17T12:00:00Z")
+        val pendingContribution = recoveryContribution(
+            id = "c-pending",
+            from = 605L,
+            to = 625L,
+            windowStartAt = null,
+            windowEndAt = pendingEnd,
+            zone = null,
+            observedZone = null,
+        )
+        source.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = pendingContribution,
+            timed = emptyList(),
+            allocations = listOf(
+                UnknownTimeAllocation(
+                    placementId = "c-pending:1:pending",
+                    contributionId = pendingContribution.contributionId,
+                    account = ACCOUNT,
+                    appId = APP,
+                    revision = 1L,
+                    date = null,
+                    minutes = 20L,
+                    method = "PENDING_DATE_UNKNOWN",
+                    zone = null,
+                    windowStartAt = null,
+                    windowEndAt = pendingEnd,
+                    pendingDate = true,
+                    createdAt = 4L,
+                ),
+            ),
+        )
+        listOf("c-linked", "c-recipe-prefix", "c-pending").forEach { id ->
+            assertTrue(source.playtimeRecoveryDao().validateGraph(id))
+        }
+
+        val file = exportMapper(source).buildExport()
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        assertEquals(3, file.recovery!!.contributions!!.size)
+        assertEquals(2, file.recovery!!.timedPlacements!!.size)
+        assertEquals(1, file.recovery!!.timedPlacements!!.count { it.sessionStartAt != null })
+        assertEquals(1, file.recovery!!.timedPlacements!!.count { it.sessionStartAt == null })
+        assertEquals(18L, file.recovery!!.recipes!!.single().materializedMinutes)
+        assertTrue(file.recovery!!.unknownAllocations!!.any { it.date == null && it.pendingDate })
+
+        val firstMerge = mergeEngine(restored).merge(file, RuleConfig())
+        assertTrue(firstMerge.conflicts.isEmpty())
+        val dao = restored.playtimeRecoveryDao()
+        val contributions = dao.contributionsForGame(ACCOUNT, APP).sortedBy { it.fromMinutes }
+        assertEquals(3, contributions.size)
+        assertEquals(125L, contributions.sumOf { it.authorizedMinutes })
+        contributions.forEach { contribution ->
+            assertTrue(dao.validateGraph(contribution.contributionId))
+            assertEquals(contribution.authorizedMinutes, dao.conservedAllocatedMinutes(contribution.contributionId))
+        }
+        val restoredSession = restored.sessionDao().getAll().single()
+        assertEquals(20, restoredSession.minutes)
+        val linkedShares = dao.activeTimedPlacements("c-linked")
+        assertEquals(2, linkedShares.size)
+        assertTrue(linkedShares.single { it.placementId == "c-linked:1:linked" }.sessionId == restoredSession.id)
+        assertNull(linkedShares.single { it.placementId == "c-linked:1:detached" }.sessionId)
+        assertEquals("Europe/Paris", dao.contribution("c-linked")!!.zone)
+        assertEquals("America/Los_Angeles", dao.contribution("c-linked")!!.observedZone)
+        assertEquals(20L, dao.activeAllocations("c-linked").single().minutes)
+        val restoredRecipe = dao.recipe("c-recipe-prefix")!!
+        assertEquals("Pacific/Auckland", restoredRecipe.zone)
+        assertEquals(18L, restoredRecipe.materializedMinutes)
+        assertEquals("2026-07-14", restoredRecipe.materializedThroughDate)
+        assertEquals(18L, dao.activeAllocations("c-recipe-prefix").single().minutes)
+        val restoredPending = dao.activeAllocations("c-pending").single()
+        assertNull(restoredPending.date)
+        assertTrue(restoredPending.pendingDate)
+        assertNull(restoredPending.zone)
+        // The linked row's unfunded remainder (20 - 10) remains visible exactly once.
+        assertEquals(135, restored.sessionDao().creditedMinutesByGame().single().minutes)
+
+        val recoveryAfterFirst = recoveryStore(restored).read(ACCOUNT)
+        val sessionsAfterFirst = restored.sessionDao().getAll()
+        val dailyAfterFirst = restored.dailyProgressDao().getAllOrdered()
+        val reexported = exportMapper(restored).buildExport().recovery!!
+        assertEquals(
+            file.recovery!!.contributions!!.sortedBy { it.contributionId },
+            reexported.contributions!!.sortedBy { it.contributionId },
+        )
+        assertEquals(file.recovery!!.timedPlacements!!.sortedBy { it.placementId },
+            reexported.timedPlacements!!.sortedBy { it.placementId })
+        assertEquals(file.recovery!!.unknownAllocations!!.sortedBy { it.placementId },
+            reexported.unknownAllocations!!.sortedBy { it.placementId })
+        assertEquals(file.recovery!!.recipes, reexported.recipes)
+
+        mergeEngine(restored).merge(file, RuleConfig())
+
+        assertEquals(recoveryAfterFirst, recoveryStore(restored).read(ACCOUNT))
+        assertEquals(sessionsAfterFirst, restored.sessionDao().getAll())
+        assertEquals(dailyAfterFirst, restored.dailyProgressDao().getAllOrdered())
+        assertEquals(135, restored.sessionDao().creditedMinutesByGame().single().minutes)
+    }
+
+    @Test
     fun restoredPositiveEpoch_unchangedThenIncreasingSteamReadAndRepeatedImportStayConserved() = runBlocking {
         source.gameDao().upsert(game(APP, "Game"))
         seedContribution(source)
@@ -593,6 +1005,9 @@ class BackupRecoveryRoundTripTest {
         to: Long = 605,
         contributionId: String = "c1",
         timed: List<TimedContributionPlacement> = emptyList(),
+        zone: String = "UTC",
+        observedZone: String? = "UTC",
+        provenance: String = "RETROACTIVE_PLAY",
     ) {
         val width = to - from
         val timedMinutes = timed.sumOf { it.minutes }
@@ -609,29 +1024,38 @@ class BackupRecoveryRoundTripTest {
                 windowEndAt = iso("2026-07-17T12:00:00Z"),
                 authorizedMinutes = width,
                 revision = 1,
-                provenance = "RETROACTIVE_PLAY",
-                zone = "UTC",
-                observedZone = "UTC",
+                provenance = provenance,
+                zone = zone,
+                observedZone = observedZone,
                 createdAt = 0,
             ),
             timed = timed,
-            allocations = distributeDates(width - timedMinutes, contributionId),
+            allocations = distributeDates(width - timedMinutes, contributionId, zone),
             recipe = null,
         )
     }
 
     /** Exact earliest-date-first shares over four dates, so a width always conserves. */
-    private fun distributeDates(width: Long, contributionId: String): List<UnknownTimeAllocation> {
+    private fun distributeDates(
+        width: Long,
+        contributionId: String,
+        zone: String = "UTC",
+    ): List<UnknownTimeAllocation> {
         val dates = listOf("2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17")
         val q = width / dates.size
         val r = (width % dates.size).toInt()
         return dates.mapIndexedNotNull { index, date ->
             val minutes = if (index < r) q + 1 else q
-            if (minutes <= 0L) null else allocation(date, minutes, contributionId)
+            if (minutes <= 0L) null else allocation(date, minutes, contributionId, zone)
         }
     }
 
-    private fun allocation(date: String, minutes: Long, contributionId: String = "c1") = UnknownTimeAllocation(
+    private fun allocation(
+        date: String,
+        minutes: Long,
+        contributionId: String = "c1",
+        zone: String = "UTC",
+    ) = UnknownTimeAllocation(
         placementId = "$contributionId:1:u:$date",
         contributionId = contributionId,
         account = ACCOUNT,
@@ -640,7 +1064,7 @@ class BackupRecoveryRoundTripTest {
         date = date,
         minutes = minutes,
         method = "MULTI_DAY_ESTIMATE",
-        zone = "UTC",
+        zone = zone,
         windowStartAt = iso("2026-07-13T12:00:00Z"),
         windowEndAt = iso("2026-07-17T12:00:00Z"),
         pendingDate = false,
@@ -784,6 +1208,33 @@ class BackupRecoveryRoundTripTest {
 
     private fun recoveryStore(db: BacklogiumDatabase) =
         DaoRecoveryBackupStore(db.playtimeRecoveryDao(), db.sessionDao())
+
+    private fun recoveryContribution(
+        id: String,
+        from: Long,
+        to: Long,
+        revision: Long = 1L,
+        windowStartAt: Long? = iso("2026-07-13T12:00:00Z"),
+        windowEndAt: Long = iso("2026-07-17T12:00:00Z"),
+        provenance: String = "RETROACTIVE_PLAY",
+        zone: String? = "UTC",
+        observedZone: String? = zone,
+    ) = PlaytimeContribution(
+        contributionId = id,
+        account = ACCOUNT,
+        appId = APP,
+        baselineEpoch = 1L,
+        fromMinutes = from,
+        toMinutes = to,
+        windowStartAt = windowStartAt,
+        windowEndAt = windowEndAt,
+        authorizedMinutes = to - from,
+        revision = revision,
+        provenance = provenance,
+        zone = zone,
+        observedZone = observedZone,
+        createdAt = 0L,
+    )
 
     private fun observationCommitter(db: BacklogiumDatabase) = PlaytimeObservationCommitter(
         gameDao = db.gameDao(),

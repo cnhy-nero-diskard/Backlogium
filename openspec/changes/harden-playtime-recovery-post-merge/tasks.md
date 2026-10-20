@@ -22,7 +22,7 @@
 ## 4. Verify persistence, backup and identity boundaries
 
 - [x] 4.1 Run/extend real Room 42->43 and full supported upgrade-chain fixtures with representative pre-#182 data; verify schema constraints/indexes and preservation of sessions, raw daily progress, manual/backfill offsets, hidden/Focus state, achievement rarity and longest-streak history, including any newly justified additive migration.
-- [ ] 4.2 Exercise v3 transactional export/import/merge with differently partitioned overlapping ranges, timed and detached shares, pending/dated activity, compact recipes, replacement aliases and older-backup replay; verify idempotent conserved union and retained uncertainty/zone/provenance without resurrecting superseded placement.
+- [x] 4.2 Exercise v3 transactional export/import/merge with differently partitioned overlapping ranges, timed and detached shares, pending/dated activity, compact recipes, replacement aliases and older-backup replay; verify idempotent conserved union and retained uncertainty/zone/provenance without resurrecting superseded placement.
 - [ ] 4.3 Inject restore and materialization failures/reentry at database boundaries and replay after restart; verify all-or-nothing import, exact prefix/tail and raw daily credit once, no partial graph, and successful next ordinary sync after restore.
 - [ ] 4.4 Exercise logout/reset/account-switch stale workers, confirmed foreign-history import with inactive foreign baselines, shared/borrowed play and shared-to-owned conversion; verify isolation and cleanup, fresh baseline without lifetime credit, preserved permitted manual/imported history and no phantom session/recency input.
 

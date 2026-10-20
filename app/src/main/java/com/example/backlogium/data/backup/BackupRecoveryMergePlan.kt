@@ -213,7 +213,13 @@ object RecoveryBackupMergePlanner {
         localReplacements: List<BackupReplacement>,
         conflicts: MutableList<RecoveryMergeConflict>,
     ): List<RecoveryContributionGraph> {
-        val sorted = sources.sortedWith(compareBy({ it.graph.contribution.fromMinutes }, { it.graph.contribution.toMinutes }))
+        // Retired placements are already replacement aliases, not evidence that may win a range.
+        // Apply tombstones before precedence: otherwise an older high-quality timed row could win,
+        // only be converted to an estimate afterward, and roll the surviving revision behind its
+        // replacement journal (or replace a newer live graph with stale placement facts).
+        val sorted = sources
+            .map { source -> source.copy(graph = filterTombstoned(source.graph, tombstones)) }
+            .sortedWith(compareBy({ it.graph.contribution.fromMinutes }, { it.graph.contribution.toMinutes }))
         if (sorted.isEmpty()) return emptyList()
         val breakpoints = sorted
             .flatMap { listOf(it.graph.contribution.fromMinutes, it.graph.contribution.toMinutes) }
