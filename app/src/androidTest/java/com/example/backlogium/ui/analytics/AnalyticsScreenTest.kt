@@ -122,6 +122,8 @@ class AnalyticsScreenTest {
         composeRule.onNodeWithText("Estimated playtime").assertIsDisplayed()
         composeRule.onNodeWithText("recovered 1 hr 45 mins in total", substring = true)
             .assertIsDisplayed()
+        composeRule.onNodeWithText("26 mins of that window fall on this day", substring = true)
+            .assertIsDisplayed()
         composeRule.onNodeWithText("Attributed in the UTC timezone", substring = true)
             .assertIsDisplayed()
     }

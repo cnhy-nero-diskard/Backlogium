@@ -42,9 +42,9 @@
 
 ## 7. Verify downstream and user-facing semantics
 
-- [ ] 7.1 Exercise History/Analytics allocation-only, mixed, single-day, multi-day, pending and unavailable states; verify exact day/game/period totals, no invented clocks, honest pending/unavailable language and visible accessible ! explanations retaining the residual window, selected-day share and frozen zone at supported font scales.
-- [ ] 7.2 Verify allocations feed intended XP/quests/streaks/game badges while supplying no fabricated session counts, lengths, recency or time-of-day; verify Personal Pace excludes unresolved multi-day and zero-share gap dates from habits and confidence, includes eligible single-day closed activity, and restores eligibility only after full valid resolution.
-- [ ] 7.3 Inspect light/dark and narrow/standard deterministic recovery fixtures and run affected Compose accessibility/inspection checks; verify any intentional pixel changes ship with reviewed matching Roborazzi baselines and no unrelated UI/storage-boundary changes are introduced.
+- [x] 7.1 Exercise History/Analytics allocation-only, mixed, single-day, multi-day, pending and unavailable states; verify exact day/game/period totals, no invented clocks, honest pending/unavailable language and visible accessible ! explanations retaining the residual window, selected-day share and frozen zone at supported font scales.
+- [x] 7.2 Verify allocations feed intended XP/quests/streaks/game badges while supplying no fabricated session counts, lengths, recency or time-of-day; verify Personal Pace excludes unresolved multi-day and zero-share gap dates from habits and confidence, includes eligible single-day closed activity, and restores eligibility only after full valid resolution.
+- [x] 7.3 Inspect light/dark and narrow/standard deterministic recovery fixtures and run affected Compose accessibility/inspection checks; verify any intentional pixel changes ship with reviewed matching Roborazzi baselines and no unrelated UI/storage-boundary changes are introduced.
 
 ## 8. Run the stabilized-head validation and live acceptance gates
 
