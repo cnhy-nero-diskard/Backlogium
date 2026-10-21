@@ -82,22 +82,47 @@ class DaoRecoveryBackupStore @Inject constructor(
 
     override suspend fun read(account: String): BackupRecovery {
         if (account.isBlank()) return emptyBackupRecovery()
-        val sessionsById = sessionDao.getAll().associateBy { it.id }
         val states = dao.statesForAccount(account)
         // Contributions are the durable quantity authority and may legitimately outlive or
         // temporarily lack a baseline-state row (e.g. a compact-recipe fixture/import). Export
         // every graph for the account rather than discovering them only through game states.
         val contributions = dao.contributionsForAccount(account)
-        val timed = mutableListOf<BackupTimedPlacement>()
-        val allocations = mutableListOf<BackupUnknownAllocation>()
-        val recipes = mutableListOf<BackupAllocationRecipe>()
-        val replacements = mutableListOf<BackupReplacement>()
-        contributions.forEach { contribution ->
-            timed += dao.activeTimedPlacements(contribution.contributionId)
+        // Read the active graph in account-scoped batches inside the export transaction. The
+        // contribution-keyed API remains useful for one-graph writes, but an export must not issue
+        // four additional Room queries for every contribution in the account.
+        val timedEntities = dao.activeTimedPlacementsForAccount(account)
+        val allocationEntities = dao.activeAllocationsForAccount(account)
+        val timedByContribution = timedEntities.groupBy { it.contributionId }
+        val allocationsByContribution = allocationEntities.groupBy { it.contributionId }
+        val recipesByContribution = dao.recipesForAccount(account).associateBy { it.contributionId }
+        val journalsByContribution = dao.journalsForAccount(account).groupBy { it.contributionId }
+
+        // The main export already reads all sessions. This recovery projection only needs hosts for
+        // active timed shares, so avoid a second full-table session scan and stay below SQLite's
+        // bind-variable limit when loading a large account.
+        val sessionIds = timedEntities.mapNotNull { it.sessionId }.distinct()
+        val hostSessions = sessionIds.chunked(SQLITE_BIND_BATCH_SIZE).flatMap { ids ->
+            sessionDao.sessionsByIds(ids)
+        }
+        val sessionsById = hostSessions.associateBy { it.id }
+
+        val timed = contributions.flatMap { contribution ->
+            timedByContribution[contribution.contributionId].orEmpty()
+                .sortedBy { it.creditedDate }
                 .map { it.toBackup(sessionsById[it.sessionId]) }
-            allocations += dao.activeAllocations(contribution.contributionId).map { it.toBackup() }
-            dao.recipe(contribution.contributionId)?.let { recipes += it.toBackup() }
-            replacements += dao.journalsForContribution(contribution.contributionId).map { it.toBackup() }
+        }
+        val allocations = contributions.flatMap { contribution ->
+            allocationsByContribution[contribution.contributionId].orEmpty()
+                .sortedWith(compareBy<UnknownTimeAllocation> { it.pendingDate }.thenBy { it.date })
+                .map { it.toBackup() }
+        }
+        val recipes = contributions.mapNotNull { contribution ->
+            recipesByContribution[contribution.contributionId]?.toBackup()
+        }
+        val replacements = contributions.flatMap { contribution ->
+            journalsByContribution[contribution.contributionId].orEmpty()
+                .sortedBy { it.updatedAt }
+                .map { it.toBackup() }
         }
         return BackupRecovery(
             observations = states.map { it.toBackup() },
@@ -191,6 +216,8 @@ class DaoRecoveryBackupStore @Inject constructor(
     }
 
     private companion object {
+        const val SQLITE_BIND_BATCH_SIZE = 900
+
         /** Marks a journal row that exists only to carry displaced tombstones through an import. */
         const val BACKUP_CARRY_EVIDENCE = "backup-carry"
     }

@@ -142,6 +142,10 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
+    /** Targeted host-session lookup for recovery backup projection; callers chunk below SQLite's bind limit. */
+    @Query("SELECT * FROM sessions WHERE id IN (:sessionIds)")
+    suspend fun sessionsByIds(sessionIds: List<Long>): List<Session>
+
     /**
      * One invalidation stream for canonical recovery projections. The scalar result is merely a
      * trigger: Room tracks every referenced table and emits after any committed change, even when

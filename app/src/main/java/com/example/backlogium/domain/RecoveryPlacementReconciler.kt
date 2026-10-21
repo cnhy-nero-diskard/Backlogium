@@ -680,19 +680,26 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
                 )
             }
 
-            val activeTimed = recoveryDao.activeTimedPlacements(current.contributionId)
+            // One game-scoped read supplies the current graph and every peer contribution needed
+            // to exclude already-consumed evidence spans. Keep the returned snapshot local to this
+            // transaction; the next contribution reconciliation reads its own committed revision.
+            val allActiveTimed = recoveryDao.activeTimedPlacementsForGame(current.account, current.appId)
+            val activeTimed = allActiveTimed.filter { it.contributionId == current.contributionId }
             val activeAllocations = recoveryDao.activeAllocations(current.contributionId)
             val activeRecipe = recoveryDao.recipe(current.contributionId)
-            val sessionMinutesById = sessionDao.getAll().associate { it.id to it.minutes }
+            val sessionIds = allActiveTimed.mapNotNull { it.sessionId }.distinct()
+            val sessionsById = sessionIds.chunked(SQLITE_BIND_BATCH_SIZE)
+                .flatMap { sessionDao.sessionsByIds(it) }
+                .associateByTo(mutableMapOf()) { it.id }
             val plan = RecoveryPlacementReconciler.computeContributionReplacement(
                 contribution = current,
                 activeTimed = activeTimed,
                 activeAllocations = activeAllocations,
                 evidence = evidence,
-                consumedSpans = computeConsumedSpans(current),
+                consumedSpans = computeConsumedSpans(current, allActiveTimed, sessionsById),
                 activeReaderIdentity = activeReaderIdentity,
                 now = time.nowMillis(),
-                sessionMinutesById = sessionMinutesById,
+                sessionMinutesById = sessionsById.mapValues { it.value.minutes },
                 activeRecipe = activeRecipe,
             )
             if (plan.operation == RecoveryPlacementReconciler.RecoveryReconcileOperation.NO_CHANGE) {
@@ -724,7 +731,7 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
                 earned = RecoveryEarnedInputs(),
             )
             if (recoveryDao.journal(operationId) == null) {
-                commitRawGraph(current, plan, inputs)
+                commitRawGraph(current, plan, inputs, sessionsById)
                 verifyConservation(current.contributionId)
             }
             Prepared(
@@ -787,6 +794,8 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
     }
 
     private companion object {
+        const val SQLITE_BIND_BATCH_SIZE = 900
+
         val RESUMABLE_STATUSES = setOf(
             RecoveryJournalStatus.RAW_COMMITTED,
             RecoveryJournalStatus.CORRECTIVE_DONE,
@@ -799,22 +808,23 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
         contribution: PlaytimeContribution,
         plan: RecoveryPlacementReconciler.RecoveryPlacementReconcilePlan,
         inputs: RecoveryDerivedFinalizeInputs,
+        sessionsById: MutableMap<Long, Session>,
     ) {
         val now = time.nowMillis()
         // 1. Insert the evidence-informed sessions first so the funded shares can link to them.
-        val sessionIds = plan.newEvidencePlacements.map { placement ->
-            sessionDao.insert(
-                Session(
-                    appId = contribution.appId,
-                    startAt = placement.startAt,
-                    endAt = placement.endAt,
-                    minutes = placement.minutes,
-                    open = false,
-                    recoveredSharedPlay = RecoveredSharedPlayState.NONE,
-                    timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
-                ),
+        val evidenceSessions = plan.newEvidencePlacements.map { placement ->
+            Session(
+                appId = contribution.appId,
+                startAt = placement.startAt,
+                endAt = placement.endAt,
+                minutes = placement.minutes,
+                open = false,
+                recoveredSharedPlay = RecoveredSharedPlayState.NONE,
+                timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
             )
         }
+        val sessionIds = evidenceSessions.map { sessionDao.insert(it) }
+        sessionIds.forEachIndexed { index, id -> sessionsById[id] = evidenceSessions[index].copy(id = id) }
         val evidenceShares = plan.newEvidencePlacements.zip(sessionIds).map { (placement, sessionId) ->
             TimedContributionPlacement(
                 placementId = PlaytimeRecoveryIdentity.timedPlacementId(
@@ -860,14 +870,18 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
         // 3. Reduce or retire the mapped synthetic sessions by exactly the moved funded share,
         // preserving every other funded or legacy minute on the row. A retired row is only one
         // whose minutes were entirely the superseded share (no independent state references it).
-        val sessionsById = sessionDao.getAll().associateBy { it.id }
+        val changedSessionIds = plan.sessionShareChanges.map { it.sessionId }.distinct()
+        val remainingSharesBySession = changedSessionIds.chunked(SQLITE_BIND_BATCH_SIZE)
+            .flatMap { recoveryDao.activeTimedSharesForSessions(it) }
+            .mapNotNull { share -> share.sessionId?.let { it to share.minutes } }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, minutes) -> minutes.fold(0L) { total, value -> Math.addExact(total, value) } }
         plan.sessionShareChanges.forEach { change ->
             check(change.afterMinutes >= 0) {
                 "session ${change.sessionId} share replacement produced negative minutes ${change.afterMinutes}"
             }
             val after = change.afterMinutes
-            val remainingFundedMinutes = recoveryDao.activeTimedSharesForSession(change.sessionId)
-                .fold(0L) { total, share -> Math.addExact(total, share.minutes) }
+            val remainingFundedMinutes = remainingSharesBySession[change.sessionId] ?: 0L
             check(remainingFundedMinutes <= after.toLong()) {
                 "session ${change.sessionId} retains $remainingFundedMinutes funded minutes after " +
                     "replacement but only $after session minutes"
@@ -877,8 +891,11 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
             }
             if (after <= 0) {
                 sessionDao.deleteById(change.sessionId)
+                sessionsById.remove(change.sessionId)
             } else {
-                sessionDao.update(stored.copy(minutes = after))
+                val updated = stored.copy(minutes = after)
+                sessionDao.update(updated)
+                sessionsById[change.sessionId] = updated
             }
         }
 
@@ -921,26 +938,25 @@ class RecoveryPlacementReconcileUseCase @Inject constructor(
      * replacing those shares, not competing with them. Prefer the structured funded interval over
      * a potentially wider host session; only legacy rows without it fall back to the host bounds.
      */
-    private suspend fun computeConsumedSpans(contribution: PlaytimeContribution): List<ConsumedPlaytimeSpan> {
-        val sessionsById = sessionDao.getAll().associateBy { it.id }
+    private fun computeConsumedSpans(
+        contribution: PlaytimeContribution,
+        activeTimedPlacements: List<TimedContributionPlacement>,
+        sessionsById: Map<Long, Session>,
+    ): List<ConsumedPlaytimeSpan> {
         val spans = mutableListOf<ConsumedPlaytimeSpan>()
-        val allContributions = recoveryDao.contributionsForGame(contribution.account, contribution.appId)
-        for (candidate in allContributions) {
-            val shares = recoveryDao.activeTimedPlacements(candidate.contributionId)
-            for (share in shares) {
-                if (candidate.contributionId == contribution.contributionId &&
-                    !share.protected && share.evidenceQuality == RecoveryEvidenceQuality.ESTIMATE
-                ) continue
-                val storedSpan = evidenceSpanFrom(share.evidenceIdentity)
-                if (storedSpan != null && storedSpan.second > storedSpan.first) {
-                    spans += ConsumedPlaytimeSpan(storedSpan.first, storedSpan.second)
-                    continue
-                }
-                val session = share.sessionId?.let { sessionsById[it] } ?: continue
-                val endAt = session.endAt
-                if (endAt == null || endAt <= session.startAt) continue
-                spans += ConsumedPlaytimeSpan(session.startAt, endAt)
+        for (share in activeTimedPlacements) {
+            if (share.contributionId == contribution.contributionId &&
+                !share.protected && share.evidenceQuality == RecoveryEvidenceQuality.ESTIMATE
+            ) continue
+            val storedSpan = evidenceSpanFrom(share.evidenceIdentity)
+            if (storedSpan != null && storedSpan.second > storedSpan.first) {
+                spans += ConsumedPlaytimeSpan(storedSpan.first, storedSpan.second)
+                continue
             }
+            val session = share.sessionId?.let { sessionsById[it] } ?: continue
+            val endAt = session.endAt
+            if (endAt == null || endAt <= session.startAt) continue
+            spans += ConsumedPlaytimeSpan(session.startAt, endAt)
         }
         return spans
     }

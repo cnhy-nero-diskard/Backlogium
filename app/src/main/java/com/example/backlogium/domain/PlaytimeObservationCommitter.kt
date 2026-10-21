@@ -306,6 +306,18 @@ class PlaytimeObservationCommitter @Inject constructor(
         val committedGraphs = mutableListOf<PlaytimeRecoveryCommitMapper.GraphOutcome>()
         val baselineEstablished = mutableSetOf<Long>()
         var recoveredContributions = 0
+        // Load prior placements once for this admitted observation batch. The adapter chunks the
+        // game IDs below SQLite's bind limit, and the result stays local to this raw transaction.
+        val placementInputsByAppId = if (authoringEnabled) {
+            recoveryAdapter.placementInputsForGames(
+                account = account,
+                appIds = observed.asSequence().filterNot { it.appId in sharedAppIds }
+                    .map { it.appId }.toList(),
+                sessionsById = sessionsById,
+            )
+        } else {
+            emptyMap()
+        }
 
         for (game in observed) {
             if (game.appId in sharedAppIds) continue
@@ -326,8 +338,9 @@ class PlaytimeObservationCommitter @Inject constructor(
             }
             val evidence = cloudEvidenceByAppId[game.appId].orEmpty() +
                 localEvidenceByAppId[game.appId].orEmpty()
-            val consumed = recoveryAdapter.consumedSpansFor(account, game.appId, sessionsById)
-            val pendingPlacements = recoveryAdapter.findPendingPlacements(account, game.appId)
+            val placementInputs = placementInputsByAppId[game.appId]
+            val consumed = placementInputs?.consumedSpans.orEmpty()
+            val pendingPlacements = placementInputs?.pendingPlacements.orEmpty()
             val context = RecoveryCommitContext(
                 windowStartAt = previousObservationAt,
                 windowEndAt = syncedAt,
