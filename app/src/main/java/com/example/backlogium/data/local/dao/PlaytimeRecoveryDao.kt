@@ -318,6 +318,10 @@ interface PlaytimeRecoveryDao {
     @Query("SELECT * FROM playtime_contributions WHERE account = :account ORDER BY appId, baselineEpoch, fromMinutes")
     suspend fun contributionsForAccount(account: String): List<PlaytimeContribution>
 
+    /** Distinct deterministic game keys for bounded account-wide backup export reads. */
+    @Query("SELECT DISTINCT appId FROM playtime_contributions WHERE account = :account ORDER BY appId")
+    suspend fun contributionAppIdsForAccount(account: String): List<Long>
+
     @Query(
         "SELECT COUNT(*) FROM playtime_contributions " +
             "WHERE account = :account AND appId = :appId AND baselineEpoch = :baselineEpoch " +

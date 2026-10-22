@@ -51,6 +51,7 @@ import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeEvidenceSource
 import com.example.backlogium.domain.PlaytimeTimingEvidence
 import com.example.backlogium.gamification.RuleConfig
+import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -60,9 +61,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -86,6 +88,7 @@ class RecoveryScaleBenchmarkTest {
         runScale(scale)
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private suspend fun runScale(scale: Scale) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val stopAfter = InstrumentationRegistry.getArguments().getString("recoveryStage")
@@ -260,39 +263,50 @@ class RecoveryScaleBenchmarkTest {
             }
             val backup = requireNotNull(exportFile)
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
-            val backupBytes = json.encodeToString(BackupFile.serializer(), backup).toByteArray()
-            Log.i(TAG, "BACKUP_BYTES,${scale.label},${backupBytes.size}")
-            assertTrue("exported v3 object must pass full-file preflight",
-                com.example.backlogium.data.backup.BackupValidator.validate(backup) is
-                    com.example.backlogium.data.backup.BackupValidationResult.Valid)
-            if (stopAfter == "export") return
-            benchmarkImports(context, scale, backupBytes, json)
-            if (stopAfter == "import") return
+            val encodedBackup = File.createTempFile(
+                "recovery-scale-${scale.label.lowercase()}-",
+                ".json",
+                context.cacheDir,
+            )
+            try {
+                encodedBackup.outputStream().use { output ->
+                    json.encodeToStream(BackupFile.serializer(), backup, output)
+                }
+                Log.i(TAG, "BACKUP_BYTES,${scale.label},${encodedBackup.length()}")
+                assertTrue("exported v3 object must pass full-file preflight",
+                    com.example.backlogium.data.backup.BackupValidator.validate(backup) is
+                        com.example.backlogium.data.backup.BackupValidationResult.Valid)
+                if (stopAfter == "export") return
+                benchmarkImports(context, scale, encodedBackup, json)
+                if (stopAfter == "import") return
 
-            val hidden = HiddenGamesRepository(
-                hiddenGameDao = database.hiddenGameDao(),
-                gameDao = database.gameDao(),
-                storeCacheDao = database.gameGenreCacheDao(),
-                time = time,
-            )
-            val sessionRepository = SessionRepository(
-                sessionDao = database.sessionDao(),
-                hiddenGamesRepository = hidden,
-                time = time,
-                playerProfileDao = database.playerProfileDao(),
-                database = database,
-            )
-            val windowStart = TODAY.minusDays(29)
-            val windowEndExclusive = TODAY.plusDays(1)
-            measureFive("history-analytics-30-day-window", scale, database, metrics) {
-                val activity = sessionRepository.activityBetween(ZoneOffset.UTC, windowStart, windowEndExclusive).first()
-                val allocations = sessionRepository.datedAllocationsBetween(windowStart, TODAY).first()
-                val totals = sessionRepository.datedCreditedTotalsBetween(ZoneOffset.UTC, windowStart, windowEndExclusive)
-                    .first()
-                activity.size.toLong() + allocations.size + totals.size
+                val hidden = HiddenGamesRepository(
+                    hiddenGameDao = database.hiddenGameDao(),
+                    gameDao = database.gameDao(),
+                    storeCacheDao = database.gameGenreCacheDao(),
+                    time = time,
+                )
+                val sessionRepository = SessionRepository(
+                    sessionDao = database.sessionDao(),
+                    hiddenGamesRepository = hidden,
+                    time = time,
+                    playerProfileDao = database.playerProfileDao(),
+                    database = database,
+                )
+                val windowStart = TODAY.minusDays(29)
+                val windowEndExclusive = TODAY.plusDays(1)
+                measureFive("history-analytics-30-day-window", scale, database, metrics) {
+                    val activity = sessionRepository.activityBetween(ZoneOffset.UTC, windowStart, windowEndExclusive).first()
+                    val allocations = sessionRepository.datedAllocationsBetween(windowStart, TODAY).first()
+                    val totals = sessionRepository.datedCreditedTotalsBetween(ZoneOffset.UTC, windowStart, windowEndExclusive)
+                        .first()
+                    activity.size.toLong() + allocations.size + totals.size
+                }
+
+                Log.i(TAG, "SCALE_DONE,${scale.label},games=${seed.games},contributions=${seed.contributions}")
+            } finally {
+                encodedBackup.delete()
             }
-
-            Log.i(TAG, "SCALE_DONE,${scale.label},games=${seed.games},contributions=${seed.contributions}")
         } finally {
             metrics.enabled = false
             database.close()
@@ -407,27 +421,29 @@ class RecoveryScaleBenchmarkTest {
         return record
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private suspend fun benchmarkImports(
         context: android.content.Context,
         scale: Scale,
-        encodedBackup: ByteArray,
+        encodedBackup: File,
         json: Json,
     ) {
-        if (encodedBackup.size.toLong() > BackupRepository.MAX_IMPORT_BYTES) {
+        if (encodedBackup.length() > BackupRepository.MAX_IMPORT_BYTES) {
             Log.i(
                 TAG,
-                "IMPORT_SKIPPED,${scale.label},bytes=${encodedBackup.size}," +
+                "IMPORT_SKIPPED,${scale.label},bytes=${encodedBackup.length()}," +
                     "maxBytes=${BackupRepository.MAX_IMPORT_BYTES},reason=production_byte_limit",
             )
             return
         }
-        val payload = encodedBackup.toString(Charsets.UTF_8)
         // Warm the import path once, then use a fresh empty receiving Room database for each sample
         // so every measured import performs the same full graph write rather than an idempotent replay.
         val runId = System.nanoTime()
         val warm = newTarget(context, scale, 0, runId)
         try {
-            val parsed = json.decodeFromString(BackupFile.serializer(), payload)
+            val parsed = encodedBackup.inputStream().use {
+                json.decodeFromStream(BackupFile.serializer(), it)
+            }
             assertTrue(
                 com.example.backlogium.data.backup.BackupValidator.validate(parsed) is
                     com.example.backlogium.data.backup.BackupValidationResult.Valid,
@@ -443,7 +459,9 @@ class RecoveryScaleBenchmarkTest {
             val target = newTarget(context, scale, sample, runId)
             try {
                 measureOnce("v3-backup-import", scale, sample, target.database, target.metrics) {
-                    val parsed = json.decodeFromString(BackupFile.serializer(), payload)
+                    val parsed = encodedBackup.inputStream().use {
+                        json.decodeFromStream(BackupFile.serializer(), it)
+                    }
                     val result = com.example.backlogium.data.backup.BackupValidator.validate(parsed)
                     assertTrue(result is com.example.backlogium.data.backup.BackupValidationResult.Valid)
                     target.engine.merge(parsed, CONFIG, CONFIG_VERSION)
