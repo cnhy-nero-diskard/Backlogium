@@ -272,3 +272,60 @@ Baseline captured on implementation HEAD `3690fc944ecb32931e4472f373e9b2af541ce1
 | **E — regression/delivery** | Historical merge-head CI run above; fresh focused five-class subset passed, but is not the full acceptance gate. | No current-head CI, full fresh stabilized-head suites, controlled real-engine/WAL interleaving, emulator/manual offline/restart test, or independent live Steam increase evidence yet (tasks 5.1–5.4, 8.1–8.6). User-reported archived evidence remains labeled as such. |
 
 This matrix describes available evidence and explicit gaps; none of the entries closes #183 acceptance criteria by itself.
+
+## 6.1 M-tier stress run (2026-10-22; partial, task remains open)
+
+- **Head and environment:** implementation HEAD aa8caed97b98d1e27d2952ddef3913feb299c5d2 on Windows 11 x64 build 10.0.22631, Gradle 9.5.0, JetBrains Runtime 21.0.10, Android platform tools / ADB 35.0.2, and the Medium_Phone_API_35 AVD (Android 15/API 35, build AE3A.240806.005, x86_64, 1080x2400 at 420 dpi; emulator 36.6.11). ANDROID_HOME was C:/Users/cnhyn/AppData/Local/Android/Sdk. No physical device was attached.
+- **Command:** set process-local ANDROID_HOME as above, then ran :app:connectedDebugAndroidTest with the RecoveryScaleBenchmarkTest class and recoveryScale=M arguments. The opt-in M case seeded deterministically with FIXTURE_SEED=1830601 and ran one warm-up plus five measured calls for each completed workload.
+- **Seed checks:** 1,000 games, 25,000 contributions, 50 quiet games, 506,147 authorized minutes, 3,747 sessions/timed placements, 26,235 allocation rows including 1,249 pending and 1,249 superseded, and 14 recipes including two fully materialized recipes. The fixture's seed verification and conservation assertions passed. Seed time was 5.210 s; PSS after seeding was 133,972 KB (not a peak-memory measure).
+
+| M-tier workload | Median (range) | Query / row / write counts | Observed SupportSQLite transaction data |
+| --- | ---: | --- | --- |
+| Unchanged full-library sync | 3.293 s (3.287-3.431 s) | 5,014 queries; 68,135 cursor rows; 6,001 DML statements; 3,001 affected rows | 1 transaction; 3.292 s median |
+| One-game +25 increase | 33.9 ms (30.1-37.0 ms) | 33 queries; 5,843 cursor rows; 15 DML statements; 10 affected rows | 1 median transaction; 32.8 ms median |
+| Delayed evidence upgrade plus duplicate replay | 228.0 ms (224.2-247.1 ms) | 52 queries; 37,224 cursor rows; 11 DML statements; 9 affected rows | 4 median transactions (range 2-10); 175.6 ms accumulated median |
+| Sparse ten-year recipe page | 4.61 ms (4.40-5.60 ms) | 12 median queries (range 12-13); 11 cursor rows; no writes | 0 median transactions observed |
+| Dense ten-year recipe page | 488.8 ms (480.2-498.7 ms) | 387 queries; 1,844 cursor rows; 1,100 DML statements; 733 affected rows | 0 transactions observed despite writes; instrumentation does not expose this transaction path |
+
+- **Interrupted work:** the full M invocation remained CPU-bound in its first v3 export warm-up for about 18 minutes without emitting a completed sample. It was stopped to continue the required stabilized-head gates. At interruption, the app process used about 130 MB PSS and /data had roughly 463 MB free; no crash or storage failure was reported. This is an interrupted measurement, not a passing export result. M export/import and 30-day window measurements and all L-tier measurements remain absent. Transaction timings are also incomplete for recipe and driver-backed paths. Do not mark 6.1 complete from the S comparison or this partial M run.
+
+## 8.1-8.3 Fresh stabilized-head validation (2026-10-22)
+
+- **Implementation head:** aa8caed97b98d1e27d2952ddef3913feb299c5d2. No application source changed during this validation; generated build/test outputs remained under ignored build directories or the local temp directory.
+- **Runtime:** Windows 11 x64 build 10.0.22631, Gradle 9.5.0, JetBrains Runtime 21.0.10, Android SDK platform tools 35.0.2, compileSdk 36. Device instrumentation used Medium_Phone_API_35: Android 15/API 35, build AE3A.240806.005, x86_64 emulator, 1080x2400 at 420 dpi.
+- **Full unit gate:** :gamification:test :app:testDebugUnitTest --max-workers=1 --rerun-tasks --console=plain completed BUILD SUCCESSFUL in 5m18s. Fresh XML reports counted 2,275 app tests and 53 gamification tests: 2,328 total, zero failures, errors, or skips.
+- **Broader CI-equivalent gate:** test :app:compileReleaseKotlin --max-workers=1 --rerun-tasks --console=plain completed BUILD SUCCESSFUL in 6m12s. The broader test task and release Kotlin compilation executed on this implementation head.
+- **Android lint:** :app:lintDebug --max-workers=1 --rerun-tasks --console=plain completed BUILD SUCCESSFUL in 4m44s. The generated report contained 56 warnings and 2 hints, with no unfiltered errors; the existing baseline filtered 2 errors, 34 warnings, and 3 hints. Fourteen old baseline entries were not found. lint.baseline was not changed.
+- **Roborazzi:** :app:verifyRoborazziDebug with RoborazziSpikeTest, MainScreenScreenshotNarrowTest, and MainScreenScreenshotStandardTest filters completed BUILD SUCCESSFUL in 2m48s: 50 tests, zero failures or skips. No screenshot baseline was rewritten.
+- **Migration and History/Analytics instrumentation:** :app:connectedDebugAndroidTest with MigrationTest, HistoryScreenTest, and AnalyticsScreenTest filters completed BUILD SUCCESSFUL in 4m32s on the AVD: 55 tests, zero failures or skips. Migration, History, and Analytics all ran on the same API 35 image above.
+- **Disposition:** tasks 8.1, 8.2, and 8.3 are complete for the recorded commands and head. The connected test run is migration plus screen instrumentation; it is not the separate end-to-end offline/restart recovery flow in task 8.4.
+
+## 8.4-8.6 and 9.x remaining evidence
+
+- **8.4 remains open:** the fresh full unit suite and connected migration/History/Analytics suites pass, and existing deterministic fixtures cover the #181 quantities, retry behavior, progression, disclosure, and backup round trips. No single current-head device run exercised the controlled offline/restart multi-day flow through totals, quests, streaks, visible ! state, retry, and backup restore. These separate tests are not presented as that end-to-end device result.
+- **8.5 remains open:** no independently observed Steam-published increase during Offline/Invisible play was performed in this turn. The archived 55-minute Space Marine result remains user-reported; it is not relabelled as independent observation.
+- **8.6 remains open pending publication check:** strict OpenSpec validation returned valid and git diff --check passed for this checkpoint. Remote checks for the published checkpoint and final scope review remain required. The current branch has no associated PR.
+- **9.1 remains open:** the updated evidence matrices below provide explicit dispositions, but no implementation PR link exists yet and the full performance/live acceptance evidence is incomplete.
+- **9.2 remains open:** do not evaluate #183 for closure while tasks 6.1, 8.4, and 8.5 remain open. The retained branch comparison is recorded in the matrix below; no operation was made against that branch.
+
+## Current A-E evidence matrix (2026-10-22)
+
+| Area | Current evidence-backed disposition | Remaining work |
+| --- | --- | --- |
+| **A: authority, quantity, placement, time, and downstream progression** | Tasks 3.1-3.5, 4.4, and 5.1-5.4 are complete in the records above; the fresh full unit gate passed 2,328 tests. | The combined controlled device/offline/restart acceptance remains open in 8.4. |
+| **B: architecture, complexity, and performance** | F1 batching and S-tier before/after comparisons are recorded under 6.2-6.4; the M fixture passed seed/conservation checks and produced five workload summaries. | M export/import/window, L workloads, and complete transaction observability remain open under 6.1. |
+| **C: persistence, migration, backup, and account boundaries** | Tasks 2.1-2.4 and 4.1-4.4 are complete; fresh API 35 migration instrumentation passed as part of the 55-test device run. | No reproduced C-area P1 remains; final delivery/CI evidence is still open under 8.6. |
+| **D: History, Analytics, uncertainty disclosures, and Personal Pace** | Tasks 7.1-7.3 are complete; all three Roborazzi classes passed 50 tests, and current History/Analytics instrumentation passed. | Their combined persistence/restart path remains part of the open 8.4 device acceptance. |
+| **E: regression, CI, and delivery readiness** | Full unit, broader release-compilation, lint, Roborazzi, and migration/History/Analytics gates passed on implementation HEAD aa8caed97b98d1e27d2952ddef3913feb299c5d2. | Remote checks after publication and controlled/live acceptance remain open (8.4-8.6). |
+
+## Current #183 completion gate
+
+| #183 acceptance condition | Evidence and disposition | Status |
+| --- | --- | --- |
+| 1. Dedicated change, checked-off tasks, and linked implementation PR(s) | The change and scoped branch exist; tasks through 8.3 are checked. No PR is associated with this branch yet. | Open |
+| 2. Data flow and findings documented; every high-risk observation fixed or proved safe | The flow map and dispositions for D1, R1-R3, R5-R7 are recorded; R4 is a separate P2 follow-on. F1's S comparison is complete, but stress-scale performance evidence in 6.1 is incomplete. | Open |
+| 3. No unresolved known loss, duplicate-credit, account-isolation, backup-corruption, or reconciliation defect | Reproduced P1 defects have scoped fixes and regression evidence; no new failure appeared in the fresh gates. Critical stress/device acceptance work remains unverified, so the overall gate stays open. | Open |
+| 4. Quantity, uncertainty/provenance, and downstream behavior remain consistent with #181/#182 | Tasks 2-5 and 7 are complete with no accepted-semantics change. The current-head combined offline/restart device path remains unverified. | Open |
+| 5. Relevant Android, CI, and device evidence passes or has a named blocker | Full local unit, release-compilation, lint, Roborazzi, and migration/History/Analytics AVD checks passed. Remote checks, task 8.4 device acceptance, and independent live Steam evidence remain outstanding. | Open |
+| 6. Complexity and performance changes are scoped and justified | S-tier before/after results and F1 batching are recorded; M is partial, L is unmeasured, and some transaction paths are not observable through the current instrumentation. | Open |
+| 7. Retained feature branch is untouched; no unrelated work is bundled | Local and remote feat/recover-missed-playtime refs both remain at 93716a0942c99848725c539467cd098a6795a539, matching the initial record. | Complete |
