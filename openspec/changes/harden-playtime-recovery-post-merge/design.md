@@ -84,6 +84,8 @@ Add explicit positive-epoch preflight for both observation and contribution reco
 
 Conserved historical graphs may lack or outlive their observation row. Preserve them through export, full-file validation and restore without synthesizing an observation. Enforce endpoint coverage when a matching observation exists. A restored game skeleton without a usable local detector baseline must take its first live reading as a baseline even on an already-synced account; start a fresh epoch above the retained historical epochs so a lower first reading leaves that history exportable.
 
+A trustworthy restored per-game observation remains authoritative even when the receiving profile has never synced. Its first higher Steam reading must authorize only the increase over its saved high-water; the placement planner uses that game's saved observation window rather than an epoch-zero account timestamp. Games without such a baseline still establish one without lifetime credit in the same poll.
+
 Prefer a narrow shared validation rule only if it prevents demonstrated divergence; keep file-specific diagnostics and storage enforcement. Do not add a validator abstraction just to deduplicate a comparison. No blanket sanitization of malformed saves.
 
 ### 3. Require coherent read revisions, choose the smallest proven fix

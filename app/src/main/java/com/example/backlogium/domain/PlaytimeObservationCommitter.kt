@@ -219,41 +219,42 @@ class PlaytimeObservationCommitter @Inject constructor(
         // Restore creates game skeletons without a live detector baseline. An account-wide sync
         // of other games does not make their zero defaults a trustworthy prior observation.
         val gamesWithBaseline = existingGames.filter { (appId, game) ->
-            appId in recoveryStates || game.lastSyncedAt > 0L || game.lastPlaytime > 0
+            appId in recoveryStates ||
+                (lastSyncAt != 0L && (game.lastSyncedAt > 0L || game.lastPlaytime > 0))
         }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         // One bulk session scan for the whole commit: consumed-span reconstruction must never
         // re-read the session ledger per game.
         val sessionsById = sessionDao.getAll().associate { it.id to it }
 
-        val diff = if (lastSyncAt == 0L) {
-            // Nothing has ever been polled: record totals, synthesize no sessions. Only deltas
-            // observed after the baseline become play.
-            differ.baseline(polls)
-        } else {
-            differ.diff(
-                polls = polls,
-                priorStates = gamesWithBaseline.mapValues { (appId, game) ->
-                    val open = openSessionsByAppId[appId]
-                    SessionDiffer.GameDiffState(
-                        lastPlaytime = game.lastPlaytime,
-                        openSession = open?.let {
-                            SessionDiffer.OpenSession(
-                                startAt = it.startAt,
-                                minutes = it.minutes,
-                                lastIncreaseAt = it.endAt ?: it.startAt,
-                            )
-                        },
-                    )
-                },
-                now = observedPlayAt,
-                // A session cannot start after it ended. The two agree by construction for the
-                // periodic poll, whose observation time is its own clock; a targeted fetch reports
-                // an earlier session end, and this keeps a stored session's bounds sane if a poll
-                // has landed in between.
-                previousPollAt = lastSyncAt.coerceAtMost(observedPlayAt),
-            )
-        }
+        // A restored per-game observation remains authoritative before the first account-wide
+        // poll. Games without one still baseline through the differ's missing-prior-state path.
+        val diff = differ.diff(
+            polls = polls,
+            priorStates = gamesWithBaseline.mapValues { (appId, game) ->
+                val open = openSessionsByAppId[appId]
+                SessionDiffer.GameDiffState(
+                    lastPlaytime = game.lastPlaytime,
+                    openSession = open?.let {
+                        SessionDiffer.OpenSession(
+                            startAt = it.startAt,
+                            minutes = it.minutes,
+                            lastIncreaseAt = it.endAt ?: it.startAt,
+                        )
+                    },
+                )
+            },
+            now = observedPlayAt,
+            // A session cannot start after it ended. The two agree by construction for the
+            // periodic poll, whose observation time is its own clock; a targeted fetch reports
+            // an earlier session end, and this keeps a stored session's bounds sane if a poll
+            // has landed in between.
+            // Before an account-wide poll exists, this is only a candidate action boundary.
+            // The planner below places every authorized delta using its saved per-game
+            // observation window; never pass epoch zero as a synthetic session start.
+            previousPollAt = (lastSyncAt.takeIf { it != 0L } ?: observedPlayAt)
+                .coerceAtMost(observedPlayAt),
+        )
 
         // A game Steam reports for the first time is owned by definition (only the owned-games
         // poll admits new rows). Insert its row before any session write so a funded share can

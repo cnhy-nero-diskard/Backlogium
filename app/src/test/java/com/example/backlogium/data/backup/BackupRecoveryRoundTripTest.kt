@@ -942,6 +942,65 @@ class BackupRecoveryRoundTripTest {
     }
 
     @Test
+    fun freshInstallRestore_firstHigherSteamReadCreditsOnlyTheNewRangeThroughReplay() = runBlocking {
+        source.gameDao().upsert(game(APP, "Game"))
+        seedContribution(source)
+        seedBaseline(source, highWater = 605, date = "2026-07-17")
+        val backup = json.decodeFromString(
+            BackupFile.serializer(),
+            json.encodeToString(BackupFile.serializer(), exportMapper(source).buildExport()),
+        )
+        assertTrue(BackupValidator.validate(backup) is BackupValidationResult.Valid)
+        mergeEngine(restored).merge(backup, RuleConfig())
+
+        val dao = restored.playtimeRecoveryDao()
+        assertEquals(0L, restored.playerProfileDao().get()!!.lastSyncAt)
+        assertEquals(605L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(605, restored.gameDao().getById(APP)!!.lastPlaytime)
+        val restoredBoundary = dao.state(ACCOUNT, APP)!!.lastObservationAt
+        val firstReadAt = iso("2026-07-17T13:00:00Z")
+        // Mix trusted restored state with both an imported skeleton and a newly discovered game.
+        restored.gameDao().upsert(game(APP + 1L, "Unobserved"))
+        val polls = listOf(observed(APP, 630), observed(APP + 1L, 900), observed(APP + 2L, 800))
+        val firstRead = restored.withTransaction {
+            observationCommitter(restored).commit(polls, firstReadAt, firstReadAt, expectedAccount = ACCOUNT)
+        }
+
+        assertEquals(mapOf(APP to 25), firstRead.playedDeltaByAppId)
+        val newRange = dao.contributionsForGame(ACCOUNT, APP).single { it.fromMinutes == 605L }
+        assertEquals(630L, newRange.toMinutes)
+        assertEquals(25L, newRange.authorizedMinutes)
+        assertEquals(restoredBoundary, newRange.windowStartAt)
+        assertEquals(firstReadAt, newRange.windowEndAt)
+        assertEquals(25L, dao.activeAllocations(newRange.contributionId).sumOf { it.minutes })
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+        assertEquals(130, restored.sessionDao().creditedMinutesByGame().single().minutes)
+        assertTrue(dao.contributionsForGame(ACCOUNT, APP + 1L).isEmpty())
+        assertTrue(dao.contributionsForGame(ACCOUNT, APP + 2L).isEmpty())
+
+        val recoveryAfterRead = recoveryStore(restored).read(ACCOUNT)
+        val dailyAfterRead = restored.dailyProgressDao().getAllOrdered()
+        repeat(2) {
+            // Recreate the committer while the profile still has no account-wide sync timestamp.
+            val replay = restored.withTransaction {
+                observationCommitter(restored).commit(polls, firstReadAt, firstReadAt, expectedAccount = ACCOUNT)
+            }
+            assertFalse(replay.recordedPlay)
+            mergeEngine(restored).merge(backup, RuleConfig())
+            assertEquals(recoveryAfterRead, recoveryStore(restored).read(ACCOUNT))
+            assertEquals(dailyAfterRead, restored.dailyProgressDao().getAllOrdered())
+            assertEquals(130, restored.sessionDao().creditedMinutesByGame().single().minutes)
+            assertEquals(630L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+            assertEquals(630, restored.gameDao().getById(APP)!!.lastPlaytime)
+            dao.contributionsForGame(ACCOUNT, APP).forEach {
+                assertTrue(dao.validateGraph(it.contributionId))
+                assertEquals(it.authorizedMinutes, dao.conservedAllocatedMinutes(it.contributionId))
+            }
+            assertTrue(BackupValidator.validate(exportMapper(restored).buildExport()) is BackupValidationResult.Valid)
+        }
+    }
+
+    @Test
     fun restoredPositiveEpoch_unchangedThenIncreasingSteamReadAndRepeatedImportStayConserved() = runBlocking {
         source.gameDao().upsert(game(APP, "Game"))
         seedContribution(source)

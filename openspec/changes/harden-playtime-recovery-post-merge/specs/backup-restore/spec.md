@@ -19,6 +19,11 @@ Version 3 import preflight SHALL reject every recovery observation or funded con
 - **WHEN** a coherent same-account version 3 backup with a positive epoch is restored and the next trustworthy Steam reading reports the same cumulative total
 - **THEN** the restored epoch and quantity remain coherent and no already-funded minutes become a new increase
 
+#### Scenario: First account poll exceeds a restored per-game high-water
+- **WHEN** a fresh install restores a trustworthy same-account per-game observation at 605 minutes and its very first Steam poll reports 630 while the account-wide last-sync timestamp is zero
+- **THEN** exactly 25 new minutes are funded using the saved per-game observation window, without an epoch-zero session boundary
+- **AND** unobserved games in that poll establish baselines without lifetime credit, and repeated polls and imports preserve the funded quantity exactly once
+
 #### Scenario: Legacy import keeps existing compatibility
 - **WHEN** a supported version 1 or 2 backup without recovery epoch fields is imported
 - **THEN** its existing merge and fresh-baseline rules apply without rejecting it for missing modern fields or re-crediting its history
