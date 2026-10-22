@@ -12,6 +12,8 @@ import androidx.room.Room
 import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.backup.BackupExportMapper
 import com.example.backlogium.data.backup.BackupMergeEngine
 import com.example.backlogium.data.backup.DaoRecoveryBackupStore
@@ -27,6 +29,7 @@ import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.domain.CreditedAllocation
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.InMemoryProgressMarksStore
@@ -37,28 +40,131 @@ import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.ui.theme.BacklogiumTheme
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Device-backed #181 acceptance flow. The Steam totals below are injected fixtures; this test
- * makes no Steam/API request and is not independent live Steam evidence. Closing and reopening the
- * file-backed Room database simulates a restart between completed recovery and a later retry; it
- * does not kill the instrumentation process.
+ * Device-backed #181 recovery flows. The injected acceptance remains synthetic; the live acceptance
+ * method queries Steam and feeds its actual published total through the production committer. Both
+ * close and reopen file-backed Room to verify retry behavior; neither kills the instrumentation
+ * process.
  */
 @RunWith(AndroidJUnit4::class)
 class RecoveryOfflineRestartDeviceTest {
     @get:Rule val composeRule = createComposeRule()
+
+    @Test
+    fun liveSteamPublishedIncreaseIsRecoveredWithStableEstimateAfterRestart(): Unit = runBlocking {
+        val arguments = InstrumentationRegistry.getArguments()
+        val baselineMinutes = arguments.getString("steamBaselineMinutes")?.toIntOrNull() ?: 0
+        val baselineObservedAt = arguments.getString("steamBaselineObservedAt")?.toLongOrNull() ?: 0L
+        assumeTrue("supply the captured pre-play Steam baseline", baselineMinutes > 0 && baselineObservedAt > 0L)
+        assumeTrue("Steam credentials are not configured for this local acceptance run",
+            BuildConfig.STEAM_API_KEY.isNotBlank() && BuildConfig.STEAM_ID.isNotBlank())
+
+        val live = withContext(Dispatchers.IO) { fetchLivePikunikuPlaytime() }
+        val delta = live.totalMinutes - baselineMinutes
+        assertTrue("Steam has not published an increase over the captured baseline", delta > 0)
+        assertTrue("Steam's recent-play counter is below the observed increase", live.twoWeekMinutes >= delta)
+        android.util.Log.i(
+            "LiveSteamAcceptance",
+            "Pikuniku baseline=$baselineMinutes published=${live.totalMinutes} " +
+                "twoWeeks=${live.twoWeekMinutes} delta=$delta",
+        )
+
+        // Keep the live quantity, but isolate the recovery write from the user's installed app DB.
+        val appContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val context = appContext.createDeviceProtectedStorageContext()
+        val suffix = System.nanoTime().toString().takeLast(9)
+        val account = "7656119${suffix.padStart(10, '0')}"
+        val sourceName = "recovery_live_steam_$suffix.db"
+        context.deleteDatabase(sourceName)
+        val appId = 572890L
+        val now = System.currentTimeMillis()
+        val clock = FixtureTime(now)
+        val config = RuleConfig(xpPerMinute = 1, questThresholdMin = 26)
+        var source = openDatabase(context, sourceName)
+
+        try {
+            source.openHelper.writableDatabase
+            source.gameDao().upsertAll(listOf(game(appId, "Pikuniku", baselineMinutes, baselineObservedAt)))
+            source.playerProfileDao().upsert(
+                PlayerProfile(steamId = account, lastSyncAt = baselineObservedAt, level = 1),
+            )
+
+            val first = commit(
+                database = source,
+                clock = clock,
+                account = account,
+                config = config,
+                observedAt = now,
+                games = listOf(observed(appId, "Pikuniku", live.totalMinutes)),
+            )
+            assertEquals(delta, first.playedDeltaByAppId[appId])
+            assertTrue(first.recordedPlay)
+            gamificationUpdater(source).recompute(today = clock.today(), source = RecomputeSource.SYNC, config = config)
+
+            val startDate = Instant.ofEpochMilli(baselineObservedAt).atZone(ZoneOffset.UTC).toLocalDate()
+            val endDate = clock.today()
+            val repository = sessionRepository(source, clock, context)
+            val allocationsBeforeRestart = repository.datedAllocationsBetween(startDate, endDate).first()
+                .filter { it.appId == appId }
+            assertTrue("the real increase should be retained as a dated estimate", allocationsBeforeRestart.isNotEmpty())
+            assertEquals(delta.toLong(), allocationsBeforeRestart.sumOf { it.minutes.toLong() })
+            assertTrue("estimate dates must stay inside the observed recovery window",
+                allocationsBeforeRestart.all { it.date in startDate..endDate })
+            assertTrue("unknown-time recovery must not invent timestamped sessions", source.sessionDao().getAll().isEmpty())
+            android.util.Log.i(
+                "LiveSteamAcceptance",
+                "allocation=${allocationsBeforeRestart.joinToString(",") { "${it.date}:${it.minutes}" }} " +
+                    "total=${allocationsBeforeRestart.sumOf { it.minutes }} sessions=0",
+            )
+            assertLiveEstimateVisible(source, allocationsBeforeRestart.maxBy { it.date }, delta)
+
+            source.close()
+            source = openDatabase(context, sourceName)
+            val xpBeforeRetry = source.playerProfileDao().get()!!.totalXp
+            val retryAt = now + 60_000L
+            clock.now = retryAt
+            val retry = commit(
+                database = source,
+                clock = clock,
+                account = account,
+                config = config,
+                observedAt = retryAt,
+                games = listOf(observed(appId, "Pikuniku", live.totalMinutes)),
+            )
+            assertFalse("replaying Steam's unchanged cumulative total must not credit minutes again", retry.recordedPlay)
+            gamificationUpdater(source).recompute(today = clock.today(), source = RecomputeSource.SYNC, config = config)
+            val allocationsAfterRetry = sessionRepository(source, clock, context)
+                .datedAllocationsBetween(startDate, endDate).first().filter { it.appId == appId }
+            assertEquals(allocationsBeforeRestart.map { it.date to it.minutes }, allocationsAfterRetry.map { it.date to it.minutes })
+            assertEquals(delta.toLong(), allocationsAfterRetry.sumOf { it.minutes.toLong() })
+            assertEquals("retry must not award XP twice", xpBeforeRetry, source.playerProfileDao().get()!!.totalXp)
+            assertEquals(live.totalMinutes, source.gameDao().getById(appId)!!.lastPlaytime)
+            android.util.Log.i("LiveSteamAcceptance", "restart=true retryCredited=false allocationsStable=true xpStable=true")
+        } finally {
+            runCatching { source.close() }
+            context.deleteDatabase(sourceName)
+        }
+    }
 
     @Test
     fun injectedOfflineIncreasesSurviveRestartRetryHistoryAndBackupRestore() = runBlocking {
@@ -276,6 +382,94 @@ class RecoveryOfflineRestartDeviceTest {
                 androidx.compose.ui.test.hasAnyAncestor(hasTestTag(historyAllocationTestTag(leaf.placementId))),
         ).assertIsDisplayed()
     }
+
+    private suspend fun assertLiveEstimateVisible(
+        database: BacklogiumDatabase,
+        allocation: CreditedAllocation,
+        recoveredMinutes: Int,
+    ) {
+        val date = allocation.date
+        val leaf = allocation.toHistoryAllocationUi()
+        val progress = checkNotNull(database.dailyProgressDao().getByDate(date.toString()))
+        val game = checkNotNull(database.gameDao().getById(leaf.appId))
+        val day = HistoryDayGroup(
+            date = date.toString(),
+            minutesPlayed = progress.minutesPlayed,
+            goalMinutesPlayed = progress.goalMinutesPlayed,
+            questMet = progress.questMet,
+            games = listOf(
+                HistoryGameGroup(
+                    appId = leaf.appId,
+                    name = game.name,
+                    iconUrl = game.iconUrl,
+                    minutesPlayed = leaf.minutes,
+                    sessions = emptyList(),
+                    allocations = listOf(leaf),
+                ),
+            ),
+            achievements = HistoryAchievements(emptyList(), 0),
+            estimatedMinutes = leaf.minutes,
+        )
+        composeRule.setContent {
+            BacklogiumTheme {
+                HistoryContent(
+                    state = HistoryUiState(
+                        loading = false,
+                        configured = true,
+                        today = date.toString(),
+                        days = listOf(day),
+                    ),
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_HISTORY_DAY_ESTIMATE_HELP).performScrollTo().performClick()
+        composeRule.onNodeWithText("${leaf.minutes} mins of that window fall on this day", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("recovered $recoveredMinutes mins in total", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("Got it").performClick()
+        composeRule.onNode(hasContentDescription(game.name, substring = true)).performScrollTo().performClick()
+        composeRule.onNodeWithTag(historyAllocationTestTag(leaf.placementId)).assertIsDisplayed()
+        composeRule.onNode(
+            hasTestTag(TAG_HISTORY_ESTIMATE_HELP) and
+                androidx.compose.ui.test.hasAnyAncestor(hasTestTag(historyAllocationTestTag(leaf.placementId))),
+        ).assertIsDisplayed()
+    }
+
+    private fun fetchLivePikunikuPlaytime(): LiveSteamPlaytime {
+        val key = URLEncoder.encode(BuildConfig.STEAM_API_KEY, "UTF-8")
+        val steamId = URLEncoder.encode(BuildConfig.STEAM_ID, "UTF-8")
+        val connection = URL(
+            "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?" +
+                "key=$key&steamid=$steamId&count=100",
+        ).openConnection() as HttpURLConnection
+        connection.connectTimeout = 20_000
+        connection.readTimeout = 20_000
+        try {
+            if (connection.responseCode !in 200..299) {
+                throw AssertionError("Steam recently-played request returned HTTP ${connection.responseCode}")
+            }
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val games = JSONObject(body).getJSONObject("response").getJSONArray("games")
+            for (index in 0 until games.length()) {
+                val game = games.getJSONObject(index)
+                if (game.optLong("appid") == 572890L) {
+                    return LiveSteamPlaytime(
+                        totalMinutes = game.getInt("playtime_forever"),
+                        twoWeekMinutes = game.optInt("playtime_2weeks"),
+                    )
+                }
+            }
+            throw AssertionError("Steam recently-played response did not include Pikuniku")
+        } catch (_: Exception) {
+            throw AssertionError("Steam recently-played request or response parsing failed")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private data class LiveSteamPlaytime(val totalMinutes: Int, val twoWeekMinutes: Int)
 
     private suspend fun assertRawRecovery(
         database: BacklogiumDatabase,
