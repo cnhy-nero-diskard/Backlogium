@@ -216,39 +216,45 @@ class PlaytimeObservationCommitter @Inject constructor(
                 game
             }
         }
+        // Restore creates game skeletons without a live detector baseline. An account-wide sync
+        // of other games does not make their zero defaults a trustworthy prior observation.
+        val gamesWithBaseline = existingGames.filter { (appId, game) ->
+            appId in recoveryStates ||
+                (lastSyncAt != 0L && (game.lastSyncedAt > 0L || game.lastPlaytime > 0))
+        }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         // One bulk session scan for the whole commit: consumed-span reconstruction must never
         // re-read the session ledger per game.
         val sessionsById = sessionDao.getAll().associate { it.id to it }
 
-        val diff = if (lastSyncAt == 0L) {
-            // Nothing has ever been polled: record totals, synthesize no sessions. Only deltas
-            // observed after the baseline become play.
-            differ.baseline(polls)
-        } else {
-            differ.diff(
-                polls = polls,
-                priorStates = existingGames.mapValues { (appId, game) ->
-                    val open = openSessionsByAppId[appId]
-                    SessionDiffer.GameDiffState(
-                        lastPlaytime = game.lastPlaytime,
-                        openSession = open?.let {
-                            SessionDiffer.OpenSession(
-                                startAt = it.startAt,
-                                minutes = it.minutes,
-                                lastIncreaseAt = it.endAt ?: it.startAt,
-                            )
-                        },
-                    )
-                },
-                now = observedPlayAt,
-                // A session cannot start after it ended. The two agree by construction for the
-                // periodic poll, whose observation time is its own clock; a targeted fetch reports
-                // an earlier session end, and this keeps a stored session's bounds sane if a poll
-                // has landed in between.
-                previousPollAt = lastSyncAt.coerceAtMost(observedPlayAt),
-            )
-        }
+        // A restored per-game observation remains authoritative before the first account-wide
+        // poll. Games without one still baseline through the differ's missing-prior-state path.
+        val diff = differ.diff(
+            polls = polls,
+            priorStates = gamesWithBaseline.mapValues { (appId, game) ->
+                val open = openSessionsByAppId[appId]
+                SessionDiffer.GameDiffState(
+                    lastPlaytime = game.lastPlaytime,
+                    openSession = open?.let {
+                        SessionDiffer.OpenSession(
+                            startAt = it.startAt,
+                            minutes = it.minutes,
+                            lastIncreaseAt = it.endAt ?: it.startAt,
+                        )
+                    },
+                )
+            },
+            now = observedPlayAt,
+            // A session cannot start after it ended. The two agree by construction for the
+            // periodic poll, whose observation time is its own clock; a targeted fetch reports
+            // an earlier session end, and this keeps a stored session's bounds sane if a poll
+            // has landed in between.
+            // Before an account-wide poll exists, this is only a candidate action boundary.
+            // The planner below places every authorized delta using its saved per-game
+            // observation window; never pass epoch zero as a synthetic session start.
+            previousPollAt = (lastSyncAt.takeIf { it != 0L } ?: observedPlayAt)
+                .coerceAtMost(observedPlayAt),
+        )
 
         // A game Steam reports for the first time is owned by definition (only the owned-games
         // poll admits new rows). Insert its row before any session write so a funded share can
@@ -306,6 +312,18 @@ class PlaytimeObservationCommitter @Inject constructor(
         val committedGraphs = mutableListOf<PlaytimeRecoveryCommitMapper.GraphOutcome>()
         val baselineEstablished = mutableSetOf<Long>()
         var recoveredContributions = 0
+        // Load prior placements once for this admitted observation batch. The adapter chunks the
+        // game IDs below SQLite's bind limit, and the result stays local to this raw transaction.
+        val placementInputsByAppId = if (authoringEnabled) {
+            recoveryAdapter.placementInputsForGames(
+                account = account,
+                appIds = observed.asSequence().filterNot { it.appId in sharedAppIds }
+                    .map { it.appId }.toList(),
+                sessionsById = sessionsById,
+            )
+        } else {
+            emptyMap()
+        }
 
         for (game in observed) {
             if (game.appId in sharedAppIds) continue
@@ -313,8 +331,13 @@ class PlaytimeObservationCommitter @Inject constructor(
 
             val existing = existingGames[game.appId]
             val delta = diff.playedDeltaByAppId[game.appId] ?: 0
-            val state = if (existing != null) {
-                recoveryStates[game.appId] ?: recoveryAdapter.ensureLegacyBaseline(account, existing)
+            val placementInputs = placementInputsByAppId[game.appId]
+            // A historical graph without its observation cannot define the new detector lineage.
+            // Keep it in an older epoch even if this first live total is below its old endpoint.
+            val baselineEpoch = recoveryStates[game.appId]?.baselineEpoch
+                ?: Math.addExact(placementInputs?.maxBaselineEpoch ?: 0L, 1L)
+            val state = if (existing != null && game.appId in gamesWithBaseline) {
+                recoveryStates[game.appId] ?: recoveryAdapter.ensureLegacyBaseline(account, existing, baselineEpoch)
             } else {
                 null
             }
@@ -326,8 +349,8 @@ class PlaytimeObservationCommitter @Inject constructor(
             }
             val evidence = cloudEvidenceByAppId[game.appId].orEmpty() +
                 localEvidenceByAppId[game.appId].orEmpty()
-            val consumed = recoveryAdapter.consumedSpansFor(account, game.appId, sessionsById)
-            val pendingPlacements = recoveryAdapter.findPendingPlacements(account, game.appId)
+            val consumed = placementInputs?.consumedSpans.orEmpty()
+            val pendingPlacements = placementInputs?.pendingPlacements.orEmpty()
             val context = RecoveryCommitContext(
                 windowStartAt = previousObservationAt,
                 windowEndAt = syncedAt,
@@ -443,6 +466,7 @@ class PlaytimeObservationCommitter @Inject constructor(
                 absoluteMinutes = game.playtimeForever.toLong(),
                 observedAt = syncedAt,
                 zone = zone,
+                epoch = baselineEpoch,
             )
             if (baselineResult.firstBaseline) baselineEstablished += game.appId
         }

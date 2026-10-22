@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.example.backlogium.data.local.SettingsDataStore
-import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.LiveStatusRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.work.SteamSyncCoordinator
@@ -13,8 +13,10 @@ import com.example.backlogium.work.SyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.InputStream
 import java.io.File
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,7 +61,7 @@ class BackupRepository @Inject constructor(
     private val mergeEngine: BackupMergeEngine,
     private val snapshotStore: SnapshotStore,
     private val settings: SettingsDataStore,
-    private val credentials: CredentialsRepository,
+    private val credentials: CredentialsProvider,
     private val time: TimeProvider,
     private val syncScheduler: SyncScheduler,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
@@ -67,10 +69,12 @@ class BackupRepository @Inject constructor(
     private val syncCoordinator: SteamSyncCoordinator,
 ) : BackupExportGateway {
     /** Export to a user-chosen SAF destination. Independent of the auto-snapshot toggle. */
+    @OptIn(ExperimentalSerializationApi::class)
     override suspend fun exportTo(uri: Uri) {
         val file = exportMapper.buildExport()
-        val bytes = json.encodeToString(BackupFile.serializer(), file).toByteArray()
-        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+        context.contentResolver.openOutputStream(uri)?.use { output ->
+            json.encodeToStream(BackupFile.serializer(), file, output)
+        }
             ?: error("Unable to open $uri for writing")
     }
 

@@ -205,6 +205,7 @@ class PersonalPaceRepositoryRecoveryTest {
         sessionDao = db.sessionDao(),
         hiddenGamesRepository = fakeHiddenGamesRepository(),
         time = FixedClock,
+        database = db,
     )
 
     private suspend fun insertSession(date: LocalDate, minutes: Int, open: Boolean = false) {

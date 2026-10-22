@@ -308,8 +308,19 @@ interface PlaytimeRecoveryDao {
     )
     suspend fun contributionsForGame(account: String, appId: Long): List<PlaytimeContribution>
 
+    /** Recovery contributions for a bounded set of games during one whole-library observation. */
+    @Query(
+        "SELECT * FROM playtime_contributions WHERE account = :account AND appId IN (:appIds) " +
+            "ORDER BY appId, baselineEpoch ASC, fromMinutes ASC",
+    )
+    suspend fun contributionsForGames(account: String, appIds: List<Long>): List<PlaytimeContribution>
+
     @Query("SELECT * FROM playtime_contributions WHERE account = :account ORDER BY appId, baselineEpoch, fromMinutes")
     suspend fun contributionsForAccount(account: String): List<PlaytimeContribution>
+
+    /** Distinct deterministic game keys for bounded account-wide backup export reads. */
+    @Query("SELECT DISTINCT appId FROM playtime_contributions WHERE account = :account ORDER BY appId")
+    suspend fun contributionAppIdsForAccount(account: String): List<Long>
 
     @Query(
         "SELECT COUNT(*) FROM playtime_contributions " +
@@ -345,6 +356,28 @@ interface PlaytimeRecoveryDao {
     )
     suspend fun activeTimedPlacements(contributionId: String): List<TimedContributionPlacement>
 
+    /** Active funded shares for all contributions of one game (delayed-evidence reconciliation). */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE account = :account AND appId = :appId AND superseded = 0 " +
+            "ORDER BY contributionId, creditedDate ASC",
+    )
+    suspend fun activeTimedPlacementsForGame(
+        account: String,
+        appId: Long,
+    ): List<TimedContributionPlacement>
+
+    /** Active funded shares for a bounded set of games in one observation batch. */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE account = :account AND appId IN (:appIds) AND superseded = 0 " +
+            "ORDER BY appId, contributionId, creditedDate ASC",
+    )
+    suspend fun activeTimedPlacementsForGames(
+        account: String,
+        appIds: List<Long>,
+    ): List<TimedContributionPlacement>
+
     @Query("SELECT * FROM recovery_timed_placements WHERE account = :account AND superseded = 0")
     suspend fun activeTimedPlacementsForAccount(account: String): List<TimedContributionPlacement>
 
@@ -354,6 +387,13 @@ interface PlaytimeRecoveryDao {
             "WHERE sessionId = :sessionId AND superseded = 0",
     )
     suspend fun activeTimedSharesForSession(sessionId: Long): List<TimedContributionPlacement>
+
+    /** Active funded shares for multiple sessions; avoids one peer query per changed session. */
+    @Query(
+        "SELECT * FROM recovery_timed_placements " +
+            "WHERE sessionId IN (:sessionIds) AND superseded = 0 ORDER BY sessionId",
+    )
+    suspend fun activeTimedSharesForSessions(sessionIds: List<Long>): List<TimedContributionPlacement>
 
     @Query(
         "SELECT COALESCE(SUM(minutes), 0) FROM recovery_timed_placements " +
@@ -381,6 +421,17 @@ interface PlaytimeRecoveryDao {
             "ORDER BY pendingDate ASC, date ASC",
     )
     suspend fun activeAllocations(contributionId: String): List<UnknownTimeAllocation>
+
+    /** Active allocations for a bounded set of games in one observation batch. */
+    @Query(
+        "SELECT * FROM recovery_unknown_allocations " +
+            "WHERE account = :account AND appId IN (:appIds) AND superseded = 0 " +
+            "ORDER BY appId, contributionId, pendingDate ASC, date ASC",
+    )
+    suspend fun activeAllocationsForGames(
+        account: String,
+        appIds: List<Long>,
+    ): List<UnknownTimeAllocation>
 
     @Query("SELECT * FROM recovery_unknown_allocations WHERE account = :account AND superseded = 0")
     suspend fun activeAllocationsForAccount(account: String): List<UnknownTimeAllocation>
@@ -459,6 +510,14 @@ interface PlaytimeRecoveryDao {
 
     @Query("SELECT * FROM recovery_allocation_recipes WHERE contributionId = :contributionId")
     suspend fun recipe(contributionId: String): UnknownTimeAllocationRecipe?
+
+    /** All compact recipes for one account for snapshot-consistent backup export. */
+    @Query("SELECT * FROM recovery_allocation_recipes WHERE account = :account")
+    suspend fun recipesForAccount(account: String): List<UnknownTimeAllocationRecipe>
+
+    /** Remove the prior compact graph when a placement revision becomes fully row-materialized. */
+    @Query("DELETE FROM recovery_allocation_recipes WHERE contributionId = :contributionId")
+    suspend fun deleteRecipe(contributionId: String)
 
     /** The exact residual a compact recipe still owes: total minus materialized minutes. */
     @Transaction
@@ -547,6 +606,10 @@ interface PlaytimeRecoveryDao {
 
     @Query("SELECT * FROM recovery_journal WHERE contributionId = :contributionId ORDER BY updatedAt ASC")
     suspend fun journalsForContribution(contributionId: String): List<PlaytimeRecoveryJournal>
+
+    /** All recovery journals for one account for snapshot-consistent backup export. */
+    @Query("SELECT * FROM recovery_journal WHERE account = :account ORDER BY contributionId, updatedAt ASC")
+    suspend fun journalsForAccount(account: String): List<PlaytimeRecoveryJournal>
 
     /** Operations whose staged derived finalization has not completed — resume candidates. */
     @Query(

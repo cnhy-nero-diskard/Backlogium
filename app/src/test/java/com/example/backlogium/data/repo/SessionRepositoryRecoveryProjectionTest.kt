@@ -1,10 +1,12 @@
 package com.example.backlogium.data.repo
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.PlaytimeContribution
 import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
 import com.example.backlogium.data.local.entity.RecoveryEvidenceQuality
@@ -13,12 +15,28 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.TimedContributionPlacement
 import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.domain.RecoveryDailyCreditCoordinator
+import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -60,7 +78,12 @@ class SessionRepositoryRecoveryProjectionTest {
             storeCacheDao = db.gameGenreCacheDao(),
             time = HiddenGamesTestTime,
         )
-        sessions = SessionRepository(sessionDao = db.sessionDao(), hiddenGamesRepository = hidden, time = HiddenGamesTestTime)
+        sessions = SessionRepository(
+            sessionDao = db.sessionDao(),
+            hiddenGamesRepository = hidden,
+            time = HiddenGamesTestTime,
+            database = db,
+        )
         db.playerProfileDao().upsert(PlayerProfile(steamId = account))
         db.gameDao().upsertAll((10L..93L).map { appId ->
             Game(appId, "Recovery fixture $appId", "", 0, 0, 0)
@@ -83,6 +106,447 @@ class SessionRepositoryRecoveryProjectionTest {
         assertEquals(mapOf(10L to 1), sessions.sessionCountByGame.first())
         assertEquals(day, LocalDate.ofInstant(java.time.Instant.ofEpochMilli(
             sessions.latestSessionAtByGame.first()[10L]!!), zone))
+    }
+
+    @Test
+    fun everyCanonicalProjectionEmissionIsCoherentWhenFundedSessionGrows() = runBlocking {
+        val app = 10L
+        val sessionStart = at(day)
+        val session = Session(
+            appId = app,
+            startAt = sessionStart,
+            endAt = sessionStart + 40 * 60_000L,
+            minutes = 40,
+            open = false,
+        )
+        val sessionId = db.sessionDao().insert(session)
+        db.playtimeRecoveryDao().upsertState(
+            GameRecoveryState(
+                account = account,
+                appId = app,
+                baselineEpoch = 1L,
+                highWaterMinutes = 35L,
+                lastObservationAt = at(day),
+                lastObservationDate = day.toString(),
+                lastObservationZone = "UTC",
+                clockState = "VALID",
+                updatedAt = at(day),
+            ),
+        )
+        db.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = contribution("c-old", app, 35L).copy(
+                fromMinutes = 0L,
+                toMinutes = 35L,
+                windowStartAt = at(day),
+                windowEndAt = at(day),
+            ),
+            timed = listOf(timed("t-old", "c-old", app, sessionId, 35L, day)),
+            allocations = emptyList(),
+        )
+
+        val coherentRepository = SessionRepository(
+            sessionDao = db.sessionDao(),
+            hiddenGamesRepository = hidden,
+            time = HiddenGamesTestTime,
+            database = db,
+        )
+        val tracked = probe(coherentRepository.trackedMinutesByGame)
+        val dated = probe(coherentRepository.datedCreditedTotalsBetween(zone, day, day.plusDays(1)))
+        val activity = probe(coherentRepository.activityBetween(zone, day, day.plusDays(1)))
+        val training = probe(coherentRepository.closedTrainingTotalsBetween(zone, day, day))
+        val pending = probe(coherentRepository.pendingDateUnknownQuantity)
+        val recoveryActivity = probe(coherentRepository.datedRecoveryActivity())
+        val unresolved = probe(coherentRepository.unresolvedRecoveryWindows())
+
+        try {
+            assertEquals(40, tracked.next()[app])
+            assertEquals(mapOf(day to 40L), dated.next().associate { it.date to it.minutes })
+            assertEquals(40, activity.next().filterIsInstance<PlaytimeActivity.TimestampedSession>().single().minutes)
+            assertEquals(listOf(DatedPlayTotal(day, 40)), training.next())
+            assertEquals(0, pending.next())
+            assertTrue(recoveryActivity.next().isEmpty())
+            assertTrue(unresolved.next().isEmpty())
+
+            db.withTransaction {
+                db.sessionDao().update(
+                    session.copy(id = sessionId, endAt = sessionStart + 65 * 60_000L, minutes = 65),
+                )
+                db.playtimeRecoveryDao().commitAllocatedGraph(
+                    contribution = PlaytimeContribution(
+                        contributionId = "c-new",
+                        account = account,
+                        appId = app,
+                        baselineEpoch = 1L,
+                        fromMinutes = 35L,
+                        toMinutes = 60L,
+                        windowStartAt = at(day),
+                        windowEndAt = at(day),
+                        authorizedMinutes = 25L,
+                        revision = 1L,
+                        provenance = RecoveryProvenance.SYNC,
+                        zone = "UTC",
+                        createdAt = at(day),
+                    ),
+                    timed = listOf(timed("t-new", "c-new", app, sessionId, 25L, day)),
+                    allocations = emptyList(),
+                )
+                db.playtimeRecoveryDao().advanceBaseline(
+                    account = account,
+                    appId = app,
+                    absoluteMinutes = 60L,
+                    observedAt = at(day) + 1L,
+                    date = day.toString(),
+                    zone = "UTC",
+                    epoch = 1L,
+                )
+            }
+
+            // The prior independently-combined flow reproduced [65, 90] for this write schedule:
+            // the new contribution was combined with the stale 35-minute funded-share snapshot.
+            // Every affected flow now issues its full projection read under one Room snapshot.
+            assertEquals(mapOf(app to 65), tracked.next())
+            assertEquals(mapOf(day to 65L), dated.next().associate { it.date to it.minutes })
+            val afterActivity = activity.next().filterIsInstance<PlaytimeActivity.TimestampedSession>().single()
+            assertEquals(65, afterActivity.minutes)
+            assertEquals(60L, afterActivity.fundedMinutes)
+            assertEquals(5L, afterActivity.unlinkedMinutes)
+            assertEquals(listOf(DatedPlayTotal(day, 65)), training.next())
+            assertEquals(0, pending.next())
+            assertTrue(recoveryActivity.next().isEmpty())
+            assertTrue(unresolved.next().isEmpty())
+            assertEquals(mapOf(app to 65), coherentRepository.creditedMinutesByGameOnce())
+        } finally {
+            listOf(
+                tracked.job, dated.job, activity.job, training.job,
+                pending.job, recoveryActivity.job, unresolved.job,
+            ).forEach { it.cancelAndJoin() }
+        }
+    }
+
+    @Test
+    fun estimateReplacementAndRecipeMaterializationPreserveDatedAndTrainingSnapshots() = runBlocking {
+        val app = 20L
+        val contributionId = "c-r1-revision"
+        val contribution = contribution(contributionId, app, 105L).copy(
+            windowStartAt = at(day),
+            windowEndAt = at(day.plusDays(3)),
+        )
+        val firstEstimate = UnknownTimeAllocation(
+            placementId = "estimate-r1-1",
+            contributionId = contributionId,
+            account = account,
+            appId = app,
+            revision = 1L,
+            date = day.toString(),
+            minutes = 27L,
+            method = RecoveryAllocationMethods.MULTI_DAY_ESTIMATE,
+            zone = "UTC",
+            windowStartAt = at(day),
+            windowEndAt = at(day.plusDays(3)),
+            pendingDate = false,
+            createdAt = at(day),
+        )
+        val firstRecipe = UnknownTimeAllocationRecipe(
+            contributionId = contributionId,
+            account = account,
+            appId = app,
+            revision = 1L,
+            method = RecoveryAllocationMethods.MULTI_DAY_ESTIMATE,
+            quotient = 26L,
+            remainderCount = 1L,
+            dateStart = day.toString(),
+            dateEnd = day.plusDays(3).toString(),
+            eligibleCount = 4,
+            zone = "UTC",
+            materializedMinutes = 27L,
+            materializedThroughDate = day.toString(),
+            updatedAt = at(day),
+        )
+        db.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = contribution,
+            timed = emptyList(),
+            allocations = listOf(firstEstimate),
+            recipe = firstRecipe,
+        )
+
+        val allTime = probe(sessions.trackedMinutesByGame)
+        val dated = probe(sessions.datedCreditedTotalsBetween(zone, day, day.plusDays(4)))
+        val activity = probe(sessions.activityBetween(zone, day, day.plusDays(4)))
+        val training = probe(sessions.closedTrainingTotalsBetween(zone, day, day.plusDays(3)))
+        val unresolved = probe(sessions.unresolvedRecoveryWindows())
+        try {
+            assertEquals(105, allTime.next()[app])
+            val initialDateTotals = dated.next().associate { it.date to it.minutes }
+            assertEquals(
+                mapOf(day to 27L, day.plusDays(1) to 26L, day.plusDays(2) to 26L, day.plusDays(3) to 26L),
+                initialDateTotals,
+            )
+            assertEquals(
+                105L,
+                activity.next().filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                    .filter { it.appId == app }.sumOf { it.minutes },
+            )
+            assertEquals(105, training.next().sumOf { it.minutes })
+            assertEquals(listOf(day to day.plusDays(3)), unresolved.next()
+                .filter { it.appId == app }.map { it.dateStart to it.dateEnd })
+
+            // A single Room transaction replaces three days of estimate tail with a validated
+            // timed share and a smaller residual recipe, retaining the same 105 authorized minutes.
+            val sessionId = db.withTransaction {
+                val dao = db.playtimeRecoveryDao()
+                assertEquals(1, dao.advanceRevision(contributionId, 2L))
+                dao.supersedeTimedPlacementsUpTo(contributionId, 2L)
+                dao.supersedeAllocationsUpTo(contributionId, 2L)
+                val startAt = at(day.plusDays(1)) + 10 * 60 * 60_000L
+                val hostId = db.sessionDao().insert(
+                    Session(
+                        appId = app,
+                        startAt = startAt,
+                        endAt = startAt + 35 * 60_000L,
+                        minutes = 35,
+                        open = false,
+                    ),
+                )
+                dao.insertTimedPlacements(
+                    listOf(
+                        timed("timed-r2", contributionId, app, hostId, 35L, day.plusDays(1))
+                            .copy(revision = 2L),
+                    ),
+                )
+                dao.upsertRecipe(
+                    firstRecipe.copy(
+                        revision = 2L,
+                        quotient = 23L,
+                        remainderCount = 1L,
+                        dateStart = day.plusDays(1).toString(),
+                        dateEnd = day.plusDays(3).toString(),
+                        eligibleCount = 3,
+                        materializedMinutes = 0L,
+                        materializedThroughDate = null,
+                        updatedAt = at(day.plusDays(1)),
+                    ),
+                )
+                assertTrue(dao.conservationHolds(contributionId))
+                hostId
+            }
+            assertTrue(sessionId > 0L)
+            assertEquals(105, allTime.next()[app])
+            val replacedTotals = dated.next().associate { it.date to it.minutes }
+            assertEquals(
+                mapOf(day.plusDays(1) to 59L, day.plusDays(2) to 23L, day.plusDays(3) to 23L),
+                replacedTotals,
+            )
+            val replacedActivity = activity.next()
+            val hosted = replacedActivity.filterIsInstance<PlaytimeActivity.TimestampedSession>().single()
+            assertEquals(35L, hosted.fundedMinutes)
+            assertEquals(0L, hosted.unlinkedMinutes)
+            assertEquals(
+                70L,
+                replacedActivity.filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                    .filter { it.appId == app }.sumOf { it.minutes },
+            )
+            assertEquals(105, training.next().sumOf { it.minutes })
+            assertEquals(listOf(day.plusDays(1) to day.plusDays(3)), unresolved.next()
+                .filter { it.appId == app }.map { it.dateStart to it.dateEnd })
+
+            val materializer = UnknownTimeMaterializer(
+                database = db,
+                recoveryDao = db.playtimeRecoveryDao(),
+                dailyCredit = RecoveryDailyCreditCoordinator(db.dailyProgressDao()),
+            )
+            repeat(3) { page ->
+                val result = materializer.materialize(contributionId, now = at(day.plusDays(4)), pageSize = 1)
+                assertTrue("expected residual recipe page $page", result != null)
+                assertEquals(105, allTime.next()[app])
+                assertEquals(replacedTotals, dated.next().associate { it.date to it.minutes })
+                assertEquals(105L, activity.next().let { rows ->
+                    rows.filterIsInstance<PlaytimeActivity.TimestampedSession>().sumOf { it.minutes.toLong() } +
+                        rows.filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                            .filter { it.appId == app }.sumOf { it.minutes }
+                })
+                assertEquals(105, training.next().sumOf { it.minutes })
+                assertTrue(unresolved.next().any { it.appId == app })
+            }
+            assertTrue(db.playtimeRecoveryDao().conservationHolds(contributionId))
+            assertEquals(70L, db.playtimeRecoveryDao().sumActiveDatedForContribution(contributionId))
+        } finally {
+            listOf(allTime.job, dated.job, activity.job, training.job, unresolved.job)
+                .forEach { it.cancelAndJoin() }
+        }
+    }
+
+    @Test
+    fun hiddenChangesAndAccountResetRetargetWholeProjectionSnapshots() = runBlocking {
+        val appA = 30L
+        val appB = 31L
+        val contributionA = contribution("c-hidden-account-a", appA, 70L)
+        db.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = contributionA,
+            timed = emptyList(),
+            allocations = listOf(allocation("a-hidden-account-a", contributionA.contributionId, appA, day, 70L,
+                RecoveryAllocationMethods.SINGLE_DAY)),
+        )
+
+        val allTime = probe(sessions.trackedMinutesByGame)
+        val dated = probe(sessions.datedCreditedTotalsBetween(zone, day, day.plusDays(2)))
+        val training = probe(sessions.closedTrainingTotalsBetween(zone, day, day.plusDays(1)))
+        try {
+            assertEquals(mapOf(appA to 70), allTime.next())
+            assertEquals(mapOf(day to 70L), dated.next().associate { it.date to it.minutes })
+            assertEquals(listOf(DatedPlayTotal(day, 70)), training.next())
+
+            hidden.hide(listOf(appA))
+            assertTrue(allTime.next().isEmpty())
+            assertTrue(dated.next().isEmpty())
+            assertTrue(training.next().isEmpty())
+
+            hidden.unhide(listOf(appA))
+            assertEquals(mapOf(appA to 70), allTime.next())
+            assertEquals(mapOf(day to 70L), dated.next().associate { it.date to it.minutes })
+            assertEquals(listOf(DatedPlayTotal(day, 70)), training.next())
+
+            val nextAccount = "76561198000000002"
+            db.withTransaction {
+                db.playtimeRecoveryDao().clearForAccount(account)
+                db.sessionDao().deleteAll()
+                db.playerProfileDao().upsert(PlayerProfile(steamId = nextAccount))
+                val contributionB = contribution("c-hidden-account-b", appB, 45L).copy(account = nextAccount)
+                db.playtimeRecoveryDao().commitAllocatedGraph(
+                    contribution = contributionB,
+                    timed = emptyList(),
+                    allocations = listOf(
+                        allocation(
+                            "a-hidden-account-b",
+                            contributionB.contributionId,
+                            appB,
+                            day.plusDays(1),
+                            45L,
+                            RecoveryAllocationMethods.SINGLE_DAY,
+                        ).copy(account = nextAccount),
+                    ),
+                )
+            }
+
+            assertEquals("no previous-account rows or credits leak through reset", mapOf(appB to 45), allTime.next())
+            assertEquals(mapOf(day.plusDays(1) to 45L), dated.next().associate { it.date to it.minutes })
+            assertEquals(listOf(DatedPlayTotal(day.plusDays(1), 45)), training.next())
+            assertEquals(nextAccount, db.playerProfileDao().get()!!.steamId)
+            assertTrue(db.playtimeRecoveryDao().contributionsForGame(account, appA).isEmpty())
+        } finally {
+            listOf(allTime.job, dated.job, training.job).forEach { it.cancelAndJoin() }
+        }
+    }
+
+    @Test
+    fun concurrentOneShotReadsSeeOnlyCommittedCreditedTotals() = runBlocking {
+        val app = 32L
+        val startAt = at(day)
+        val session = Session(
+            appId = app,
+            startAt = startAt,
+            endAt = startAt + 40 * 60_000L,
+            minutes = 40,
+            open = false,
+        )
+        val sessionId = db.sessionDao().insert(session)
+        val oldContribution = contribution("c-one-shot-old", app, 35L).copy(
+            toMinutes = 35L,
+            authorizedMinutes = 35L,
+            windowStartAt = startAt,
+            windowEndAt = startAt,
+        )
+        db.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = oldContribution,
+            timed = listOf(timed("t-one-shot-old", oldContribution.contributionId, app, sessionId, 35L, day)),
+            allocations = emptyList(),
+        )
+        val oldSnapshot = mapOf(app to 40)
+        val newSnapshot = mapOf(app to 65)
+        val writerPausedInsideTransaction = CompletableDeferred<Unit>()
+        val finishWriter = CompletableDeferred<Unit>()
+
+        coroutineScope {
+            val writer = async(Dispatchers.IO) {
+                db.withTransaction {
+                    db.sessionDao().update(session.copy(id = sessionId, minutes = 65,
+                        endAt = startAt + 65 * 60_000L))
+                    writerPausedInsideTransaction.complete(Unit)
+                    finishWriter.await()
+                    db.playtimeRecoveryDao().commitAllocatedGraph(
+                        contribution = PlaytimeContribution(
+                            contributionId = "c-one-shot-new",
+                            account = account,
+                            appId = app,
+                            baselineEpoch = 1L,
+                            fromMinutes = 35L,
+                            toMinutes = 60L,
+                            windowStartAt = startAt,
+                            windowEndAt = startAt + 1L,
+                            authorizedMinutes = 25L,
+                            revision = 1L,
+                            provenance = RecoveryProvenance.SYNC,
+                            zone = "UTC",
+                            createdAt = startAt + 1L,
+                        ),
+                        timed = listOf(timed("t-one-shot-new", "c-one-shot-new", app, sessionId, 25L, day)),
+                        allocations = emptyList(),
+                    )
+                }
+            }
+            writerPausedInsideTransaction.await()
+            val readStarted = List(8) { CompletableDeferred<Unit>() }
+            val readers = readStarted.map { started ->
+                async(Dispatchers.IO) {
+                    started.complete(Unit)
+                    sessions.creditedMinutesByGameOnce()
+                }
+            }
+            val daoReadStarted = List(8) { CompletableDeferred<Unit>() }
+            val daoReaders = daoReadStarted.map { started ->
+                async(Dispatchers.IO) {
+                    started.complete(Unit)
+                    db.sessionDao().creditedMinutesByGame().associate { it.appId to it.minutes }
+                }
+            }
+            readStarted.forEach { it.await() }
+            daoReadStarted.forEach { it.await() }
+            finishWriter.complete(Unit)
+            writer.await()
+            val results = readers.awaitAll() + daoReaders.awaitAll()
+
+            assertTrue(
+                "every one-shot transaction must see one committed revision, got $results",
+                results.all { it == oldSnapshot || it == newSnapshot },
+            )
+            assertEquals(newSnapshot, sessions.creditedMinutesByGameOnce())
+        }
+    }
+
+    @Test
+    fun windowedCanonicalSnapshotChunksMoreThanNineHundredHostSessionIds() = runBlocking {
+        val hostCount = 1_001
+        db.withTransaction {
+            db.gameDao().upsertAll((0 until hostCount).map { index ->
+                val appId = 1_000L + index
+                Game(appId, "Window host $appId", "", 0, 0, 0)
+            })
+            repeat(hostCount) { index ->
+                val appId = 1_000L + index
+                val sessionId = db.sessionDao().insert(session(appId, day, minutes = 1))
+                val contribution = contribution("c-window-host-$index", appId, 1L)
+                db.playtimeRecoveryDao().insertContributionChecked(contribution)
+                db.playtimeRecoveryDao().insertTimedPlacements(
+                    listOf(timed("t-window-host-$index", contribution.contributionId, appId, sessionId, 1L, day)),
+                )
+            }
+        }
+
+        val totals = sessions.datedCreditedTotalsBetween(zone, day, day.plusDays(1)).first()
+
+        assertEquals(1, totals.size)
+        assertEquals(hostCount.toLong(), totals.sumOf { it.minutes })
+        assertEquals(hostCount, totals.single().minutesByGame.size)
+        assertTrue(totals.single().minutesByGame.values.all { it == 1L })
     }
 
     @Test
@@ -142,6 +606,25 @@ class SessionRepositoryRecoveryProjectionTest {
         val allocationActivity = activities.filterIsInstance<PlaytimeActivity.DatedAllocation>().single()
         assertEquals(day, allocationActivity.date)
         assertEquals(PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE, allocationActivity.method)
+    }
+
+    @Test
+    fun activitySinceUsesTheSupportedDateCeilingInsteadOfOverflowingLocalDateMax() = runTest {
+        val app = 21L
+        val contribution = contribution("c-activity-since", app, 12L)
+        db.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = contribution,
+            timed = emptyList(),
+            allocations = listOf(allocation(
+                "a-activity-since", contribution.contributionId, app, day, 12L,
+                RecoveryAllocationMethods.SINGLE_DAY,
+            )),
+        )
+
+        val rows = sessions.activitySince(zone, day).first()
+
+        assertEquals(12L, rows.filterIsInstance<PlaytimeActivity.DatedAllocation>().single().minutes)
+        assertTrue(sessions.activitySince(zone, LocalDate.of(2100, 1, 2)).first().isEmpty())
     }
 
     @Test
@@ -378,6 +861,7 @@ class SessionRepositoryRecoveryProjectionTest {
             time = HiddenGamesTestTime,
             playerProfileDao = db.playerProfileDao(),
             recoveryReadStatusStore = statusStore,
+            database = db,
         )
         assertEquals(com.example.backlogium.domain.PlaytimeRecoveryStatus.REMOTE_UNAVAILABLE,
             statusAwareRepository.recoveryStatus.first())
@@ -463,3 +947,25 @@ class SessionRepositoryRecoveryProjectionTest {
 
     private fun at(date: LocalDate): Long = date.atStartOfDay(zone).toInstant().toEpochMilli()
 }
+
+private data class ProjectionProbe<T>(
+    val emissions: Channel<Result<T>>,
+    val job: Job,
+)
+
+private fun <T> CoroutineScope.probe(flow: Flow<T>): ProjectionProbe<T> {
+    val emissions = Channel<Result<T>>(Channel.UNLIMITED)
+    val job = launch {
+        try {
+            flow.collect { emissions.send(Result.success(it)) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            emissions.send(Result.failure(failure))
+        }
+    }
+    return ProjectionProbe(emissions, job)
+}
+
+private suspend fun <T> ProjectionProbe<T>.next(): T =
+    withTimeout(10_000L) { emissions.receive() }.getOrThrow()

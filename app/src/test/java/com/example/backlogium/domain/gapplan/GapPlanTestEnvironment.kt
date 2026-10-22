@@ -76,7 +76,7 @@ internal class GapPlanTestEnvironment(
         time = time,
     )
 
-    val sessions = SessionRepository(db.sessionDao(), hidden, time = time)
+    val sessions = SessionRepository(db.sessionDao(), hidden, time = time, database = db)
 
     private val genreRepository = GameGenreRepository(
         cacheDao = db.gameGenreCacheDao(),

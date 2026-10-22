@@ -606,15 +606,31 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 ) { "Cloud historical operation identity changed before reversal" }
 
                 val currentById = sessionDao.getAll().associateBy { it.id }
-                val account = playerProfileDao.get()?.steamId.orEmpty()
+                // Preserve an entire original/replacement group when it has acquired funded state
+                // or its total quantity changed since apply. In particular, never restore the
+                // full parent beside a surviving funded/reduced child.
+                val retainedRefileGroups = refileGroups(payload).filter { group ->
+                    val currentMinutes = group.replacements.sumOf { replacement ->
+                        currentById[replacement.id]?.minutes?.toLong() ?: 0L
+                    }
+                    currentMinutes != group.original.minutes.toLong() ||
+                        group.replacements.any { activeFundedMinutes(it.id) > 0 }
+                }
+                val preservedOriginalIds = retainedRefileGroups.map { it.original.id }.toSet()
+                val preservedReplacementIds = retainedRefileGroups
+                    .flatMap { group -> group.replacements.map { it.id } }
+                    .toSet()
                 payload.createdSessions.forEach { created ->
                     // A created row that has since acquired an active funded share is owned by the
                     // recovery graph; deleting it would orphan that share and drop its minutes.
-                    if (activeFundedMinutes(created.id) > 0) return@forEach
+                    if (created.id in preservedReplacementIds || activeFundedMinutes(created.id) > 0) {
+                        return@forEach
+                    }
                     sessionDao.deleteById(created.id)
                 }
                 payload.originalSessions.forEach { original ->
-                    restoreOriginalSession(original.toSession(), currentById, account)
+                    if (original.id in preservedOriginalIds) return@forEach
+                    restoreOriginalSession(original.toSession(), currentById)
                 }
                 payload.transferredMinutesByAppId.forEach { delta ->
                     check(gameDao.restoreImportedBalanceDelta(delta.appId, delta.minutes) == 1) {
@@ -720,13 +736,29 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         }
         transaction.run {
             val currentById = sessionDao.getAll().associateBy { it.id }
-            val account = playerProfileDao.get()?.steamId.orEmpty()
+            // The legacy DataStore backup has no original->split mapping. Recover each group from
+            // the immutable original interval and the operation-owned created ids. If overlapping
+            // source intervals make ownership ambiguous, conservatively retain that app's whole
+            // operation rather than restore a parent beside a funded child.
+            val (groups, ambiguousApps) = legacyRefileGroups(backup, currentById)
+            val retainedGroups = groups.filter { group ->
+                val currentMinutes = group.replacements.sumOf { it.minutes.toLong() }
+                currentMinutes != group.original.minutes.toLong() ||
+                    group.replacements.any { activeFundedMinutes(it.id) > 0 }
+            }
+            val preservedOriginalIds = retainedGroups.map { it.original.id }.toSet()
+            val preservedCreatedIds = retainedGroups.flatMap { group ->
+                group.replacements.map { it.id }
+            }.toSet()
             backup.createdSessionIds.forEach { id ->
-                // Keep any created row the recovery graph later funded; only unfunded rows revert.
-                if (activeFundedMinutes(id) > 0) return@forEach
+                // Keep a funded group intact, plus every id whose ownership could not be proved.
+                if (id in preservedCreatedIds || currentById[id]?.appId in ambiguousApps) return@forEach
                 sessionDao.deleteById(id)
             }
-            backup.sessions.forEach { session -> restoreOriginalSession(session, currentById, account) }
+            backup.sessions.forEach { session ->
+                if (session.id in preservedOriginalIds || session.appId in ambiguousApps) return@forEach
+                restoreOriginalSession(session, currentById)
+            }
         }
         // Rebuild from the restored ledger so later ordinary sessions on these dates survive.
         val hasWork = backup.sessions.isNotEmpty() || backup.createdSessionIds.isNotEmpty() ||
@@ -926,39 +958,83 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             .coerceAtMost(Int.MAX_VALUE.toLong())
             .toInt()
 
-    /**
-     * Whether this game has an advanced recovery contribution (a later revision or a replacement
-     * alias). When it does, a historical reversal must not overwrite the shape the recovery graph
-     * now owns — restoring original minutes could resurrect a superseded estimate.
-     */
-    private suspend fun hasUpgradedContribution(account: String, appId: Long): Boolean {
-        val dao = recoveryDao ?: return false
-        val contributions = dao.contributionsForGame(account, appId)
-        if (contributions.any { it.revision > 1L }) return true
-        return contributions.any { contribution ->
-            dao.journalsForContribution(contribution.contributionId)
-                .any { !it.replacedPlacementIdsCsv.isNullOrBlank() }
-        }
-    }
+    private data class HistoricalRefileGroup(
+        val original: CloudHistoricalSessionSnapshot,
+        val replacements: List<CloudHistoricalSessionSnapshot>,
+    )
+
+    private data class LegacyRefileGroup(
+        val original: Session,
+        val replacements: List<Session>,
+    )
 
     /**
-     * Contribution-aware restore of one pre-apply session: keep any funded share the recovery graph
-     * now owns, never restore minutes a correction already removed, and otherwise restore exactly.
+     * Reconstruct the legacy backup's split families from original ids and bounded time intervals.
+     * The returned set contains apps whose original->split ownership could not be proven.
      */
+    private fun legacyRefileGroups(
+        backup: CloudPresenceRefilingBackup,
+        currentById: Map<Long, Session>,
+    ): Pair<List<LegacyRefileGroup>, Set<Long>> {
+        val originals = backup.sessions
+        val rowsByOriginalId = originals.associate { original ->
+            original.id to mutableListOf<Session>().apply { currentById[original.id]?.let(::add) }
+        }.toMutableMap()
+        val ambiguousApps = mutableSetOf<Long>()
+
+        backup.createdSessionIds.forEach { createdId ->
+            val row = currentById[createdId] ?: return@forEach
+            val owners = originals.filter { original ->
+                original.appId == row.appId &&
+                    original.endAt != null && row.endAt != null &&
+                    row.startAt >= original.startAt && row.endAt <= original.endAt
+            }
+            if (owners.size == 1) {
+                rowsByOriginalId[owners.single().id]?.add(row) ?: run { ambiguousApps += row.appId }
+            } else {
+                ambiguousApps += row.appId
+            }
+        }
+
+        val groups = originals.mapNotNull { original ->
+            val rows = rowsByOriginalId[original.id].orEmpty()
+            if (rows.isEmpty()) return@mapNotNull null
+            LegacyRefileGroup(original, rows)
+        }
+        return groups to ambiguousApps
+    }
+
+    /** The payload stores replacements in original order, with each group's minutes conserving its original. */
+    private fun refileGroups(payload: CloudHistoricalApplyPayload): List<HistoricalRefileGroup> {
+        var nextReplacement = 0
+        val groups = payload.originalSessions.map { original ->
+            val replacements = mutableListOf<CloudHistoricalSessionSnapshot>()
+            var groupedMinutes = 0L
+            while (groupedMinutes < original.minutes && nextReplacement < payload.replacementSessions.size) {
+                val replacement = payload.replacementSessions[nextReplacement++]
+                require(replacement.appId == original.appId) {
+                    "Cloud historical replacement group changed app at original ${original.id}"
+                }
+                replacements += replacement
+                groupedMinutes += replacement.minutes
+            }
+            require(groupedMinutes == original.minutes.toLong()) {
+                "Cloud historical replacement group does not conserve original ${original.id}"
+            }
+            HistoricalRefileGroup(original, replacements)
+        }
+        require(nextReplacement == payload.replacementSessions.size) {
+            "Cloud historical payload has unowned replacement sessions"
+        }
+        return groups
+    }
+
+    /** Restore only a split family already proved unchanged and unfunded by its caller. */
     private suspend fun restoreOriginalSession(
         original: Session,
         currentById: Map<Long, Session>,
-        account: String,
     ) {
-        val current = currentById[original.id] ?: return
-        val fundedNow = activeFundedMinutes(original.id)
-        val restoreMinutes = when {
-            fundedNow > 0 -> fundedNow + original.minutes
-            current.minutes < original.minutes &&
-                hasUpgradedContribution(account, original.appId) -> current.minutes
-            else -> original.minutes
-        }
-        sessionDao.update(original.copy(minutes = restoreMinutes))
+        if (currentById[original.id] != null) sessionDao.update(original)
     }
 
     private suspend fun recompute(): Set<String> {

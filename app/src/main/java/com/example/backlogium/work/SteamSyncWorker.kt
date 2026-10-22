@@ -441,99 +441,91 @@ class SteamSyncWorker @AssistedInject constructor(
             never = achievementFetch.selection.never.size,
         )
 
-        val rawCommit = withContext(NonCancellable) {
+        // The account/sync barrier spans both commits. Releasing it between raw Room persistence
+        // and the durable corrective/earned stages lets another worker commit fresh play or
+        // achievements first; a corrective recompute can then silently reseed marks past that
+        // not-yet-finalized earned transition. Steam/network acquisition remains above and outside
+        // this critical section.
+        return withContext(NonCancellable) {
             syncCoordinator.withLock {
-                if (!isAccountActive(steamId)) {
-                    null
-                } else {
-                    committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
-                        val lateEvidence = committer.recoveryEvidenceForReconciliation(
-                            account = steamId,
-                            placement = validatedPlacement,
-                            activeReaderIdentity = pruningIdentity,
-                            observedAt = now,
-                        )
-                        if (lateEvidence.isNotEmpty()) {
-                            games.map { it.appid }.distinct().forEach { appId ->
-                                recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
-                                    account = steamId,
-                                    appId = appId,
-                                    evidence = lateEvidence,
-                                    activeReaderIdentity = pruningIdentity,
-                                )
-                            }
-                        }
-                        database.withTransaction {
-                            commitRawPoll(
-                                games = games,
-                                steamId = steamId,
-                                steamLevel = steamLevel,
-                                summary = summary,
-                                now = now,
-                                placement = validatedPlacement,
-                                pruningIdentity = pruningIdentity,
-                                achievementFetch = achievementFetch,
-                                ruleConfig = configAtCompute.config,
-                                ruleConfigVersion = configAtCompute.version,
-                                scope = scope,
+                if (!isAccountActive(steamId)) return@withLock false
+
+                // The startup pass precedes network acquisition, so an operation can become
+                // pending while this worker is fetching. Drain that journal immediately before
+                // authorizing another raw observation as well; the held barrier prevents a stale
+                // corrective stage from reading the new operation's inputs.
+                unknownTimeMaterializer.materializeAll(steamId, now)
+                recoveryDerivedFinalizer.resumePending(steamId, now)
+
+                val rawCommit = committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                    val lateEvidence = committer.recoveryEvidenceForReconciliation(
+                        account = steamId,
+                        placement = validatedPlacement,
+                        activeReaderIdentity = pruningIdentity,
+                        observedAt = now,
+                    )
+                    if (lateEvidence.isNotEmpty()) {
+                        games.map { it.appid }.distinct().forEach { appId ->
+                            recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
+                                account = steamId,
+                                appId = appId,
+                                evidence = lateEvidence,
+                                activeReaderIdentity = pruningIdentity,
                             )
                         }
                     }
-                }
-            }
-        } ?: return false
-
-        // The arrivals the commit itself stamped, carried out rather than queried again: a second
-        // read would have to guess which of the games now carrying a `firstSeenAt` this poll wrote.
-        // Written after the transaction, never inside it — DataStore is a separate store, and this
-        // codebase does not wrap cross-store writes in a Room transaction. A poll that stamped
-        // nothing leaves the existing announcement exactly as it stood.
-        // The raw transaction is durable now. Keep the account-change barrier around the
-        // account-owned follow-up writes so a reset either precedes them or clears them after.
-        val finalized = withContext(NonCancellable) {
-            syncCoordinator.withLock {
-                if (!isAccountActive(steamId)) {
-                    false
-                } else {
-                    if (rawCommit.arrivedAppIds.isNotEmpty()) {
-                        runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
-                    }
-                    runCatching {
-                        recoveryReadStatus.successfulRead(
-                            account = steamId,
-                            observedAt = now,
-                            creditedIncreaseAppIds = rawCommit.creditedIncreaseAppIds,
-                            baselineEstablishedAppIds = rawCommit.baselineEstablishedAppIds,
+                    database.withTransaction {
+                        commitRawPoll(
+                            games = games,
+                            steamId = steamId,
+                            steamLevel = steamLevel,
+                            summary = summary,
+                            now = now,
+                            placement = validatedPlacement,
+                            pruningIdentity = pruningIdentity,
+                            achievementFetch = achievementFetch,
+                            ruleConfig = configAtCompute.config,
+                            ruleConfigVersion = configAtCompute.version,
+                            scope = scope,
                         )
                     }
-
-                    // Store metadata is a separately scheduled best-effort concern: never await it
-                    // or make an otherwise-valid owned-games poll fail because the public Store is
-                    // unavailable. The two chains are enqueued independently and guarded
-                    // independently, so neither can prevent the other from being scheduled.
-                    runCatching { genreEnrichmentScheduler.ensureEnqueued() }
-                    runCatching { reviewEnrichmentScheduler.ensureEnqueued() }
-
-                    // Derived values deliberately follow through the existing cross-store
-                    // write-ahead protocol, after a version check against the configuration read
-                    // before compute. If rules moved, the stale candidate is refused and recomputed
-                    // under the current version instead of being silently stamped as current.
-                    // Recipe pages and staged corrective/earned state are durable per account.
-                    // Finish them before a newer sync can change inputs or persist a derived state
-                    // across an unfinished operation.
-                    unknownTimeMaterializer.materializeAll(steamId, now)
-                    recoveryDerivedFinalizer.resumePending(steamId, now)
-                    if (rawCommit.finalizationOperationId == null) {
-                        persistDerived(today, configAtCompute)
-                    }
-                    // Best-effort: a snapshot-write failure must never fail an otherwise-successful
-                    // poll.
-                    runCatching { backupRepository.writeAutoSnapshotIfDue() }
-                    true
                 }
+
+                // The arrivals the commit itself stamped, carried out rather than queried again: a
+                // second read would have to guess which games now carrying `firstSeenAt` this poll
+                // wrote. These are separate-store writes, but remain behind the same account
+                // barrier as the Room commit and finalization.
+                if (rawCommit.arrivedAppIds.isNotEmpty()) {
+                    runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
+                }
+                runCatching {
+                    recoveryReadStatus.successfulRead(
+                        account = steamId,
+                        observedAt = now,
+                        creditedIncreaseAppIds = rawCommit.creditedIncreaseAppIds,
+                        baselineEstablishedAppIds = rawCommit.baselineEstablishedAppIds,
+                    )
+                }
+
+                // Store metadata is a separately scheduled best-effort concern: never await it or
+                // make an otherwise-valid owned-games poll fail because the public Store is
+                // unavailable. The two chains remain independent.
+                runCatching { genreEnrichmentScheduler.ensureEnqueued() }
+                runCatching { reviewEnrichmentScheduler.ensureEnqueued() }
+
+                // Complete durable recipe pages and every journal produced by this operation
+                // before another raw observation can change the inputs. The normal earned-only
+                // path is persisted here too, still under the account/sync barrier.
+                unknownTimeMaterializer.materializeAll(steamId, now)
+                recoveryDerivedFinalizer.resumePending(steamId, now)
+                if (rawCommit.finalizationOperationId == null) {
+                    persistDerived(today, configAtCompute)
+                }
+                // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
+                runCatching { backupRepository.writeAutoSnapshotIfDue() }
+                true
             }
         }
-        return finalized
     }
 
     private suspend fun isAccountActive(expectedSteamId: String?): Boolean =

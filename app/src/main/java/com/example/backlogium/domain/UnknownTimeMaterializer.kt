@@ -34,6 +34,8 @@ class UnknownTimeMaterializer @Inject constructor(
     private val recoveryDao: PlaytimeRecoveryDao,
     private val dailyCredit: RecoveryDailyCreditCoordinator,
 ) {
+    /** No-op by default; test benchmarks can measure the complete Room transaction boundary. */
+    internal var transactionDurationObserver: ((Long) -> Unit)? = null
 
     /** Drain every active-account recipe in bounded, restartable slices before derived evaluation. */
     suspend fun materializeAll(
@@ -108,40 +110,44 @@ class UnknownTimeMaterializer @Inject constructor(
             // progress. The fresh recipe is re-read inside the transaction and only ever moves the
             // cursor *forward*, never clobbering the storage layer's authoritative
             // [UnknownTimeAllocationRecipe.materializedMinutes] read-back count.
-            database.withTransaction {
-                val fresh = recoveryDao.recipe(contributionId) ?: return@withTransaction
-                if (recoveryDao.activeAccount() != fresh.account) return@withTransaction
-                val currentCursor = fresh.materializedThroughDate?.let { LocalDate.parse(it) }
-                if (currentCursor == null || currentCursor.isBefore(to)) {
-                    recoveryDao.upsertRecipe(
-                        fresh.copy(updatedAt = now, materializedThroughDate = to.toString()),
-                    )
+            withObservedTransaction {
+                database.withTransaction {
+                    val fresh = recoveryDao.recipe(contributionId) ?: return@withTransaction
+                    if (recoveryDao.activeAccount() != fresh.account) return@withTransaction
+                    val currentCursor = fresh.materializedThroughDate?.let { LocalDate.parse(it) }
+                    if (currentCursor == null || currentCursor.isBefore(to)) {
+                        recoveryDao.upsertRecipe(
+                            fresh.copy(updatedAt = now, materializedThroughDate = to.toString()),
+                        )
+                    }
                 }
             }
             return Slice(emptyList(), 0, complete = to == recipe.lastDate)
         }
 
         var newlyMaterialized: List<UnknownTimeAllocation> = emptyList()
-        database.withTransaction {
-            if (recoveryDao.activeAccount() != recipeRow.account) return@withTransaction
-            // The recipe is the only quantity authority for the whole residual; these rows are its
-            // slices. The raw daily credit for exactly these dates is applied in the same
-            // transaction the rows are created in, so an interruption can never expose a
-            // partially-credited slice, and the durable cursor makes a re-run a no-op rather than a
-            // second credit.
-            val existingIds = recoveryDao.activeAllocations(contributionId)
-                .asSequence().map { it.placementId }.toSet()
-            newlyMaterialized = allocations.filterNot { it.placementId in existingIds }
-            recoveryDao.materializeRecipeSlice(allocations)
-            dailyCredit.apply(
-                newlyMaterialized.map { allocation ->
-                    DailyCreditDelta(
-                        date = allocation.date!!,
-                        minutesDelta = allocation.minutes.toInt(),
-                        goalMinutesDelta = if (allocation.goalAtCredit) allocation.minutes.toInt() else 0,
-                    )
-                },
-            )
+        withObservedTransaction {
+            database.withTransaction {
+                if (recoveryDao.activeAccount() != recipeRow.account) return@withTransaction
+                // The recipe is the only quantity authority for the whole residual; these rows are its
+                // slices. The raw daily credit for exactly these dates is applied in the same
+                // transaction the rows are created in, so an interruption can never expose a
+                // partially-credited slice, and the durable cursor makes a re-run a no-op rather than a
+                // second credit.
+                val existingIds = recoveryDao.activeAllocations(contributionId)
+                    .asSequence().map { it.placementId }.toSet()
+                newlyMaterialized = allocations.filterNot { it.placementId in existingIds }
+                recoveryDao.materializeRecipeSlice(allocations)
+                dailyCredit.apply(
+                    newlyMaterialized.map { allocation ->
+                        DailyCreditDelta(
+                            date = allocation.date!!,
+                            minutesDelta = allocation.minutes.toInt(),
+                            goalMinutesDelta = if (allocation.goalAtCredit) allocation.minutes.toInt() else 0,
+                        )
+                    },
+                )
+            }
         }
         val minutesTotal = newlyMaterialized.fold(0L) { total, allocation ->
             Math.addExact(total, allocation.minutes)
@@ -210,6 +216,16 @@ class UnknownTimeMaterializer @Inject constructor(
         goalAtCredit = recipeRow.goalAtCredit,
         createdAt = 0L,
     )
+
+    private suspend fun <R> withObservedTransaction(block: suspend () -> R): R {
+        val observer = transactionDurationObserver ?: return block()
+        val startedAtNanos = System.nanoTime()
+        return try {
+            block()
+        } finally {
+            observer(System.nanoTime() - startedAtNanos)
+        }
+    }
 
     companion object {
         /** A year of dates per slice: bounded work, and a ten-year window needs ten steps. */

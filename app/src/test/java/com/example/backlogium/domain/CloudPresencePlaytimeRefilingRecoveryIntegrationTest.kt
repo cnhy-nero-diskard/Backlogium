@@ -4,15 +4,21 @@ import androidx.room.Room
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.entity.CloudHistoricalInterval
+import com.example.backlogium.data.local.entity.CloudHistoricalOperation
+import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.PlaytimeContribution
+import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
 import com.example.backlogium.data.local.entity.RecoveryEvidenceQuality
 import com.example.backlogium.data.local.entity.RecoveryProvenance
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.TimedContributionPlacement
+import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.recovery.PlaytimeRecoveryIdentity
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
+import com.example.backlogium.domain.GameSource
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -39,6 +45,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
     private lateinit var database: BacklogiumDatabase
     private lateinit var settings: DataStoreSettingsRepository
     private lateinit var useCase: CloudPresencePlaytimeRefilingUseCase
+    private lateinit var updater: GamificationUpdater
 
     @Before
     fun setUp() {
@@ -47,7 +54,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         settings = DataStoreSettingsRepository(SettingsDataStore(RuntimeEnvironment.getApplication()))
-        val updater = GamificationUpdater(
+        updater = GamificationUpdater(
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
             playerProfileDao = database.playerProfileDao(),
@@ -133,6 +140,8 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             ),
         )
         val before = database.sessionDao().getAll().single()
+        val canonicalBefore = database.sessionDao().creditedMinutesByGame().single().minutes
+        assertEquals(35, canonicalBefore)
 
         val applied = useCase.apply(
             listOf(interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z"))),
@@ -142,11 +151,17 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         assertEquals("the funded session is not refilable", 0, applied.sessionsRefiled)
         // The funded placement is authoritative: its hosting session is never re-placed.
         assertEquals(before, database.sessionDao().getAll().single())
+        assertEquals(canonicalBefore, database.sessionDao().creditedMinutesByGame().single().minutes)
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
     }
 
     @Test
     fun reversalPreservesAFundedShareAcquiredOnACreatedRowAfterApply() = runTest {
-        database.sessionDao().insert(
+        database.gameDao().upsert(game().copy(isGoal = true))
+        database.playerProfileDao().upsert(
+            database.playerProfileDao().get()!!.copy(longestStreak = 22),
+        )
+        val firstOriginalId = database.sessionDao().insert(
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
@@ -155,17 +170,70 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
                 open = false,
             ),
         )
-        val applied = useCase.apply(
-            listOf(
-                interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
-                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
-            ),
+        val unrelatedOriginal = Session(
+            appId = GAME,
+            startAt = utc("2026-07-26T00:30:00Z"),
+            endAt = utc("2026-07-26T00:50:00Z"),
+            minutes = 20,
+            open = false,
         )
+        val unrelatedOriginalId = database.sessionDao().insert(unrelatedOriginal)
+        val operation = CloudHistoricalOperation(
+            operationId = "reversal-funded-child",
+            account = ACCOUNT,
+            readerGeneration = 5L,
+            endpointIdentity = "https://presence.example.test/readPresence",
+            startChoice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE.name,
+            zoneId = "UTC",
+            selectedStartAt = utc("2026-07-25T00:00:00Z"),
+            fromAt = utc("2026-07-25T00:00:00Z"),
+            throughAt = utc("2026-07-26T12:00:00Z"),
+            pagesFetched = 1,
+            transitionsFetched = 4,
+            coveredStartAt = utc("2026-07-25T00:00:00Z"),
+            coveredEndAt = utc("2026-07-26T12:00:00Z"),
+            acquisitionComplete = true,
+            state = CloudHistoricalStates.COMPLETE,
+            createdAt = 1L,
+            updatedAt = 1L,
+        )
+        check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
+        listOf(
+            interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
+            interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+            interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
+            interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+        ).forEach { row ->
+            database.cloudHistoricalDao().insertInterval(
+                CloudHistoricalInterval(
+                    operationId = operation.operationId,
+                    account = ACCOUNT,
+                    readerGeneration = operation.readerGeneration,
+                    endpointIdentity = operation.endpointIdentity,
+                    appId = GAME,
+                    startAt = row.startAt,
+                    endAt = row.endAt,
+                    ongoing = false,
+                    coverage = row.coverage.name,
+                    observedUntil = row.observedUntil,
+                    coverageLapseFrom = row.coverageLapseFrom,
+                    coverageLapseRecoveredAt = row.coverageLapseRecoveredAt,
+                    mayHaveStartedBefore = row.mayHaveStartedBefore,
+                    gameName = row.gameName,
+                    windowStart = operation.fromAt,
+                ),
+            )
+        }
+        val applied = useCase.applyHistorical(operation)
         assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
-        assertEquals(1, applied.sessionsRefiled)
+        assertEquals(2, applied.sessionsRefiled)
 
         // An independent recovery upgrade later funds one of the re-file's created split rows.
-        val created = database.sessionDao().getAll().first { it.startAt == utc("2026-07-26T00:00:00Z") }
+        val sessionsAfterApply = database.sessionDao().getAll()
+        val fundedFamilyBefore = sessionsAfterApply.filter {
+            it.id == firstOriginalId || it.startAt < utc("2026-07-26T00:10:00Z")
+        }
+        val created = sessionsAfterApply.first { it.startAt == utc("2026-07-26T00:00:00Z") }
         val contributionId = PlaytimeRecoveryIdentity.contributionId(ACCOUNT, GAME, 1L, 535L, 550L)
         database.playtimeRecoveryDao().insertContributionChecked(
             PlaytimeContribution(
@@ -178,7 +246,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
                 windowStartAt = utc("2026-07-26T00:00:00Z"),
                 windowEndAt = utc("2026-07-26T00:10:00Z"),
                 authorizedMinutes = 15L,
-                revision = 1L,
+                revision = 2L,
                 provenance = RecoveryProvenance.RETROACTIVE_PLAY,
                 zone = "UTC",
                 createdAt = 1L,
@@ -188,13 +256,114 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             listOf(
                 TimedContributionPlacement(
                     placementId = PlaytimeRecoveryIdentity.timedPlacementId(
-                        contributionId, 1L, "upgrade-ev", "2026-07-26", created.id,
+                        contributionId, 2L, "upgrade-ev", "2026-07-26", created.id,
                     ),
                     contributionId = contributionId,
                     account = ACCOUNT,
                     appId = GAME,
-                    revision = 1L,
+                    revision = 2L,
                     sessionId = created.id,
+                    minutes = 15L,
+                    creditedDate = "2026-07-26",
+                    zone = "UTC",
+                    evidenceQuality = RecoveryEvidenceQuality.LOCAL,
+                    goalAtCredit = true,
+                    createdAt = 1L,
+                ),
+            ),
+        )
+        check(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertTrue(database.playtimeRecoveryDao().validateGraph(contributionId))
+        database.dailyProgressDao().ensureDate("2026-07-26")
+        updater.recompute(FixedTime.today(), RecomputeSource.SYNC)
+        val canonicalBeforeReverse = database.sessionDao().creditedMinutesByGame().single().minutes
+        val progressBeforeReverse = database.dailyProgressDao().getAllOrdered()
+        val totalXpBeforeReverse = database.playerProfileDao().get()!!.totalXp
+        val longestBeforeReverse = database.playerProfileDao().get()!!.longestStreak
+
+        val reversed = useCase.reverse()
+
+        assertEquals(CloudPresenceRefilingOperation.REVERSED, reversed.operation)
+        // The funded split group remains as a unit, while the unrelated unfunded split from the
+        // same app restores fully. Recovery revision state on an app must not shrink that group.
+        val sessions = database.sessionDao().getAll()
+        assertTrue("funded created row must survive", sessions.any { it.id == created.id && it.minutes == 20 })
+        val fundedFamilyIds = fundedFamilyBefore.map { it.id }.toSet()
+        assertEquals(fundedFamilyBefore, sessions.filter { it.id in fundedFamilyIds })
+        assertEquals(unrelatedOriginal.copy(id = unrelatedOriginalId), sessions.single { it.id == unrelatedOriginalId })
+        assertEquals(3, sessions.size)
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertEquals(canonicalBeforeReverse, database.sessionDao().creditedMinutesByGame().single().minutes)
+        val progressAfterReverse = database.dailyProgressDao().getAllOrdered()
+        assertEquals(progressBeforeReverse.sumOf { it.minutesPlayed }, progressAfterReverse.sumOf { it.minutesPlayed })
+        assertEquals(progressBeforeReverse.sumOf { it.goalMinutesPlayed }, progressAfterReverse.sumOf { it.goalMinutesPlayed })
+        assertEquals(totalXpBeforeReverse, database.playerProfileDao().get()!!.totalXp)
+        assertTrue(database.playerProfileDao().get()!!.longestStreak >= longestBeforeReverse)
+    }
+
+    @Test
+    fun legacyReversalWithFundedChildRetainsItsWholeSplitFamilyWithoutDoubleCounting() = runTest {
+        val firstOriginalId = database.sessionDao().insert(
+            Session(
+                appId = GAME,
+                startAt = utc("2026-07-25T23:50:00Z"),
+                endAt = utc("2026-07-26T00:10:00Z"),
+                minutes = 30,
+                open = false,
+            ),
+        )
+        val unrelatedOriginal = Session(
+            appId = GAME,
+            startAt = utc("2026-07-26T00:30:00Z"),
+            endAt = utc("2026-07-26T00:50:00Z"),
+            minutes = 20,
+            open = false,
+        )
+        val unrelatedOriginalId = database.sessionDao().insert(unrelatedOriginal)
+        val applied = useCase.apply(
+            listOf(
+                interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
+                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+                interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
+                interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+            ),
+        )
+        assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
+        assertEquals(2, applied.sessionsRefiled)
+        val splitRowsBeforeFunding = database.sessionDao().getAll()
+        val fundedFamilyBefore = splitRowsBeforeFunding.filter {
+            it.id == firstOriginalId || it.startAt < utc("2026-07-26T00:10:00Z")
+        }
+        val fundedChild = splitRowsBeforeFunding.first { it.startAt == utc("2026-07-26T00:00:00Z") }
+        val contributionId = PlaytimeRecoveryIdentity.contributionId(ACCOUNT, GAME, 1L, 535L, 550L)
+        database.playtimeRecoveryDao().insertContributionChecked(
+            PlaytimeContribution(
+                contributionId = contributionId,
+                account = ACCOUNT,
+                appId = GAME,
+                baselineEpoch = 1L,
+                fromMinutes = 535L,
+                toMinutes = 550L,
+                windowStartAt = utc("2026-07-26T00:00:00Z"),
+                windowEndAt = utc("2026-07-26T00:10:00Z"),
+                authorizedMinutes = 15L,
+                revision = 2L,
+                provenance = RecoveryProvenance.RETROACTIVE_PLAY,
+                zone = "UTC",
+                createdAt = 1L,
+            ),
+        )
+        database.playtimeRecoveryDao().insertTimedPlacements(
+            listOf(
+                TimedContributionPlacement(
+                    placementId = PlaytimeRecoveryIdentity.timedPlacementId(
+                        contributionId, 2L, "legacy-upgrade", "2026-07-26", fundedChild.id,
+                    ),
+                    contributionId = contributionId,
+                    account = ACCOUNT,
+                    appId = GAME,
+                    revision = 2L,
+                    sessionId = fundedChild.id,
                     minutes = 15L,
                     creditedDate = "2026-07-26",
                     zone = "UTC",
@@ -203,22 +372,20 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
                 ),
             ),
         )
-        check(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertTrue(database.playtimeRecoveryDao().validateGraph(contributionId))
+        val canonicalBeforeReverse = database.sessionDao().creditedMinutesByGame().single().minutes
 
         val reversed = useCase.reverse()
 
         assertEquals(CloudPresenceRefilingOperation.REVERSED, reversed.operation)
-        // The funded created row survives the reversal with its minutes intact; the unfunded rows
-        // revert to the pre-apply ledger.
-        val sessions = database.sessionDao().getAll()
-        assertTrue("funded created row must survive", sessions.any { it.id == created.id && it.minutes == 20 })
-        assertTrue(
-            "original row is restored",
-            sessions.any {
-                it.startAt == utc("2026-07-25T23:50:00Z") &&
-                    it.endAt == utc("2026-07-26T00:10:00Z") && it.minutes == 30
-            },
-        )
+        val reversedSessions = database.sessionDao().getAll()
+        val fundedFamilyIds = fundedFamilyBefore.map { it.id }.toSet()
+        assertEquals(fundedFamilyBefore, reversedSessions.filter { it.id in fundedFamilyIds })
+        assertEquals(unrelatedOriginal.copy(id = unrelatedOriginalId), reversedSessions.single { it.id == unrelatedOriginalId })
+        assertEquals(3, reversedSessions.size)
+        assertEquals(canonicalBeforeReverse, database.sessionDao().creditedMinutesByGame().single().minutes)
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
     }
 
     @Test
@@ -237,28 +404,68 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         )
         assertEquals(1, applied.sessionsRefiled)
 
-        // After apply, an independent recovery correction advances the game's contribution graph
-        // and shrinks the refiled row (its share moved to another placement).
+        // After apply, an independent recovery revision moves five minutes to a dated residual and
+        // shrinks the row to its remaining 25-minute funded share.
         val contributionId = PlaytimeRecoveryIdentity.contributionId(ACCOUNT, GAME, 1L, 500L, 530L)
-        database.playtimeRecoveryDao().insertContributionChecked(
-            PlaytimeContribution(
-                contributionId = contributionId,
-                account = ACCOUNT,
-                appId = GAME,
-                baselineEpoch = 1L,
-                fromMinutes = 500L,
-                toMinutes = 530L,
-                windowStartAt = utc("2026-07-26T00:00:00Z"),
-                windowEndAt = utc("2026-07-26T00:10:00Z"),
-                authorizedMinutes = 30L,
-                revision = 2L,
-                provenance = RecoveryProvenance.RETROACTIVE_PLAY,
-                zone = "UTC",
-                createdAt = 1L,
-            ),
+        val contribution = PlaytimeContribution(
+            contributionId = contributionId,
+            account = ACCOUNT,
+            appId = GAME,
+            baselineEpoch = 1L,
+            fromMinutes = 500L,
+            toMinutes = 530L,
+            windowStartAt = utc("2026-07-26T00:00:00Z"),
+            windowEndAt = utc("2026-07-26T00:10:00Z"),
+            authorizedMinutes = 30L,
+            revision = 1L,
+            provenance = RecoveryProvenance.RETROACTIVE_PLAY,
+            zone = "UTC",
+            createdAt = 1L,
         )
         val refiled = database.sessionDao().getAll().single()
+        database.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = contribution,
+            timed = listOf(
+                TimedContributionPlacement(
+                    placementId = PlaytimeRecoveryIdentity.timedPlacementId(
+                        contributionId, 1L, "preserved-evidence", "2026-07-26", refiled.id,
+                    ),
+                    contributionId = contributionId,
+                    account = ACCOUNT,
+                    appId = GAME,
+                    revision = 1L,
+                    sessionId = refiled.id,
+                    minutes = 25L,
+                    creditedDate = "2026-07-26",
+                    zone = "UTC",
+                    evidenceQuality = RecoveryEvidenceQuality.LOCAL,
+                    createdAt = 1L,
+                ),
+            ),
+            allocations = listOf(
+                UnknownTimeAllocation(
+                    placementId = PlaytimeRecoveryIdentity.allocationPlacementId(
+                        contributionId, 1L, "2026-07-26",
+                    ),
+                    contributionId = contributionId,
+                    account = ACCOUNT,
+                    appId = GAME,
+                    revision = 1L,
+                    date = "2026-07-26",
+                    minutes = 5L,
+                    method = RecoveryAllocationMethods.SINGLE_DAY,
+                    zone = "UTC",
+                    windowStartAt = contribution.windowStartAt,
+                    windowEndAt = contribution.windowEndAt,
+                    createdAt = 1L,
+                ),
+            ),
+        )
         database.sessionDao().update(refiled.copy(minutes = 25))
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertTrue(database.playtimeRecoveryDao().validateGraph(contributionId))
+        val canonicalBeforeReverse = database.sessionDao().creditedMinutesByGame().single().minutes
+        assertEquals(30, canonicalBeforeReverse)
 
         val reversed = useCase.reverse()
 
@@ -269,6 +476,9 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             25,
             restored.minutes,
         )
+        assertTrue(database.playtimeRecoveryDao().conservationHolds(contributionId))
+        assertTrue(database.playtimeRecoveryDao().validateGraph(contributionId))
+        assertEquals(canonicalBeforeReverse, database.sessionDao().creditedMinutesByGame().single().minutes)
     }
 
     private suspend fun interval(startAt: Long, endAt: Long): CloudPresenceInterval =
