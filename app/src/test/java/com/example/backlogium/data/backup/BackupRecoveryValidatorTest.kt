@@ -162,12 +162,22 @@ class BackupRecoveryValidatorTest {
     }
 
     @Test
-    fun missingObservationForFundedContribution_rejected() {
-        val problems = v3(recovery = validRecovery().copy(observations = emptyList())).assertRejected()
+    fun missingObservationForConservedHistoricalContribution_remainsValid() {
+        val recovery = validRecovery().copy(observations = emptyList())
 
-        assertTrue(problems.any {
-            it.recordType == "recoveryContribution" && it.detail.contains("no recovery observation")
-        })
+        assertTrue(BackupValidator.validate(v3(recovery)) is BackupValidationResult.Valid)
+    }
+
+    @Test
+    fun missingObservationDoesNotPermitUnconservedHistoricalQuantity() {
+        val recovery = validRecovery().copy(
+            observations = emptyList(),
+            unknownAllocations = emptyList(),
+        )
+
+        val problems = v3(recovery).assertRejected()
+
+        assertTrue(problems.any { it.recordType == "recoveryContribution" })
     }
 
     @Test

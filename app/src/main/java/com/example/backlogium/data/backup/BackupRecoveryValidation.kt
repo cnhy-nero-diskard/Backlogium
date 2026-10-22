@@ -102,7 +102,7 @@ internal object BackupRecoveryValidator {
         }
     }
 
-    /** A v3 contribution is only importable when its detector lineage is represented in the file. */
+    /** Historical quantity can outlive its baseline; check coverage only when one is present. */
     private fun validateContributionObservationCoherence(
         observations: List<BackupRecoveryObservation>,
         contributions: List<BackupContribution>,
@@ -111,14 +111,11 @@ internal object BackupRecoveryValidator {
         val observationsByGame = observations.associateBy { it.account to it.appId }
         contributions.forEachIndexed { index, contribution ->
             val observation = observationsByGame[contribution.account to contribution.appId]
-            when {
-                observation == null -> problems += problem(
-                    "recoveryContribution",
-                    index,
-                    "has no recovery observation for account ${contribution.account} app ${contribution.appId}",
-                )
-                contribution.baselineEpoch >= observation.baselineEpoch &&
-                    contribution.toMinutes > observation.highWaterMinutes -> problems += problem(
+                ?: return@forEachIndexed
+            if (contribution.baselineEpoch >= observation.baselineEpoch &&
+                contribution.toMinutes > observation.highWaterMinutes
+            ) {
+                problems += problem(
                     "recoveryContribution",
                     index,
                     "non-older-epoch endpoint ${contribution.toMinutes} exceeds observation high-water " +

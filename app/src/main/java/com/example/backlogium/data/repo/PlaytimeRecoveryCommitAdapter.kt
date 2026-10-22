@@ -67,6 +67,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
     data class GamePlacementInputs(
         val consumedSpans: List<ConsumedPlaytimeSpan> = emptyList(),
         val pendingPlacements: List<PendingPlacement> = emptyList(),
+        val maxBaselineEpoch: Long = 0L,
     )
 
     /** A session natural key maps to its persisted row id for funded-share linking. */
@@ -93,7 +94,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
      * An unanchored game therefore plans as pending (`NO_BASELINE_WINDOW`) until a valid new
      * observation window exists.
      */
-    suspend fun ensureLegacyBaseline(account: String, game: Game): GameRecoveryState? {
+    suspend fun ensureLegacyBaseline(account: String, game: Game, epoch: Long = 1L): GameRecoveryState? {
         if (game.source != GameSource.STEAM_OWNED) return null
         val existing = recoveryDao.state(account, game.appId)
         if (existing != null) return existing
@@ -101,7 +102,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
         val seeded = GameRecoveryState(
             account = account,
             appId = game.appId,
-            baselineEpoch = 1L,
+            baselineEpoch = epoch,
             highWaterMinutes = game.lastPlaytime.toLong(),
             lastObservationAt = previousAt.takeIf { it > 0L },
             lastObservationDate = null,
@@ -130,6 +131,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
 
         val consumedByApp = mutableMapOf<Long, MutableList<ConsumedPlaytimeSpan>>()
         val pendingByApp = mutableMapOf<Long, MutableList<PendingPlacement>>()
+        val maxEpochByApp = mutableMapOf<Long, Long>()
         requestedApps.chunked(SQLITE_BIND_BATCH_SIZE).forEach { appBatch ->
             val contributions = recoveryDao.contributionsForGames(account, appBatch)
             val timedByContribution = recoveryDao.activeTimedPlacementsForGames(account, appBatch)
@@ -138,6 +140,9 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
                 .groupBy { it.contributionId }
 
             contributions.forEach { contribution ->
+                maxEpochByApp[contribution.appId] = maxOf(
+                    maxEpochByApp[contribution.appId] ?: 0L, contribution.baselineEpoch,
+                )
                 timedByContribution[contribution.contributionId].orEmpty().forEach { placement ->
                     val span = PlaytimeRecoveryCommitMapper.consumedSpanFrom(placement)
                     if (span != null) {
@@ -191,6 +196,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             GamePlacementInputs(
                 consumedSpans = consumedByApp[appId].orEmpty(),
                 pendingPlacements = pendingByApp[appId].orEmpty(),
+                maxBaselineEpoch = maxEpochByApp[appId] ?: 0L,
             )
         }
     }
@@ -429,6 +435,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
         absoluteMinutes: Long,
         observedAt: Long,
         zone: ZoneId,
+        epoch: Long = 1L,
     ): BaselineAdvance {
         val date = if (observedAt > 0L) {
             Instant.ofEpochMilli(observedAt).atZone(zone).toLocalDate().toString()
@@ -442,6 +449,7 @@ class PlaytimeRecoveryCommitAdapter @Inject constructor(
             observedAt = observedAt,
             zone = if (date != null) zone.toString() else null,
             date = date,
+            epoch = epoch,
         )
     }
 

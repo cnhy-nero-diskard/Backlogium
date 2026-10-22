@@ -28,15 +28,22 @@ Version 3 import preflight SHALL reject every recovery observation or funded con
 - **THEN** none of those records or the receiving progression state is modified
 
 ### Requirement: V3 recovery graphs are representable and linked to their source baseline
-Version 3 recovery observations and contribution ranges SHALL stay within the nonnegative `Int` playtime domain of the live Steam observation writer; preflight SHALL reject values outside `0..Int.MAX_VALUE` rather than allow restore to clamp the detector pair. Every funded contribution SHALL have one observation for the same source account and app. Recovery epochs may differ across independently merged backup lineages: when a contribution epoch is equal to or newer than the retained observation epoch, its endpoint SHALL be covered by that observation's high-water; an older-epoch contribution SHALL remain valid historical quantity after a deliberate baseline re-establishment, even when its cumulative endpoint exceeds the newer epoch's lower high-water. Recovery observations and contributions SHALL use the SteamID64 recorded by the backup identity; this source-identity check SHALL NOT block importing a foreign backup whose recovery records consistently identify that foreign source account. Timed placements, allocations, recipes and replacements SHALL remain linked to their contribution's account/app identity, and portable timed-session links SHALL resolve unambiguously.
+Version 3 recovery observations and contribution ranges SHALL stay within the nonnegative `Int` playtime domain of the live Steam observation writer; preflight SHALL reject values outside `0..Int.MAX_VALUE` rather than allow restore to clamp the detector pair. Conserved historical contribution graphs MAY outlive or lack an observation for the same source account and app and SHALL remain exportable and importable without fabricating a detector baseline or observation timestamp. Recovery epochs may differ across independently merged backup lineages: when a matching observation is present and a contribution epoch is equal to or newer than that observation epoch, its endpoint SHALL be covered by that observation's high-water; an older-epoch contribution SHALL remain valid historical quantity after a deliberate baseline re-establishment, even when its cumulative endpoint exceeds the newer epoch's lower high-water. Recovery observations and contributions SHALL use the SteamID64 recorded by the backup identity; this source-identity check SHALL NOT block importing a foreign backup whose recovery records consistently identify that foreign source account. Timed placements, allocations, recipes and replacements SHALL remain linked to their contribution's account/app identity, and portable timed-session links SHALL resolve unambiguously.
 
 #### Scenario: Unrepresentable Steam detector values
 - **WHEN** a version 3 observation high-water or contribution endpoint exceeds `Int.MAX_VALUE`
 - **THEN** full-file preflight rejects the specific recovery record before any mutation instead of importing a value the live detector cannot represent
 
 #### Scenario: Funded range is not covered by its observation
-- **WHEN** a contribution has no same-account/app observation, or its endpoint exceeds the observation high-water while it belongs to the same or a newer epoch
+- **WHEN** a contribution has a same-account/app observation and its endpoint exceeds that observation's high-water while it belongs to the same or a newer epoch
 - **THEN** preflight rejects that contribution as incoherent before persistence
+
+#### Scenario: Historical graph has no observation
+- **WHEN** a conserved positive-epoch contribution graph without a matching observation is exported and restored
+- **THEN** validation permits the file and restore preserves its quantity, dates, zones, provenance and contribution identity without inventing an observation
+- **AND** re-export and repeated restore preserve that history without duplicating it
+- **AND** if the receiving game has no usable local detector baseline, its first trustworthy Steam read establishes one without re-crediting imported history, even if other games have already synced
+- **AND** the fresh baseline uses an epoch newer than the retained historical contribution epochs so a lower first cumulative reading does not invalidate those historical graphs
 
 #### Scenario: Older epoch history survives baseline re-establishment
 - **WHEN** a contribution from an older positive epoch is present beside a newer observation epoch with a lower high-water

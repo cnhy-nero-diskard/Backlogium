@@ -117,6 +117,104 @@ class BackupRecoveryRoundTripTest {
     }
 
     @Test
+    fun observationlessGraph_roundTripsAndFirstSteamReadDoesNotReplayHistory() = runBlocking {
+        source.gameDao().upsert(game(APP, "Game"))
+        seedContribution(source)
+        assertNull(source.playtimeRecoveryDao().state(ACCOUNT, APP))
+        assertTrue(source.playtimeRecoveryDao().validateGraph("c1"))
+
+        val file = exportMapper(source).buildExport()
+        val decoded = json.decodeFromString(
+            BackupFile.serializer(), json.encodeToString(BackupFile.serializer(), file),
+        )
+        assertTrue(decoded.recovery!!.observations!!.isEmpty())
+        assertEquals(105L, decoded.recovery!!.contributions!!.single().authorizedMinutes)
+        val validation = BackupValidator.validate(decoded)
+        assertTrue("observation-less exported history must be importable: $validation",
+            validation is BackupValidationResult.Valid)
+
+        // The receiving account already syncs other games; this imported game has never been read.
+        restored.playerProfileDao().upsert(PlayerProfile(steamId = ACCOUNT, lastSyncAt = FixedTime.nowMillis()))
+        repeat(2) { mergeEngine(restored).merge(decoded, RuleConfig()) }
+
+        val dao = restored.playtimeRecoveryDao()
+        assertNull(dao.state(ACCOUNT, APP))
+        assertEquals(decoded.recovery, recoveryStore(restored).read(ACCOUNT))
+        assertEquals(105L, dao.conservedAllocatedMinutes("c1"))
+        assertEquals(105, restored.sessionDao().creditedMinutesByGame().single().minutes)
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+        val reexported = exportMapper(restored).buildExport()
+        assertTrue(BackupValidator.validate(reexported) is BackupValidationResult.Valid)
+        assertEquals(decoded.recovery, reexported.recovery)
+
+        val committer = observationCommitter(restored)
+        val firstReadAt = iso("2026-07-17T13:00:00Z")
+        val firstRead = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 605)),
+                observedPlayAt = firstReadAt,
+                syncedAt = firstReadAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertFalse("the first live read must not re-credit restored history", firstRead.recordedPlay)
+        assertEquals(0, firstRead.playedDeltaByAppId[APP] ?: 0)
+        assertEquals(1, dao.contributionsForGame(ACCOUNT, APP).size)
+        assertEquals(105L, dao.conservedAllocatedMinutes("c1"))
+        assertEquals(605L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(605, restored.gameDao().getById(APP)!!.lastPlaytime)
+        assertTrue(restored.sessionDao().getAll().isEmpty())
+
+        restored.playerProfileDao().updateSyncStatus(firstReadAt, null)
+        val increasedAt = iso("2026-07-17T13:30:00Z")
+        val increase = restored.withTransaction {
+            committer.commit(
+                observed = listOf(observed(APP, 630)),
+                observedPlayAt = increasedAt,
+                syncedAt = increasedAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+        assertEquals(25, increase.playedDeltaByAppId[APP])
+        assertEquals(130L, dao.contributionsForGame(ACCOUNT, APP).sumOf { it.authorizedMinutes })
+        dao.contributionsForGame(ACCOUNT, APP).forEach { assertTrue(dao.validateGraph(it.contributionId)) }
+        repeat(2) { mergeEngine(restored).merge(decoded, RuleConfig()) }
+        assertEquals(130L, dao.contributionsForGame(ACCOUNT, APP).sumOf { it.authorizedMinutes })
+        assertEquals(630L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+    }
+
+    @Test
+    fun observationlessHistory_withLowerFirstSteamTotalKeepsAValidHistoricalEpoch() = runBlocking {
+        source.gameDao().upsert(game(APP, "Game"))
+        seedContribution(source)
+        val file = exportMapper(source).buildExport()
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+        mergeEngine(restored).merge(file, RuleConfig())
+
+        val readAt = iso("2026-07-17T13:00:00Z")
+        val result = restored.withTransaction {
+            observationCommitter(restored).commit(
+                observed = listOf(observed(APP, 50)),
+                observedPlayAt = readAt,
+                syncedAt = readAt,
+                expectedAccount = ACCOUNT,
+            )
+        }
+
+        assertFalse(result.recordedPlay)
+        val dao = restored.playtimeRecoveryDao()
+        assertEquals(2L, dao.state(ACCOUNT, APP)!!.baselineEpoch)
+        assertEquals(50L, dao.state(ACCOUNT, APP)!!.highWaterMinutes)
+        assertEquals(1L, dao.contribution("c1")!!.baselineEpoch)
+        assertEquals(105L, dao.conservedAllocatedMinutes("c1"))
+        assertTrue(BackupValidator.validate(exportMapper(restored).buildExport()) is BackupValidationResult.Valid)
+        repeat(2) { mergeEngine(restored).merge(file, RuleConfig()) }
+        assertEquals(105L, dao.conservedAllocatedMinutes("c1"))
+        assertEquals(2L, dao.state(ACCOUNT, APP)!!.baselineEpoch)
+        assertTrue(BackupValidator.validate(exportMapper(restored).buildExport()) is BackupValidationResult.Valid)
+    }
+
+    @Test
     fun newerSameAccountBaseline_isNotRolledBackByAnOlderRestore() = runBlocking {
         source.gameDao().upsert(game(APP, "Game"))
         seedBaseline(source, highWater = 605, date = "2026-07-17")
