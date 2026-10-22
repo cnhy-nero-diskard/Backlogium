@@ -86,6 +86,9 @@ class SessionRepository @Inject constructor(
     /** Production recovery projections use one Room transaction snapshot per invalidation. */
     private val database: BacklogiumDatabase? = null,
 ) {
+    /** No-op by default; test benchmarks can measure each coherent Room snapshot boundary. */
+    internal var transactionDurationObserver: ((Long) -> Unit)? = null
+
     /** Device zone used to derive session-start dates for dated canonical projections. */
     private val zone: ZoneId get() = time.zone()
     /**
@@ -163,16 +166,18 @@ class SessionRepository @Inject constructor(
     /** The same canonical per-game totals, as a one-shot read for non-flow consumers. */
     suspend fun creditedMinutesByGameOnce(): Map<Long, Int> {
         database?.let { db ->
-            return db.withTransaction {
-                val hidden = db.sessionDao().hiddenAppIdsSnapshot().toSet()
-                PlaytimeReadProjector.creditedMinutesByGame(
-                    contributions = db.sessionDao().activeRecoveryContributionsSnapshot()
-                        .map(PlaytimeContribution::toCredit),
-                    sessions = db.sessionDao().getAll().map(Session::toCredit),
-                    timedShares = db.sessionDao().activeRecoveryTimedPlacementsSnapshot()
-                        .map(TimedContributionPlacement::toCredit),
-                ).filterKeys { it !in hidden }
-                    .toTrackedMinutesByGame()
+            return withObservedTransaction {
+                db.withTransaction {
+                    val hidden = db.sessionDao().hiddenAppIdsSnapshot().toSet()
+                    PlaytimeReadProjector.creditedMinutesByGame(
+                        contributions = db.sessionDao().activeRecoveryContributionsSnapshot()
+                            .map(PlaytimeContribution::toCredit),
+                        sessions = db.sessionDao().getAll().map(Session::toCredit),
+                        timedShares = db.sessionDao().activeRecoveryTimedPlacementsSnapshot()
+                            .map(TimedContributionPlacement::toCredit),
+                    ).filterKeys { it !in hidden }
+                        .toTrackedMinutesByGame()
+                }
             }
         }
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
@@ -717,7 +722,17 @@ class SessionRepository @Inject constructor(
     private fun <T> coherentRecoverySnapshot(read: suspend (SessionDao) -> T): Flow<T> {
         val db = requireNotNull(database)
         return sessionDao.observeRecoveryProjectionInvalidation().map {
-            db.withTransaction { read(db.sessionDao()) }
+            withObservedTransaction { db.withTransaction { read(db.sessionDao()) } }
+        }
+    }
+
+    private suspend fun <T> withObservedTransaction(block: suspend () -> T): T {
+        val observer = transactionDurationObserver ?: return block()
+        val startedAtNanos = System.nanoTime()
+        return try {
+            block()
+        } finally {
+            observer(System.nanoTime() - startedAtNanos)
         }
     }
 

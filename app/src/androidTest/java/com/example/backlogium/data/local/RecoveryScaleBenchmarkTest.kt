@@ -22,6 +22,7 @@ import com.example.backlogium.data.backup.BackupFile
 import com.example.backlogium.data.backup.BackupMergeEngine
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DaoRecoveryBackupStore
+import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
@@ -119,7 +120,7 @@ class RecoveryScaleBenchmarkTest {
                 database = database,
                 recoveryDao = database.playtimeRecoveryDao(),
                 dailyCredit = RecoveryDailyCreditCoordinator(database.dailyProgressDao()),
-            )
+            ).apply { transactionDurationObserver = metrics::recordScopedTransactionDuration }
             drainRecipe(materializer, seed.completeSparseRecipeId)
             drainRecipe(materializer, seed.completeDenseRecipeId)
             val sparseComplete = requireNotNull(database.playtimeRecoveryDao().recipe(seed.completeSparseRecipeId))
@@ -167,19 +168,21 @@ class RecoveryScaleBenchmarkTest {
             }
 
             measureFive("unchanged-library-sync", scale, database, metrics) { sample ->
-                database.withTransaction {
-                    val at = BASELINE_AT + sample * 1_000L
-                    val result = committer.commit(
-                        observed = observedGames,
-                        observedPlayAt = at,
-                        syncedAt = at,
-                        expectedAccount = ACCOUNT,
-                        ruleConfig = CONFIG,
-                        ruleConfigVersion = CONFIG_VERSION,
-                    )
-                    database.playerProfileDao().updateSyncStatus(at, null)
-                    assertTrue(result.playedDeltaByAppId.values.none { it > 0 })
-                    observedGames.size.toLong()
+                metrics.measureScopedTransaction {
+                    database.withTransaction {
+                        val at = BASELINE_AT + sample * 1_000L
+                        val result = committer.commit(
+                            observed = observedGames,
+                            observedPlayAt = at,
+                            syncedAt = at,
+                            expectedAccount = ACCOUNT,
+                            ruleConfig = CONFIG,
+                            ruleConfigVersion = CONFIG_VERSION,
+                        )
+                        database.playerProfileDao().updateSyncStatus(at, null)
+                        assertTrue(result.playedDeltaByAppId.values.none { it > 0 })
+                        observedGames.size.toLong()
+                    }
                 }
             }
             if (stopAfter == "sync") return
@@ -188,19 +191,21 @@ class RecoveryScaleBenchmarkTest {
             measureFive("one-game-increase-25", scale, database, metrics) { sample ->
                 val appId = increaseApps[sample]
                 val before = seed.highWaterByApp.getValue(appId)
-                database.withTransaction {
-                    val at = BASELINE_AT + (10 + sample) * 1_000L
-                    val result = committer.commit(
-                        observed = listOf(observedGame(database, appId, before + 25)),
-                        observedPlayAt = at,
-                        syncedAt = at,
-                        expectedAccount = ACCOUNT,
-                        ruleConfig = CONFIG,
-                        ruleConfigVersion = CONFIG_VERSION,
-                    )
-                    database.playerProfileDao().updateSyncStatus(at, null)
-                    assertEquals(25, result.playedDeltaByAppId.getValue(appId))
-                    database.playtimeRecoveryDao().contributionsForGame(ACCOUNT, appId).size.toLong()
+                metrics.measureScopedTransaction {
+                    database.withTransaction {
+                        val at = BASELINE_AT + (10 + sample) * 1_000L
+                        val result = committer.commit(
+                            observed = listOf(observedGame(database, appId, before + 25)),
+                            observedPlayAt = at,
+                            syncedAt = at,
+                            expectedAccount = ACCOUNT,
+                            ruleConfig = CONFIG,
+                            ruleConfigVersion = CONFIG_VERSION,
+                        )
+                        database.playerProfileDao().updateSyncStatus(at, null)
+                        assertEquals(25, result.playedDeltaByAppId.getValue(appId))
+                        database.playtimeRecoveryDao().contributionsForGame(ACCOUNT, appId).size.toLong()
+                    }
                 }
             }
             if (stopAfter == "increase") return
@@ -216,7 +221,7 @@ class RecoveryScaleBenchmarkTest {
                 time = time,
                 syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
                 derivedStateWrites = derivedWrites,
-                transaction = RoomDatabaseTransactionScope(database),
+                transaction = CountingTransactionScope(RoomDatabaseTransactionScope(database), metrics),
                 materializer = null,
             )
             val evidenceByApp = seed.reconcileSamples.associate { sample ->
@@ -277,7 +282,7 @@ class RecoveryScaleBenchmarkTest {
                     com.example.backlogium.data.backup.BackupValidator.validate(backup) is
                         com.example.backlogium.data.backup.BackupValidationResult.Valid)
                 if (stopAfter == "export") return
-                benchmarkImports(context, scale, encodedBackup, json)
+                if (stopAfter != "window") benchmarkImports(context, scale, encodedBackup, json)
                 if (stopAfter == "import") return
 
                 val hidden = HiddenGamesRepository(
@@ -292,7 +297,7 @@ class RecoveryScaleBenchmarkTest {
                     time = time,
                     playerProfileDao = database.playerProfileDao(),
                     database = database,
-                )
+                ).apply { transactionDurationObserver = metrics::recordScopedTransactionDuration }
                 val windowStart = TODAY.minusDays(29)
                 val windowEndExclusive = TODAY.plusDays(1)
                 measureFive("history-analytics-30-day-window", scale, database, metrics) {
@@ -302,6 +307,7 @@ class RecoveryScaleBenchmarkTest {
                         .first()
                     activity.size.toLong() + allocations.size + totals.size
                 }
+                if (stopAfter == "window") return
 
                 Log.i(TAG, "SCALE_DONE,${scale.label},games=${seed.games},contributions=${seed.contributions}")
             } finally {
@@ -334,6 +340,8 @@ class RecoveryScaleBenchmarkTest {
         val writeRows = records.map { it.rowsWritten }.sorted()
         val transactionNanos = records.map { it.transactionNanos }.sorted()
         val transactionCounts = records.map { it.transactionCount }.sorted()
+        val scopedTransactionNanos = records.map { it.scopedTransactionNanos }.sorted()
+        val scopedTransactionCounts = records.map { it.scopedTransactionCount }.sorted()
         val readOnlyTransactionCounts = records.map { it.readOnlyTransactionCount }.sorted()
         val readOnlyTransactionNanos = records.map { it.readOnlyTransactionNanos }.sorted()
         val pssDeltas = records.map { it.pssDeltaKb }.sorted()
@@ -355,6 +363,10 @@ class RecoveryScaleBenchmarkTest {
                 "supportSQLiteTransactionsRange=${transactionCounts.first()}..${transactionCounts.last()}," +
                 "supportSQLiteTransactionNsMedian=${transactionNanos[median]}," +
                 "supportSQLiteTransactionNsRange=${transactionNanos.first()}..${transactionNanos.last()}," +
+                "scopedTransactionsMedian=${scopedTransactionCounts[median]}," +
+                "scopedTransactionsRange=${scopedTransactionCounts.first()}..${scopedTransactionCounts.last()}," +
+                "scopedTransactionNsMedian=${scopedTransactionNanos[median]}," +
+                "scopedTransactionNsRange=${scopedTransactionNanos.first()}..${scopedTransactionNanos.last()}," +
                 "supportSQLiteReadOnlyTransactionsMedian=${readOnlyTransactionCounts[median]}," +
                 "supportSQLiteReadOnlyTransactionsRange=${readOnlyTransactionCounts.first()}..${readOnlyTransactionCounts.last()}," +
                 "supportSQLiteReadOnlyTransactionNsMedian=${readOnlyTransactionNanos[median]}," +
@@ -399,6 +411,8 @@ class RecoveryScaleBenchmarkTest {
             rowsWritten = snapshot.rowsWritten,
             transactionCount = snapshot.transactionCount,
             transactionNanos = snapshot.transactionNanos,
+            scopedTransactionCount = snapshot.scopedTransactionCount,
+            scopedTransactionNanos = snapshot.scopedTransactionNanos,
             readOnlyTransactionCount = snapshot.readOnlyTransactionCount,
             readOnlyTransactionNanos = snapshot.readOnlyTransactionNanos,
             pssDeltaKb = pssAfter - pssBefore,
@@ -413,6 +427,8 @@ class RecoveryScaleBenchmarkTest {
                 "apiRows=${record.rowsReportedAtApi},writeStatements=${record.writeStatements}," +
                 "writeRows=${record.rowsWritten},supportSQLiteTransactions=${record.transactionCount}," +
                 "supportSQLiteTransactionNs=${record.transactionNanos}," +
+                "scopedTransactions=${record.scopedTransactionCount}," +
+                "scopedTransactionNs=${record.scopedTransactionNanos}," +
                 "supportSQLiteReadOnlyTransactions=${record.readOnlyTransactionCount}," +
                 "supportSQLiteReadOnlyTransactionNs=${record.readOnlyTransactionNanos}," +
                 "pssDeltaKb=${record.pssDeltaKb}," +
@@ -481,6 +497,8 @@ class RecoveryScaleBenchmarkTest {
         val writes = records.map { it.rowsWritten }.sorted()
         val txNanos = records.map { it.transactionNanos }.sorted()
         val transactions = records.map { it.transactionCount }.sorted()
+        val scopedTxNanos = records.map { it.scopedTransactionNanos }.sorted()
+        val scopedTransactions = records.map { it.scopedTransactionCount }.sorted()
         val readOnlyTransactions = records.map { it.readOnlyTransactionCount }.sorted()
         val readOnlyTxNanos = records.map { it.readOnlyTransactionNanos }.sorted()
         val pssDeltas = records.map { it.pssDeltaKb }.sorted()
@@ -500,6 +518,10 @@ class RecoveryScaleBenchmarkTest {
                 "supportSQLiteTransactionsRange=${transactions.first()}..${transactions.last()}," +
                 "supportSQLiteTransactionNsMedian=${txNanos[median]}," +
                 "supportSQLiteTransactionNsRange=${txNanos.first()}..${txNanos.last()}," +
+                "scopedTransactionsMedian=${scopedTransactions[median]}," +
+                "scopedTransactionsRange=${scopedTransactions.first()}..${scopedTransactions.last()}," +
+                "scopedTransactionNsMedian=${scopedTxNanos[median]}," +
+                "scopedTransactionNsRange=${scopedTxNanos.first()}..${scopedTxNanos.last()}," +
                 "supportSQLiteReadOnlyTransactionsMedian=${readOnlyTransactions[median]}," +
                 "supportSQLiteReadOnlyTransactionsRange=${readOnlyTransactions.first()}..${readOnlyTransactions.last()}," +
                 "supportSQLiteReadOnlyTransactionNsMedian=${readOnlyTxNanos[median]}," +
@@ -549,7 +571,7 @@ class RecoveryScaleBenchmarkTest {
             database,
             recoveryDao,
             RecoveryDailyCreditCoordinator(database.dailyProgressDao()),
-        )
+        ).apply { transactionDurationObserver = metrics::recordScopedTransactionDuration }
         val engine = BackupMergeEngine(
             gameDao = database.gameDao(),
             sessionDao = database.sessionDao(),
@@ -563,7 +585,7 @@ class RecoveryScaleBenchmarkTest {
             gamificationUpdater = updater,
             time = BenchmarkTime,
             derivedStateWrites = derived,
-            transaction = RoomDatabaseTransactionScope(database),
+            transaction = CountingTransactionScope(RoomDatabaseTransactionScope(database), metrics),
             recoveryStore = DaoRecoveryBackupStore(recoveryDao, database.sessionDao()),
             credentials = BenchmarkCredentials,
             syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
@@ -609,7 +631,7 @@ class RecoveryScaleBenchmarkTest {
         settings = settings,
         credentials = BenchmarkCredentials,
         time = time,
-        transaction = RoomDatabaseTransactionScope(database),
+        transaction = CountingTransactionScope(RoomDatabaseTransactionScope(database), metrics),
     )
 
     private suspend fun seedDatabase(database: BacklogiumDatabase, scale: Scale): ScaleSeed {
@@ -1380,6 +1402,8 @@ class RecoveryScaleBenchmarkTest {
         val rowsWritten: Long,
         val transactionCount: Long,
         val transactionNanos: Long,
+        val scopedTransactionCount: Long,
+        val scopedTransactionNanos: Long,
         val readOnlyTransactionCount: Long,
         val readOnlyTransactionNanos: Long,
         val pssDeltaKb: Long,
@@ -1395,6 +1419,8 @@ class RecoveryScaleBenchmarkTest {
         val rowsReturned: Long,
         val transactionCount: Long,
         val transactionNanos: Long,
+        val scopedTransactionCount: Long,
+        val scopedTransactionNanos: Long,
         val readOnlyTransactionCount: Long,
         val readOnlyTransactionNanos: Long,
         val statementCounts: Map<String, Long>,
@@ -1409,6 +1435,8 @@ class RecoveryScaleBenchmarkTest {
         private val rowsReturned = AtomicLong()
         private val transactionCount = AtomicLong()
         private val transactionNanos = AtomicLong()
+        private val scopedTransactionCount = AtomicLong()
+        private val scopedTransactionNanos = AtomicLong()
         private val readOnlyTransactionCount = AtomicLong()
         private val readOnlyTransactionNanos = AtomicLong()
         private val statementCounts = ConcurrentHashMap<String, AtomicLong>()
@@ -1422,6 +1450,8 @@ class RecoveryScaleBenchmarkTest {
             rowsReturned.set(0L)
             transactionCount.set(0L)
             transactionNanos.set(0L)
+            scopedTransactionCount.set(0L)
+            scopedTransactionNanos.set(0L)
             readOnlyTransactionCount.set(0L)
             readOnlyTransactionNanos.set(0L)
             statementCounts.clear()
@@ -1461,6 +1491,22 @@ class RecoveryScaleBenchmarkTest {
             if (enabled && count > 0) rowsWritten.addAndGet(count.toLong())
         }
 
+        suspend fun <R> measureScopedTransaction(block: suspend () -> R): R {
+            if (!enabled) return block()
+            val startedAtNanos = System.nanoTime()
+            return try {
+                block()
+            } finally {
+                recordScopedTransactionDuration(System.nanoTime() - startedAtNanos)
+            }
+        }
+
+        fun recordScopedTransactionDuration(durationNanos: Long) {
+            if (!enabled) return
+            scopedTransactionCount.incrementAndGet()
+            scopedTransactionNanos.addAndGet(durationNanos.coerceAtLeast(0L))
+        }
+
         fun beginTransaction(readOnly: Boolean = false) {
             if (!enabled) return
             val stack = transactionStarts.get() ?: ArrayDeque<TransactionFrame>().also(transactionStarts::set)
@@ -1492,6 +1538,8 @@ class RecoveryScaleBenchmarkTest {
             rowsReturned = rowsReturned.get(),
             transactionCount = transactionCount.get(),
             transactionNanos = transactionNanos.get(),
+            scopedTransactionCount = scopedTransactionCount.get(),
+            scopedTransactionNanos = scopedTransactionNanos.get(),
             readOnlyTransactionCount = readOnlyTransactionCount.get(),
             readOnlyTransactionNanos = readOnlyTransactionNanos.get(),
             statementCounts = statementCounts.entries
@@ -1511,6 +1559,14 @@ class RecoveryScaleBenchmarkTest {
         }
 
         private data class TransactionFrame(val startedAtNanos: Long, val readOnly: Boolean)
+    }
+
+    private class CountingTransactionScope(
+        private val delegate: DatabaseTransactionScope,
+        private val metrics: SqlMetrics,
+    ) : DatabaseTransactionScope {
+        override suspend fun <R> run(block: suspend () -> R): R =
+            metrics.measureScopedTransaction { delegate.run(block) }
     }
 
     private class CountingOpenHelperFactory(private val metrics: SqlMetrics) : SupportSQLiteOpenHelper.Factory {
