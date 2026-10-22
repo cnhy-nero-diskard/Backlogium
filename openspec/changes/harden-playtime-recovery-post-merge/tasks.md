@@ -57,5 +57,5 @@
 
 ## 9. Publish the final audit and evaluate the full issue gate
 
-- [ ] 9.1 Complete audit-notes.md with verified findings/remediation or safety proofs, actual data flow, retained complexities, before/after performance, test commands/environments/head SHAs, evidence-source labels, remaining risks and linked small implementation PR(s); verify every A-E matrix item and all seven #183 acceptance conditions have an explicit evidence-backed disposition.
+- [x] 9.1 Complete audit-notes.md with verified findings/remediation or safety proofs, actual data flow, retained complexities, before/after performance, test commands/environments/head SHAs, evidence-source labels, remaining risks and linked small implementation PR(s); verify every A-E matrix item and all seven #183 acceptance conditions have an explicit evidence-backed disposition.
 - [ ] 9.2 Review the final diff and local/remote retained feature ref/history against the initial record, ensure all completed tasks describe work actually performed, and evaluate #183 for closure; verify no unrelated work or forbidden branch operation, no unresolved known loss/duplicate/account/backup/reconciliation defect, preserved accepted semantics and fully satisfied Android/CI/device gates before closing the issue. If anything critical remains unverified, name its blocker and leave the task, gate and issue open.
