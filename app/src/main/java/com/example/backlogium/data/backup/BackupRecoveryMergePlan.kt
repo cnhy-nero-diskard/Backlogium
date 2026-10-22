@@ -676,15 +676,16 @@ object RecoveryBackupMergePlanner {
         if (contributions.isEmpty()) return emptyList()
         val timed = recovery?.timedPlacements.orEmpty().filter { !it.superseded }
         val allocations = recovery?.unknownAllocations.orEmpty().filter { !it.superseded }
+        val timedByContribution = timed.groupBy { it.contributionId }
+        val allocationsByContribution = allocations.groupBy { it.contributionId }
         val recipes = recovery?.recipes.orEmpty().associateBy { it.contributionId }
         return contributions.map { contribution ->
+            val id = contribution.contributionId
             RecoveryContributionGraph(
                 contribution = contribution,
-                timedPlacements = timed.filter { it.contributionId == contribution.contributionId },
-                unknownAllocations = allocations.filter {
-                    it.contributionId == contribution.contributionId
-                },
-                recipe = recipes[contribution.contributionId],
+                timedPlacements = timedByContribution[id].orEmpty(),
+                unknownAllocations = allocationsByContribution[id].orEmpty(),
+                recipe = recipes[id],
             )
         }
     }

@@ -366,6 +366,14 @@ internal object BackupRecoveryValidator {
         sessions: List<BackupSession>,
         problems: MutableList<BackupValidationProblem>,
     ) {
+        val sessionCounts = mutableMapOf<Triple<Long, Long, Long?>, Int>()
+        sessions.forEach { session ->
+            val start = session.startAt.epochMilliOrNull() ?: return@forEach
+            val end = session.endAt?.epochMilliOrNull()
+            if (session.endAt != null && end == null) return@forEach
+            val key = Triple(session.appId, start, end)
+            sessionCounts[key] = (sessionCounts[key] ?: 0) + 1
+        }
         placements.forEachIndexed { index, placement ->
             val startText = placement.sessionStartAt
             val endText = placement.sessionEndAt
@@ -378,11 +386,7 @@ internal object BackupRecoveryValidator {
             val start = startText.epochMilliOrNull()
             val end = endText?.epochMilliOrNull()
             if (start == null || endText != null && end == null) return@forEachIndexed
-            val matches = sessions.count { session ->
-                session.appId == placement.appId &&
-                    session.startAt.epochMilliOrNull() == start &&
-                    session.endAt?.epochMilliOrNull() == end
-            }
+            val matches = sessionCounts[Triple(placement.appId, start, end)] ?: 0
             if (matches != 1) {
                 problems += problem(
                     "recoveryTimedPlacement", index,
@@ -625,11 +629,16 @@ internal object BackupRecoveryValidator {
         recipesById: Map<String, BackupAllocationRecipe>,
         problems: MutableList<BackupValidationProblem>,
     ) {
-        contributions.forEach { contribution ->
+        // Index funded rows once. Filtering both complete placement lists for every contribution
+        // made a valid large backup quadratic in the number of rows during full-file preflight.
+        val timedByContribution = timed.asSequence().filterNot { it.superseded }
+            .groupBy { it.contributionId }
+        val allocationsByContribution = allocations.asSequence().filterNot { it.superseded }
+            .groupBy { it.contributionId }
+        contributions.forEachIndexed { index, contribution ->
             val id = contribution.contributionId
-            val index = contributions.indexOf(contribution)
-            val timedSum = wideSum(timed.filter { it.contributionId == id && !it.superseded }.map { it.minutes })
-            val contributionAllocations = allocations.filter { it.contributionId == id && !it.superseded }
+            val timedSum = wideSum(timedByContribution[id].orEmpty().map { it.minutes })
+            val contributionAllocations = allocationsByContribution[id].orEmpty()
             val allocatedSum = wideSum(contributionAllocations.map { it.minutes })
             val recipe = recipesById[id]
             val allocated = if (recipe != null && !recipe.pending) {
