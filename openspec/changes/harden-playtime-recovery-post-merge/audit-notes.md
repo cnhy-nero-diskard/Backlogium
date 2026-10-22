@@ -273,7 +273,7 @@ Baseline captured on implementation HEAD `3690fc944ecb32931e4472f373e9b2af541ce1
 
 This matrix describes available evidence and explicit gaps; none of the entries closes #183 acceptance criteria by itself.
 
-## 6.1 M-tier stress run (2026-10-22; partial, task remains open)
+## 6.1 M-tier interrupted pre-optimization attempt (historical)
 
 - **Head and environment:** implementation HEAD aa8caed97b98d1e27d2952ddef3913feb299c5d2 on Windows 11 x64 build 10.0.22631, Gradle 9.5.0, JetBrains Runtime 21.0.10, Android platform tools / ADB 35.0.2, and the Medium_Phone_API_35 AVD (Android 15/API 35, build AE3A.240806.005, x86_64, 1080x2400 at 420 dpi; emulator 36.6.11). ANDROID_HOME was C:/Users/cnhyn/AppData/Local/Android/Sdk. No physical device was attached.
 - **Command:** set process-local ANDROID_HOME as above, then ran :app:connectedDebugAndroidTest with the RecoveryScaleBenchmarkTest class and recoveryScale=M arguments. The opt-in M case seeded deterministically with FIXTURE_SEED=1830601 and ran one warm-up plus five measured calls for each completed workload.
@@ -287,7 +287,39 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | Sparse ten-year recipe page | 4.61 ms (4.40-5.60 ms) | 12 median queries (range 12-13); 11 cursor rows; no writes | 0 median transactions observed |
 | Dense ten-year recipe page | 488.8 ms (480.2-498.7 ms) | 387 queries; 1,844 cursor rows; 1,100 DML statements; 733 affected rows | 0 transactions observed despite writes; instrumentation does not expose this transaction path |
 
-- **Interrupted work:** the full M invocation remained CPU-bound in its first v3 export warm-up for about 18 minutes without emitting a completed sample. It was stopped to continue the required stabilized-head gates. At interruption, the app process used about 130 MB PSS and /data had roughly 463 MB free; no crash or storage failure was reported. This is an interrupted measurement, not a passing export result. M export/import and 30-day window measurements and all L-tier measurements remain absent. Transaction timings are also incomplete for recipe and driver-backed paths. Do not mark 6.1 complete from the S comparison or this partial M run.
+- **Interrupted work:** the pre-index M invocation remained CPU-bound in its first v3 export warm-up for about 18 minutes without emitting a completed sample. It was stopped to continue the stabilized-head gates. At interruption, the app process used about 130 MB PSS and `/data` had roughly 463 MB free; no crash or storage failure was reported. This attempt is historical and is superseded by the completed post-index M and L runs below. It is not evidence for export performance.
+
+## 6.1 M/L follow-up stress results and export memory repair (2026-10-22)
+
+- **Runtime and method:** Windows 11 x64 build 10.0.22631, Gradle 9.5.0, JetBrains Runtime 21.0.10, Android platform tools / ADB 35.0.2, and `Medium_Phone_API_35` (Android 15/API 35, `AE3A.240806.005`, x86_64, 1080x2400 at 420 dpi; emulator 36.6.11). No physical device was attached. Both tiers used fixture seed `1830601`, one warm-up and five measured calls per workload. M ran on published implementation head `d0c9d9b6` before the L-driven export-memory changes. L ran on that head plus the bounded export-read and streaming-serialization changes, published in commit `55225fe5`.
+- **M seed:** 1,000 games, 25,000 contributions, 50 quiet games, 506,147 authorized minutes, 3,747 sessions/timed placements, 26,235 allocation rows (1,249 pending and 1,249 superseded), and 14 recipes including two completed recipes. Seed and conservation assertions passed; seed time was 6.028 s and post-seed PSS was 94,201 KB.
+
+  | M-tier workload | Median (range) | Query / row / write counts | Observed SupportSQLite transactions |
+  | --- | ---: | --- | --- |
+  | Unchanged full-library sync | 3.617 s (3.476-3.858 s) | 5,014 queries; 68,135 cursor rows; 6,001 DML; 3,001 affected rows | 1 median; 3.616 s median duration |
+  | One-game +25 increase | 33.5 ms (31.8-50.5 ms) | 33 queries; 5,843 cursor rows; 15 DML; 10 affected rows | 0 median (0-2); driver paths are not fully observed |
+  | Delayed evidence upgrade + duplicate replay | 238.3 ms (228.9-271.1 ms) | 52 queries (52-53); 37,224 cursor rows; 11 DML; 9 affected rows | 0 observed |
+  | Sparse ten-year recipe | 4.96 ms (4.32-5.45 ms) | 13 median queries (12-13); 11 cursor rows; no writes | 0 observed |
+  | Dense ten-year recipe | 503.1 ms (498.1-527.8 ms) | 387 queries; 1,844 cursor rows; 1,100 DML; 733 affected rows | 0 observed despite writes |
+  | v3 export | 2.223 s (2.177-2.300 s) | 22 queries; 75,026 cursor rows; no writes; 23,508,820 encoded bytes | 0 observed |
+  | v3 import | 285.256 s (282.972-292.723 s) | 347,108 queries; 698,071 cursor rows; 128,609 DML; 111,029 affected rows | 7,532; accumulated duration median 248.357 s (247.558-255.343 s) |
+  | History/Analytics 30-day window | 1.104 s (1.081-1.146 s) | 32 queries; 105,051 cursor rows; no writes | 0 observed |
+
+- **L seed and completion:** ran `:app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.example.backlogium.data.local.RecoveryScaleBenchmarkTest' '-Pandroid.testInstrumentationRunnerArguments.recoveryScale=L' --max-workers=1 --console=plain` with process-local `ANDROID_HOME=C:/Users/cnhyn/AppData/Local/Android/Sdk`. `BUILD SUCCESSFUL` in 7m18s; XML reports 3 tests, 0 failures, 0 errors, 2 tier skips, and one completed L case (`SCALE_DONE`). Seed checks passed for 3,000 games, 100,000 contributions, 150 quiet games, 1,256,147 authorized minutes, 14,997 sessions/timed placements, 104,985 allocation rows (4,999 pending and 4,999 superseded), and 14 recipes. Seed time was 21.555 s and post-seed PSS was 97,163 KB. Sparse completion produced one row; dense completion produced 3,653 rows / 36,530 minutes.
+
+  | L-tier workload | Median (range) | Query / row / write counts | Observed SupportSQLite transactions |
+  | --- | ---: | --- | --- |
+  | Unchanged full-library sync | 11.100 s (10.486-11.198 s) | 15,020 queries; 254,635 cursor rows; 18,001 DML; 9,001 affected rows | 1; 11.099 s median duration |
+  | One-game +25 increase | 82.7 ms (80.0-91.6 ms) | 33 queries; 21,120 cursor rows; 15 DML; 10 affected rows | 1; 81.522 ms median duration |
+  | Delayed evidence upgrade + duplicate replay | 1.091 s (1.054-1.203 s) | 53 median queries (52-53); 136,724 cursor rows; 11 DML; 9 affected rows | 4 median (3-10); accumulated duration median 1.019 s |
+  | Sparse ten-year recipe | 5.16 ms (5.10-5.56 ms) | 12 median queries (12-13); 11 cursor rows; no writes | 1; 2.905 ms median duration |
+  | Dense ten-year recipe | 534.6 ms (514.4-546.5 ms) | 387 median queries (386-387); 1,844 cursor rows; 1,100 DML; 733 affected rows | 0 median (0-2); not consistently observed |
+  | v3 export | 22.805 s (19.105-27.882 s) | 74 queries; 265,626 cursor rows; no writes; 84,675,358 encoded bytes | 0 observed |
+  | History/Analytics 30-day window | 21.304 s (20.251-22.529 s) | 56 queries; 420,051 cursor rows; no writes | 0 observed |
+
+- **Export OOM diagnosis and fix:** the first L export attempt exceeded the 201 MB app-heap limit while converting all 104,985 allocation entities. The store now reads contributions, active placements, allocations, and referenced sessions in deterministic batches of 250 app IDs, converting each batch before releasing its entities and grouping maps. Five L export samples then completed. A subsequent harness serialization attempt exposed a separate whole-document `encodeToString(...).toByteArray()` allocation; production SAF export and retained snapshots now stream JSON to their output streams, while the benchmark streams to a temporary file. The completed L run passed full `BackupValidator` preflight and emitted an 84,675,358-byte file without OOM.
+- **Restore limit:** the L file exceeds production `MAX_IMPORT_BYTES=33,554,432` (32 MiB), so the benchmark logged `IMPORT_SKIPPED,L,...,reason=production_byte_limit`; it did not test restoring an L payload. M's 23,508,820-byte payload remained below the limit and completed five full import samples. Do not claim L restore acceptance.
+- **Measurement limits and disposition:** all PSS/Java-heap values are before/after deltas, not high-water peaks. SupportSQLite does not expose every Room 2.8 driver transaction; zero observed scopes do not mean zero transactions. Task 6.1 remains unchecked until the L restore-size limitation and complete transaction-duration observability are resolved or explicitly accepted with evidence. The L export and 30-day window are complete; no schema/index change was made.
 
 ## 8.1-8.3 Fresh stabilized-head validation (2026-10-22)
 
@@ -319,7 +351,7 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | Area | Current evidence-backed disposition | Remaining work |
 | --- | --- | --- |
 | **A: authority, quantity, placement, time, and downstream progression** | Tasks 3.1-3.5, 4.4, and 5.1-5.4 are complete; the fresh full unit gate passed 2,328 tests and the controlled AVD flow passed exact 70- and 105-minute recovery, retry, quests, and streak checks. | Independent live Steam acceptance remains open in 8.5; restart used file-backed Room close/reopen rather than force-stopping the instrumentation process. |
-| **B: architecture, complexity, and performance** | F1 batching and S-tier before/after comparisons are recorded under 6.2-6.4; the M fixture passed seed/conservation checks and produced five workload summaries. | M export/import/window, L workloads, and complete transaction observability remain open under 6.1. |
+| **B: architecture, complexity, and performance** | F1 batching and S-tier before/after comparisons are recorded under 6.2-6.4; M completed export/import/window and L completed sync, reconciliation, export, and the 30-day window on the API 35 AVD. | L import was correctly skipped because its 84.7 MB file exceeds the 32 MiB production guard; driver-backed transaction scopes and peak-memory telemetry remain incomplete under 6.1. |
 | **C: persistence, migration, backup, and account boundaries** | Tasks 2.1-2.4 and 4.1-4.4 are complete; fresh API 35 migration instrumentation passed as part of the 55-test device run. | No reproduced C-area P1 remains; final delivery/CI evidence is still open under 8.6. |
 | **D: History, Analytics, uncertainty disclosures, and Personal Pace** | Tasks 7.1-7.3 are complete; all three Roborazzi classes passed 50 tests, History/Analytics instrumentation passed, and the AVD flow rendered the persisted 26-of-105-minute History disclosure and `!` leaf after database reopen. | Independent live Steam evidence remains open in 8.5. |
 | **E: regression, CI, and delivery readiness** | Full unit, broader release-compilation, lint, Roborazzi, migration/History/Analytics, and controlled recovery device gates passed on the recorded implementation/worktree content. | Remote PR checks and independent live Steam acceptance remain outstanding (8.5-8.6). |
@@ -329,9 +361,9 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | #183 acceptance condition | Evidence and disposition | Status |
 | --- | --- | --- |
 | 1. Dedicated change, checked-off tasks, and linked implementation PR(s) | The change and scoped branch exist; tasks through 8.4 are checked. No PR is associated with this branch yet. | Open |
-| 2. Data flow and findings documented; every high-risk observation fixed or proved safe | The flow map and dispositions for D1, R1-R3, R5-R7 are recorded; R4 is a separate P2 follow-on. F1's S comparison is complete, but stress-scale performance evidence in 6.1 is incomplete. | Open |
+| 2. Data flow and findings documented; every high-risk observation fixed or proved safe | The flow map and dispositions for D1, R1-R3, R5-R7 are recorded; R4 is a separate P2 follow-on. S/M/L evidence is recorded in 6.1; L restore remains beyond the production file-size guard and transaction accounting is incomplete. | Open |
 | 3. No unresolved known loss, duplicate-credit, account-isolation, backup-corruption, or reconciliation defect | Reproduced P1 defects have scoped fixes and regression evidence; no new failure appeared in the fresh gates. Critical stress/device acceptance work remains unverified, so the overall gate stays open. | Open |
 | 4. Quantity, uncertainty/provenance, and downstream behavior remain consistent with #181/#182 | Tasks 2-5, 7, and controlled injected task 8.4 are complete with no accepted-semantics change. The AVD verified exact quantities, status persistence, retry, derived progression, History disclosure, and backup restore. | Open |
 | 5. Relevant Android, CI, and device evidence passes or has a named blocker | Full local Android gates and controlled AVD recovery acceptance passed. No PR is associated with the branch, so no PR CI checks exist; independent live Steam evidence also remains outstanding. | Open |
-| 6. Complexity and performance changes are scoped and justified | S-tier before/after results and F1 batching are recorded; M is partial, L is unmeasured, and some transaction paths are not observable through the current instrumentation. | Open |
+| 6. Complexity and performance changes are scoped and justified | S-tier before/after results and M/L stress measurements are recorded; the L restore is beyond the 32 MiB production limit, and some transaction paths are not observable through the current instrumentation. | Open |
 | 7. Retained feature branch is untouched; no unrelated work is bundled | Local and remote feat/recover-missed-playtime refs both remain at 93716a0942c99848725c539467cd098a6795a539, matching the initial record. | Complete |
