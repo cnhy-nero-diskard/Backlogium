@@ -347,7 +347,7 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 - **9.1 remains open:** the evidence matrices below are updated, but there is no linked implementation PR and the performance evidence is incomplete.
 - **9.2 remains open:** do not evaluate #183 for closure while tasks 6.1, 8.6, 9.1, and 9.2 remain open. The retained branch comparison is recorded below; no operation was made against that branch.
 
-## Current A-E evidence matrix (2026-10-22)
+## Acceptance matrix at the initial post-8.5 checkpoint (2026-10-22)
 
 | Area | Current evidence-backed disposition | Remaining work |
 | --- | --- | --- |
@@ -357,7 +357,7 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | **D: History, Analytics, uncertainty disclosures, and Personal Pace** | Tasks 7.1-7.3 are complete; all three Roborazzi classes passed 50 tests, History/Analytics instrumentation passed, and both the controlled 26-of-105-minute case and live 4-of-9-minute case rendered the persisted `!` disclosure after Room reopen. | None specific to the live History disclosure; broader acceptance remains open under 8.6 and 9.x. |
 | **E: regression, CI, and delivery readiness** | Full unit, broader release-compilation, lint, Roborazzi, migration/History/Analytics, controlled recovery device gates, the 71-test focused backup suite, and live Steam 8.5 passed on their recorded source heads. | No PR or workflow runs/checks exist for the final branch head; remote CI evidence remains outstanding under 8.6. |
 
-## Current #183 completion gate
+## #183 completion gate at the initial post-8.5 checkpoint
 
 | #183 acceptance condition | Evidence and disposition | Status |
 | --- | --- | --- |
@@ -396,7 +396,7 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 - **Restore evidence and limit:** the earlier five-run M import remains the largest complete production-path restore: its 23,508,820-byte file passed the 33,554,432-byte production limit and imported successfully. A supplementary S import sample emitted one measured merge transaction (16.375 s) inside a 202.212 s parse/validate/import run; this single sample is not presented as a median. That experimental full-S rerun was stopped while its next import sample was running because the repeated import stage was unusually expensive on the AVD. The L export is 84,675,358 bytes and exceeds the production 32 MiB guard, so the real import path correctly rejects it before decoding/merge. Raising that guard to make an oversized benchmark importable would test behavior the product explicitly disallows.
 - **Memory interpretation:** the benchmark records post-seed PSS and per-call PSS/Java-heap deltas. These are the available measurements, not process high-water peaks; no peak-memory bound is claimed.
 - **Focused checks:** `:app:compileDebugKotlin :app:compileDebugAndroidTestKotlin` passed; `:app:testDebugUnitTest --tests=com.example.backlogium.domain.UnknownTimeMaterializerTest --tests=com.example.backlogium.data.repo.SessionRepositoryRecoveryProjectionTest` passed; strict OpenSpec validation and `git diff --check` passed.
-- **Disposition:** all required realistic/stress fixture sizes, seeded conservation checks, query/row/write counts, end-to-end durations, and available memory measures are recorded in the preceding S/M/L sections. The missing driver transaction timings are now directly measured at the application scopes, and the L restore omission is justified by the enforced production size limit plus successful M restore. Task 6.1 is complete; tasks 8.6, 9.1, and 9.2 remain open for remote CI/PR and final-gate work.
+- **Disposition at the measurement checkpoint:** all required realistic/stress fixture sizes, seeded conservation checks, query/row/write counts, end-to-end durations, and available memory measures are recorded in the preceding S/M/L sections. The missing driver transaction timings are now directly measured at the application scopes, and the L restore omission is justified by the enforced production size limit plus successful M restore. Task 6.1 is complete; tasks 8.6, 9.1, and 9.2 were still open pending remote CI/PR and final-gate work.
 
 ## 9.1 PR-linked final audit (2026-10-22)
 
@@ -404,9 +404,9 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 - **Fresh local gate on `65a350e9`:** `gradlew.bat test :app:compileReleaseKotlin :app:lintDebug --max-workers=1 --console=plain` passed, covering 2,330 unit tests with 0 failures/errors/skips, release Kotlin compilation, and lint. Lint reports 57 warnings; 2 errors, 33 warnings, and 3 hints are filtered by `app/lint.baseline`. `:app:compileDebugKotlin :app:compileDebugAndroidTestKotlin` passed. Focused `:app:testDebugUnitTest --tests=com.example.backlogium.domain.UnknownTimeMaterializerTest --tests=com.example.backlogium.data.repo.SessionRepositoryRecoveryProjectionTest` passed. Strict OpenSpec validation and `git diff --check` passed.
 - **Device/performance evidence:** `RecoveryScaleBenchmarkTest` passed separately for S, M and L on `Medium_Phone_API_35` with `recoveryStage=window`; each selected tier used one warm-up and five measurements. Those runs include sync, reconciliation, recipe, export and window workloads, and intentionally skip import. Five-run M production-path restore and the L size-limit exclusion are documented under 6.1. The Roborazzi suites and migration/History/Analytics device checks passed in the preceding recorded stabilized-head run; this PR changes no rendered UI source.
 - **Evidence limits and risk disposition:** D1 was fixed at full-file preflight with mutation-free restore regressions. R1-R3 and the overlapping-finalization risks have controlled schedules and explicit safety/fix dispositions; no reproduced P1 correctness defect remains. R4 remains a separately tracked P2 follow-on. The live 9-minute Steam increase used the production committer and an isolated Room database; Invisible mode was user-reported, and WorkManager scheduling, process force-stop, and the installed user's database were not independently exercised. Those limits are recorded under the acceptance matrix and do not claim a clean installed-app workflow.
-- **Current issue posture:** keep #183 open while draft PR checks are pending and before final review. The local Android gates pass; remote CI evidence is not yet green. Task 9.1 is complete because the A-E and seven-condition matrices below give explicit evidence-backed dispositions; tasks 8.6 and 9.2 remain open.
+- **Issue posture at this PR-linked checkpoint:** keep #183 open while draft PR checks are pending and before final review. The local Android gates pass; remote CI evidence is not yet green. Task 9.1 is complete because the A-E and seven-condition matrices below give explicit evidence-backed dispositions; tasks 8.6 and 9.2 remain open at this checkpoint.
 
-## Current A-E audit matrix
+## Final A-E audit matrix (2026-10-22)
 
 | Area | Evidence-backed disposition | Remaining limit |
 | --- | --- | --- |
@@ -414,9 +414,9 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | **B: architecture and performance** | F1 batching, S-tier before/after comparison, S/M/L scale counts, transaction timings, M restore, exports, and 30-day windows are recorded in 6.1-6.4. | L restore is intentionally prohibited by the 32 MiB production import guard. PSS/heap deltas are recorded; process high-water memory is unavailable. |
 | **C: persistence, migration, backup, and account** | D1 and adjacent recovery validation, migration chain, replay/merge, account reset, rollback, and identity tests pass in the recorded full/focused gates. | No reproduced P1 persistence or account-isolation defect remains. |
 | **D: UI, disclosure, and Personal Pace** | History/Analytics estimates and `!` disclosure are covered by unit/instrumentation tests; Roborazzi and accessibility checks passed on the recorded stabilized head. | No rendered UI source changed in PR #184. |
-| **E: regression and delivery** | Current-head unit tests, release compilation, lint, strict OpenSpec, focused recovery suites, and S/M/L device runs passed locally. | PR #184's remote Android, screenshot, and release-note checks were pending; task 8.6 stays open until final-head checks are green or a blocker is tracked. |
+| **E: regression and delivery** | Local full gates passed; PR #184 checks are green on implementation head `12dbce60` after CI rerun attempt 2, including Android unit tests and release compilation. Instrumentation, lint, screenshots, typecheck, release-note, tooling, and baseline checks also passed. | CI attempt 1 had two Robolectric DataStore teardown failures; both targeted tests passed locally and the full Android unit job passed on retry. Record this as a transient test-environment race. |
 
-## Current #183 completion gate
+## Final #183 completion gate (2026-10-22)
 
 | #183 acceptance condition | Evidence and disposition | Status |
 | --- | --- | --- |
@@ -424,6 +424,13 @@ This matrix describes available evidence and explicit gaps; none of the entries 
 | 2. Data flow and high-risk findings documented or proved safe | The responsibility/transaction map and D1/R1-R3/R4/R5-R7 dispositions are recorded; R4 is a separate P2 follow-on. | Complete |
 | 3. No unresolved known loss, duplicate-credit, account, backup, or reconciliation defect | Reproduced P1 defects have scoped fixes and regressions; no new P1 failure appeared in the full, focused, device, or scale gates. | Complete |
 | 4. Quantity, uncertainty/provenance, and downstream behavior match accepted semantics | Tasks 2-5 and 7 plus the live Steam recovery preserve existing quantity/date policy, provenance, progression, and disclosures. | Complete |
-| 5. Android, CI, and device evidence passes or has a named blocker | Local full/focused gates pass and device limits are explicit; PR #184 remote checks are pending. | Open |
+| 5. Android, CI, and device evidence passes or has a named blocker | Local full/focused gates, API 35 instrumentation, and all PR #184 checks passed on implementation head `12dbce60` after rerun attempt 2. Live Steam acceptance limits remain explicit under 8.5. | Complete |
 | 6. Complexity and performance changes are scoped and justified | Before/after S and S/M/L stress evidence, explicit transaction durations, M restore, and the justified L import exclusion are recorded. | Complete |
 | 7. Retained branch remains untouched and no unrelated work is bundled | Local/remote `feat/recover-missed-playtime` refs remain at `93716a0942c99848725c539467cd098a6795a539`; the final diff is scoped to recovery hardening. | Complete |
+
+## 9.2 Final published-head review and issue disposition (2026-10-22)
+
+- **Published implementation head:** before this final audit-only update, `12dbce60ae814a2a64937d7e522f227f899764c5` matched local `HEAD` and its configured upstream, and the worktree was clean. The 49-path diff from `origin/master` contained only recovery hardening code/tests and this OpenSpec change. `origin/master` remained `96af1b72`. The retained local and remote `feat/recover-missed-playtime` refs still match the initial recorded tip `93716a0942c99848725c539467cd098a6795a539`.
+- **Remote verification:** PR #184's CI run [39780682608](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/39780682608) passed on rerun attempt 2: Android unit tests and release Kotlin compilation, instrumented tests, lint, Compose screenshot verification, Cloud Functions typecheck, release-note checks/tooling, and Roborazzi baseline currency. The Android unit job took 5m55s. Its first attempt reported two Robolectric failures involving a missing test-scoped `settings.preferences_pb` file while app-startup background work was still running; both exact tests passed in a focused local rerun on `12dbce60`, and no product change was needed. The full local gate on code/test checkpoint `65a350e9` (followed only by audit/documentation commits) passed 2,330 tests, release compilation, and lint. Strict OpenSpec validation and `git diff --check` passed after the final audit update.
+- **Issue disposition:** all seven #183 acceptance conditions have evidence-backed dispositions, and no reproduced P1 recovery defect remains. Keep issue #183 open until draft PR #184 is reviewed and merged; this branch task records the closure decision but does not close an issue for an unmerged draft.
+- **Task disposition:** tasks 8.6 and 9.2 are complete. The remaining release action is review and merge of draft PR #184; do not archive this OpenSpec change automatically.
