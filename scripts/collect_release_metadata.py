@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -62,15 +64,23 @@ def _is_ancestor(candidate_sha: str, current_sha: str) -> bool:
 
 
 def _github_api(repository: str, path: str) -> Any:
-    return json.loads(
-        _run([
-            "gh",
-            "api",
-            "--header",
-            "Accept: application/vnd.github+json",
-            f"repos/{repository}/{path}",
-        ])
-    )
+    command = [
+        "gh",
+        "api",
+        "--header",
+        "Accept: application/vnd.github+json",
+        f"repos/{repository}/{path}",
+    ]
+    for attempt in range(3):
+        try:
+            return json.loads(_run(command))
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or "").strip()
+            transient = re.search(r"HTTP (?:429|500|502|503|504)\b", detail)
+            if not transient or attempt == 2:
+                raise RuntimeError(f"GitHub API request {path} failed: {detail or error}") from error
+            print(f"Retrying GitHub API request {path}: {detail}", file=sys.stderr)
+            time.sleep(2 ** attempt)
 
 
 def collect_pull_requests(repository: str, current_tag: str, previous_tag: str) -> list[dict[str, Any]]:
@@ -134,6 +144,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         raise SystemExit(1)
