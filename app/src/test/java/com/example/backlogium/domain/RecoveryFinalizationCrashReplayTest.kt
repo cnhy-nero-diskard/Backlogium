@@ -1,5 +1,7 @@
 package com.example.backlogium.domain
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -43,6 +45,25 @@ import org.robolectric.RuntimeEnvironment
 /** File-backed Room + Preferences DataStore crash/restart evidence for task 5.3. */
 @RunWith(RobolectricTestRunner::class)
 class RecoveryFinalizationCrashReplayTest {
+
+    @Test
+    fun independentCrashFixturesKeepSeparateDurableMarks() = runBlocking {
+        val first = Fixture.open()
+        try {
+            first.seedInitialState()
+            first.seedHistoricalContext()
+            val expected = first.marksStore.read()
+            val second = Fixture.open()
+            try {
+                assertEquals(expected, first.marksStore.read())
+                assertTrue(second.marksStore.read().pendingQuestDates.isEmpty())
+            } finally {
+                second.closeAndDelete()
+            }
+        } finally {
+            first.closeAndDelete()
+        }
+    }
 
     @Test
     fun resumeAfterDateAndZoneChangeUsesCapturedDateAndKeepsHistoricalCorrectionSilent() = runBlocking {
@@ -513,7 +534,13 @@ class RecoveryFinalizationCrashReplayTest {
             suspend fun open(): Fixture {
                 val app = RuntimeEnvironment.getApplication()
                 val databaseName = "fr${System.nanoTime()}.db"
-                val settings = SettingsDataStore(app)
+                // Room is unique per fixture; its separately persisted marks must be too.
+                // Retain this context across reopen() so crash replay still uses the same file.
+                val settingsContext = object : ContextWrapper(app) {
+                    override fun getApplicationContext(): Context = this
+                    override fun getFilesDir() = app.filesDir.resolve(databaseName).apply { mkdirs() }
+                }
+                val settings = SettingsDataStore(settingsContext)
                 val clock = MutableTestTime()
                 settings.writeProgressMarks(initialMarks())
                 val fixture = Fixture(app, databaseName, openDatabase(app, databaseName), settings, clock)
