@@ -208,23 +208,21 @@ padding, sections rendered only if they have rows:
    an X `IconButton` that clears the selection.
 1. **Search field** (`OutlinedTextField`, first item): label "Search games", leading `Search` icon,
    trailing X `IconButton` once non-empty. Filters both lists by case-insensitive name substring.
-2. **HowLongToBeat controls:** "Refresh HLTB library" `FilledTonalButton` (becomes a spinner +
-   "Refreshing…" while running) + "Force all" `OutlinedButton`, both disabled while a refresh runs,
-   over a "Review HLTB matches ({n})" `TextButton` shown only when `{n} > 0`.
-3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) beside a
-   "Stop" `TextButton` (`PlayerStop` icon), over a determinate `LinearProgressIndicator`, then a
-   fixed-height (96dp) scrolling log, newest first, of
-   `"{game} — matched | needs review | no match | lookup failed"`. **Stop** cancels the sweep;
-   there is no separate pause because a plain "Refresh HLTB library" afterwards resumes by itself —
-   everything already fetched now falls inside the freshness window. ("Force all" restarts from
-   scratch by design.) Before the first game reports —
-   and when the sweep's target set turns out empty — it reads "Starting HowLongToBeat refresh…"
-   with an indeterminate bar rather than a stalled `0 / 0`. The log covers only the period the
-   screen has been observed: returning mid-run shows correct progress with a log resuming from that
-   point.
+2. **HowLongToBeat entry points:** long-press/select games for a targeted lookup,
+   or use a per-game lookup/review action in list and grid layouts. Library Tools
+   contains display density, Select games, Refresh uncovered HLTB data, and Force
+   refresh all HLTB data. The latter two explicitly build a selection from uncovered
+   or all loaded games; they do not schedule a background library sweep. The Match
+   Center entry is available for an actionable ambiguous or unmatched queue, even
+   when the ambiguous-review count is zero.
+3. **Selection lookup progress** (only while the explicit lookup runs): completed /
+   total count, determinate progress, Stop, and a transient newest-first outcome log.
+   Before totals are available it shows an indeterminate starting state. Stop keeps
+   already fetched results; explicitly select remaining games to continue. Progress
+   does not imply an automatically resumable freshness-based library sweep.
 4. **Section header** "Focus" (bold, titleMedium) — only if the section has rows — with that list's
    own **sort control** on the right: an `ArrowsSort` icon + the active key's name, opening a
-   `DropdownMenu` of Playtime / Name / Recently played / XP contributed (the active one check-marked).
+   `DropdownMenu` of Playtime / Name / Recently played / XP contributed / Added recently (the active one check-marked).
 5. **Focus game row** (repeated), a full-width `Card` carrying `combinedClickable`, 12dp padding,
    horizontal layout over a **faint backdrop**: the game's Steam store header art
    (`.../steam/apps/{appId}/header.jpg`, derived from the appId — nothing stored), anchored to the
@@ -257,8 +255,11 @@ padding, sections rendered only if they have rows:
    - A selected row takes a `secondary` outline and `secondaryContainer` fill. Completion is marked
      by the gold pill alone — the row-level gold outline was dropped as too loud in a long list.
 6. **Section header** "Your games" — only if the section has rows, with its own independent sort
-   control (same four keys; defaults differ: Focus defaults to Name, Your games to Playtime,
-   matching the DAO ordering they replaced). Each selection persists across visits.
+   control (same five keys; defaults differ: Focus defaults to Name, Your games to Playtime,
+   matching the DAO ordering they replaced). Key and direction persist independently
+   for each list. Added recently defaults to newest first using Backlogium's recorded
+   first observation, not Steam purchase time; unknown dates stay last. Recently
+   played uses Steam's rolling two-week activity, a separate measure.
 7. **Your games row** (repeated): identical to a Focus row, except the HLTB status label appears
    only once there is something to report.
 8. **No-matches row** (only when a filter matched nothing): `"No games match \"{query}\""` + a
