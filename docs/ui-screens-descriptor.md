@@ -1,9 +1,11 @@
 # Backlogium — Screen Descriptor
 
+Status snapshot: 2026-11-12 (`origin/master` at `ffc28ff2`).
+
 Source: `app/src/main/java/com/example/backlogium/ui/**`. Android app, Material 3 (Compose),
 using a custom "Steam-native dark" identity with dynamic (wallpaper-derived) color turned
 off, so the look is identical across devices. Bottom navigation with 5 destinations (Home /
-Library / History / Analytics / Settings), plus five pushed sub-destinations reached from
+Library / History / Analytics / Settings), plus pushed sub-destinations reached from
 them: **Onboarding + guided first-run setup** (from Settings, or as a first-run takeover
   that verifies credentials and offers an opt-in setup checklist), **Game detail** (from
 Library), **HowLongToBeat review** (from Library), **Collection** (from Home), and
@@ -437,24 +439,23 @@ import, backup/restore, and local rule configuration. Everything renders from lo
 so the screen remains usable offline; when credentials are unconfigured, the account card becomes
 the route into onboarding.
 
-**Layout:** single scrollable column, 16dp padding, section headers over cards:
+**Layout:** four summary groups open pushed detail destinations. Loading uses a
+stable summary rather than an empty surface.
 
-1. **Account** — "Steam account" card with masked API key and SteamID when configured, or a connect
-   prompt when not configured. The action opens Onboarding.
-2. **Sync** — last sync state plus a "Sync now" action, which relabels to "Sync in progress" and
-   disables while a poll (scheduled or manual) is already running, since an overlapping tap is
-   absorbed rather than starting a second poll. The same card exposes the forced
-   "Full achievement refresh" action and a muted genre-enrichment status line.
-3. **Live monitor** — toggle for foreground now-playing monitoring; disabled until Steam is
-   configured.
-4. **Daily quest** — editable quest target and Focus-game scoping.
-5. **Data** — one-time Steam history import and reset controls.
-6. **Data & Backup** — backup export/import, automatic snapshot controls, retention/interval
-   settings, and snapshot restore actions.
-7. **Advanced** — editable gamification rule constants, guarded by a confirmation dialog before
-   saving.
-8. **Diagnostics** — a pushed developer-facing surface with recent sync runs, request breakdowns,
-   and recorded presence decisions.
+1. **Account & sync** — Steam account/onboarding, guided setup, manual sync,
+   full achievement refresh, and app updates, with busy states and progress.
+2. **Gameplay** — daily quest, live monitor, Focus-related rules, hidden/shared-game
+   management, and the Match Center shortcut.
+3. **Data & privacy** — Steam history import, offline assets, shared completion data
+   and contribution export, authenticated cloud history acquisition and confirmed
+   re-filing, backup export/import, and automatic snapshots.
+4. **Advanced & diagnostics** — rule constants with confirmation and the pushed
+   diagnostics surface with sync runs, request breakdowns, and presence decisions.
+
+Cloud history acquisition exposes the selected range, bounded continuation,
+completion state, and separate confirmation before applying it. Recovery activity
+retains unknown-time or estimated-date disclosures rather than implying exact
+session boundaries.
 
 ---
 
@@ -463,16 +464,16 @@ the route into onboarding.
 **Purpose:** resolve ambiguous HowLongToBeat matches. Games whose match was uncertain after a
 refresh are listed with their candidate entries so the user can pick the right one.
 
-**Layout:** LazyColumn, 16dp padding, 12dp gaps. The Library's review entry point is shown only
-when at least one game is queued. One `Card` per game needing review: bold
-game name (titleMedium), a "Choose the correct HowLongToBeat entry:" caption, then a list of
-tappable candidate rows separated by `HorizontalDivider`. Each candidate row shows the
-cover art (or the themed placeholder), candidate name (bodyLarge), and its Completionist length
-(`"Completionist: 1h 20m"` or "No Completionist length"). Tapping a candidate resolves the match
-and drops that game from the list.
+**Layout:** Match Center tracks the selected game through queue changes and
+allows explicit candidate selection or Skip for this review session. Matching or
+skipping advances to the next unprocessed game; completion does not wrap back to
+deferred titles. Review skipped/reset actions restore access within the session.
+Selection survives configuration recreation and temporary game-detail return.
+Library list/grid lookup actions and Settings → Gameplay provide entry points.
+Skipping leaves the stored match unresolved.
 
-**Empty state:** nothing to review → centered Empty State titled "Nothing to review", body
-"Games with an ambiguous HowLongToBeat match appear here after a refresh."
+**Empty state:** distinguishes a finished review session from an empty unresolved
+queue; unresolved games remain available for a later review.
 
 ---
 
@@ -547,3 +548,21 @@ is a natural place to add an illustration if regenerating with more visual polis
 - Icons come from a single set (Tabler Icons, Compose port); there are no emoji glyphs.
 - Every screen has a "sad path": not-configured and empty-data states are first-class, not
   afterthoughts — worth designing those explicitly rather than assuming happy path only.
+
+## Discovery and recovery additions
+
+Library search includes cached wishlist title matches with wishlist labels and
+appropriate store/detail actions. Wishlist read failures remain distinct from an
+empty result. Added recently uses Backlogium's first-observed arrival date, not a
+Steam purchase date. Shared-game filters and hidden-game management keep playable
+sources and visibility explicit. Library visit context survives temporary detail
+navigation; a fresh visit starts with the default discovery state.
+
+Home prioritizes active now-playing, then actionable Focus/collection missions.
+Personal Pace and gap-plan suggestions support planning around a future title/date,
+using a reliable pace profile or an explicit one-off budget.
+
+History and Analytics include recovered activity with separate quantity and timing
+certainty. Unknown-time activity has no synthetic start/end; multi-day estimates
+retain their allocation explanation. Pending date-unknown credit remains distinct
+from dated activity, and corrective placement does not award duplicate progress.

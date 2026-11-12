@@ -39,8 +39,8 @@ actions are explicit rather than prerequisites for using the app.
 - Steam data is fetched through the Steam Web API. Local persistence uses Room
   and Preferences DataStore; background work uses WorkManager.
 - A Firebase Cloud Function independently polls Steam presence. The Android app
-  currently does not consume that cloud presence log and does not depend on it
-  to function.
+  can acquire bounded history through an authenticated reader and explicitly
+  confirm historical re-filing; the app remains usable without cloud access.
 
 ## Capabilities and Constraints
 
@@ -50,7 +50,9 @@ actions are explicit rather than prerequisites for using the app.
   achievement schemas, genres, and live presence.
 - Provides XP, levels, quests, streaks, Focus games, Steam history import, and
   rarity-weighted achievement XP.
-- Provides custom collections, derived collections, pacing and deadline views,
+- Provides wishlist and shared-game discovery, hidden-game management,
+  Personal Pace forecasts, gap-plan suggestions, and custom and smart collections,
+  pacing and deadline views,
   HLTB completion estimates, analytics, live monitoring, diagnostics, local
   backup/restore, and in-app release updates.
 - HLTB coverage comes primarily from a shared release-served dataset. Games
@@ -65,8 +67,10 @@ actions are explicit rather than prerequisites for using the app.
 - The Android client is Kotlin with Jetpack Compose, Material 3, Hilt, Room,
   DataStore, and WorkManager. The repository also contains a standalone
   gamification JVM module and Firebase Cloud Functions in Node/TypeScript.
-- The current cloud presence log has no Android or OBS consumer. An OBS overlay
-  remains a roadmap item.
+- Cloud observations provide timing evidence, while Steam cumulative minutes
+  remain the quantity authority for owned-game recovery. Unknown-time and
+  multi-day estimated activity retain their uncertainty through backup/restore.
+- An OBS overlay remains a roadmap item.
 
 ## Brand Commitments
 
