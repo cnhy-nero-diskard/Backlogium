@@ -558,10 +558,17 @@ is a natural place to add an illustration if regenerating with more visual polis
 
 ## Notes for regenerating in Claude Design
 
-- This is a **5-destination mobile app** (phone-sized canvas) with five pushed sub-screens
-  (onboarding, game detail, HLTB review, collection, diagnostics), Material 3 look — rounded cards, a bottom tab bar,
-  no top app bar currently (could be added).
-- Card-heavy, single-column, vertically stacked info — no grids, no multi-column layouts.
+- This is a **5-destination mobile app** (Home, Library, History, Analytics, Settings)
+  with Material 3 cards and bottom navigation. Additional routes include onboarding,
+  setup, game detail, Match Center, collections and collection detail, smart
+  collections, gap planning, cloud activity, hidden games, diagnostics, and the
+  grouped Settings detail screens. Follow `BacklogiumAppRoot.kt` for route wiring.
+- The shell renders `ProfileHeader` through `Scaffold(topBar = ...)`; preserve its
+  identity/presence strip and conditional background treatment described above.
+- Many screens stack cards vertically, but Library supports list, Grid, and
+  Compact Grid densities. Match Center uses an adaptive candidate grid: one
+  column on narrow viewports and additional columns as width allows. Preserve
+  these responsive layouts rather than forcing every screen into one column.
 - Analytics adds a hand-rolled Canvas bar chart and compact time-of-day bars; other progress
   indicators remain linear, with no rings or third-party chart dependency.
 - Icons come from a single set (Tabler Icons, Compose port); there are no emoji glyphs.
