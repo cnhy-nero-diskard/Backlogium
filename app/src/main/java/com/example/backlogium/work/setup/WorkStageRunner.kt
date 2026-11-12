@@ -29,6 +29,7 @@ class WorkStageRunner(
     private val trigger: suspend () -> Unit,
     private val progressOf: (Data) -> SetupStageProgress?,
     private val failureReason: String,
+    private val successOutcome: (Data) -> SetupOutcome = { SetupOutcome.Succeeded },
 ) : SetupStageRunner {
 
     override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome =
@@ -57,9 +58,10 @@ class WorkStageRunner(
                     observedId = candidate.id
                     onWorkStarted(candidate.id.toString())
                 }
-                val info = infos.firstOrNull { it.id == observedId } ?: return@mapNotNull null
-                progressOf(info.progress)?.let(onProgress)
-                terminalWhileBackingOff(info) ?: info.takeIf { it.state.isFinished }?.let(::outcomeOf)
+                val info = infos.firstOrNull { it.id == observedId }
+                    ?: return@mapNotNull SetupOutcome.Failed("The background job is no longer available. Retry this step.")
+                reportActivity(info, onProgress)
+                info.takeIf { it.state.isFinished }?.let(::outcomeOf)
             }
             .first()
     }
@@ -74,9 +76,10 @@ class WorkStageRunner(
 
         return workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
             .mapNotNull { infos ->
-                val info = infos.firstOrNull { it.id == id } ?: return@mapNotNull null
-                progressOf(info.progress)?.let(onProgress)
-                terminalWhileBackingOff(info) ?: info.takeIf { it.state.isFinished }?.let(::outcomeOf)
+                val info = infos.firstOrNull { it.id == id }
+                    ?: return@mapNotNull SetupOutcome.Failed("The background job is no longer available. Retry this step.")
+                reportActivity(info, onProgress)
+                info.takeIf { it.state.isFinished }?.let(::outcomeOf)
             }
             .first()
     }
@@ -85,29 +88,23 @@ class WorkStageRunner(
         infos.firstOrNull { it.id !in existingIds }
             ?: infos.firstOrNull { !it.state.isFinished }
 
-    /**
-     * Treat a work item that has dropped back to `ENQUEUED` with attempts behind it as terminal for
-     * *setup's* purposes.
-     *
-     * Every job setup wraps answers a transient failure with `Result.retry()`, so none of them ever
-     * reaches `FAILED` on a network error — WorkManager just backs off and tries again, potentially
-     * for a long time. Waiting for a state that will not arrive would pin a new user on the setup
-     * screen indefinitely, which is a worse first impression than the empty library setup exists to
-     * prevent.
-     *
-     * Nothing is cancelled and nothing is discarded: the retry stays queued and will run on
-     * WorkManager's own schedule. Setup simply stops waiting on it, records the stage as failed with
-     * a reason, and moves to the next one — which is what failure isolation requires anyway.
-     */
-    private fun terminalWhileBackingOff(info: WorkInfo): SetupOutcome? =
-        if (info.state == WorkInfo.State.ENQUEUED && info.runAttemptCount > 0) {
-            SetupOutcome.Failed(failureReason)
-        } else {
-            null
+    private fun reportActivity(info: WorkInfo, onProgress: (SetupStageProgress) -> Unit) {
+        if (info.state.isFinished) return
+        val activity = when {
+            info.state == WorkInfo.State.RUNNING -> SetupStageActivity.RUNNING
+            info.state == WorkInfo.State.ENQUEUED && info.runAttemptCount > 0 ->
+                SetupStageActivity.RETRY_BACKOFF
+            else -> SetupStageActivity.WAITING
         }
+        val progress = if (activity == SetupStageActivity.RUNNING) progressOf(info.progress) else null
+        onProgress((progress ?: SetupStageProgress(0, 0)).copy(
+            activity = activity,
+            attemptCount = info.runAttemptCount,
+        ))
+    }
 
     private fun outcomeOf(info: WorkInfo): SetupOutcome = when (info.state) {
-        WorkInfo.State.SUCCEEDED -> SetupOutcome.Succeeded
+        WorkInfo.State.SUCCEEDED -> successOutcome(info.outputData)
         // Cancellation is reported rather than swallowed: a user who cancelled an asset download
         // from Settings should see that stage as unfinished, not as having succeeded.
         WorkInfo.State.CANCELLED -> SetupOutcome.Failed("Cancelled before it finished")

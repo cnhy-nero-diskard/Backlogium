@@ -2,12 +2,12 @@
 
 ## 1. Concurrent-work investigation
 
-- [ ] 1.1 Extend deterministic WorkManager/setup tests for reuse of existing manual work, overlap with a running periodic poll and live monitoring, constrained waiting, and retry backoff; verify stage IDs, admitted UUIDs, states, attempts, errors, and reuse/replacement decisions in test assertions and a change-local `investigation.md`, clearly identifying any pre-fix expectations.
-- [ ] 1.2 Exercise the overlap through a fake-response instrumented scenario using the repository GPU-verified emulator launcher and explicit serial targeting; record observed transitions and whether #111 completion-times recovery remains intact in `investigation.md`, without logging credentials or claiming an unobserved cascade.
+- [x] 1.1 Extend deterministic WorkManager/setup tests for reuse of existing manual work, overlap with a running periodic poll and live monitoring, constrained waiting, and retry backoff; verify stage IDs, admitted UUIDs, states, attempts, errors, and reuse/replacement decisions in test assertions and a change-local `investigation.md`, clearly identifying any pre-fix expectations.
+- [x] 1.2 Exercise the overlap through a fake-response instrumented scenario using the repository GPU-verified emulator launcher and explicit serial targeting; record observed transitions and whether #111 completion-times recovery remains intact in `investigation.md`, without logging credentials or claiming an unobserved cascade.
 
 ## 2. Truthful stage activity and durable observation
 
-- [ ] 2.1 Add domain-facing waiting/running/retry-backoff activity snapshots and runner observation callbacks, removing synthetic terminal failure during backoff; verify `WorkStageRunnerTest` covers waiting → running → backoff → success, real failure/cancellation, live work reuse, and persisted exact-ID recovery without duplicate enqueue.
+- [x] 2.1 Add domain-facing waiting/running/retry-backoff activity snapshots and runner observation callbacks, removing synthetic terminal failure during backoff; verify `WorkStageRunnerTest` covers waiting → running → backoff → success, real failure/cancellation, live work reuse, and persisted exact-ID recovery without duplicate enqueue.
 - [ ] 2.2 Reconcile attempt-specific library results rather than equating worker SUCCEEDED with a usable library snapshot; verify tests distinguish confirmed empty-library success, private/unreadable library, stale prior error, and account-admission no-op, with actionable stage-specific reporting.
 - [ ] 2.3 Carry activity through coordinator/repository state and shared checklist/summary UI while preserving outcome codecs and stable stage IDs; verify UI derivation/render tests distinguish every state, indeterminate versus determinate progress, and eventual outcomes after a backoff/process-death recovery.
 

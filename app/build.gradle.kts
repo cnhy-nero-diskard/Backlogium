@@ -209,6 +209,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.work.testing)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     // Gap-plan navigation coverage: both entry points must resolve to one route.
