@@ -23,3 +23,11 @@ For #111, `recoversDetachedWorkAndContinuesTheRemainingStages` remains passing, 
 ## Recovery semantics
 
 Waiting and retry backoff keep observation attached to the same work. Continue leaves the setup surface without cancelling it or writing a skipped outcome. Later selected stages retain their order; a delayed first stage can delay their start, but not entry into the app. Settings shows outstanding work, and recovery resumes its exact UUID. Genuine failures advance to remaining stages independently. An edited recovery run preserves outcomes outside its explicit selection.
+
+## History import integrity
+
+The existing import operation now admits the configured account under the raw-ledger coordinator, then takes the derived-state coordinator. Canonical credited totals, frozen offsets, the one-time flag, and the existing Room `pendingImportRecompute` marker are captured transactionally. A raw interruption rolls back the whole capture. After commit, recomputation occurs outside the database transaction; a repeated call or the existing startup pending-import resolver finishes derived work without re-freezing offsets. Account resets already clear that account-owned marker. Settings reports failures recoverably instead of allowing a new readiness exception to escape its coroutine.
+
+Readiness depends on a successful snapshot for the configured account, not game count: an unreadable unsynced library is rejected, while a confirmed empty snapshot may be explicitly imported. A pending recompute is not presented as completed. Tests cover both sides of a tracked-credit update, duplicate requests, capture rollback, committed-capture interruption, wrong/pending accounts, and the existing cloud-transfer reset guard.
+
+The final device exercise passed two tests. Its second run logged work UUID `a1639706-f96f-4833-ad1d-e8dae5ebbbf3`, reused through WAITING → SUCCEEDED and exact-ID recovery. A real in-memory Room import was interrupted after capture, recovered through the shared operation, and invoked again: the historical contribution remained 120 minutes and XP was unchanged by repetition. No production database or Steam API was used.

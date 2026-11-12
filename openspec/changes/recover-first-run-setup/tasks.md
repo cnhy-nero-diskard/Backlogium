@@ -19,8 +19,8 @@
 
 ## 4. Shared import readiness and integrity
 
-- [ ] 4.1 Expose typed import readiness/completion through the profile/history repository boundary and apply the same successful-current-account-snapshot guard in onboarding and Settings; verify unit tests reject unsynced/private libraries, accept a confirmed empty library, preserve existing imported state, and keep UI free of storage imports.
-- [ ] 4.2 Harden the existing import operation's raw capture and pending-derived recovery at the appropriate transaction/account boundary, following established lock ordering; verify fault-injection tests cover interruption during capture and before/after recomputation, duplicate requests, both sync/import commit orders, monitoring overlap, account change, and unchanged no-double-credit/taper/reset behavior. Document the recovery protocol alongside the operation.
+- [x] 4.1 Expose typed import readiness/completion through the profile/history repository boundary and apply the same successful-current-account-snapshot guard in onboarding and Settings; verify unit tests reject unsynced/private libraries, accept a confirmed empty library, preserve existing imported state, and keep UI free of storage imports.
+- [x] 4.2 Harden the existing import operation's raw capture and pending-derived recovery at the appropriate transaction/account boundary, following established lock ordering; verify fault-injection tests cover interruption during capture and before/after recomputation, duplicate requests, both sync/import commit orders, monitoring overlap, account change, and unchanged no-double-credit/taper/reset behavior. Document the recovery protocol alongside the operation.
 
 ## 5. Optional history decision before Home
 

@@ -19,6 +19,11 @@ import dagger.hilt.components.SingletonComponent
 abstract class SetupModule {
 
     @Binds
+    abstract fun bindHistoryImportGateway(
+        impl: com.example.backlogium.data.repo.ProfileRepository,
+    ): com.example.backlogium.data.repo.HistoryImportGateway
+
+    @Binds
     abstract fun bindSetupStageSource(impl: SetupStageRegistry): SetupStageSource
 
     @Binds

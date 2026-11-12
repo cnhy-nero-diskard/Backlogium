@@ -242,12 +242,13 @@
     <string name="settings_history_title">Steam history</string>
     <string name="settings_history_imported">History imported</string>
     <string name="settings_history_imported_description">Past playtime already counts toward your XP.</string>
+    <string name="settings_history_operation_failed">History update did not finish: %1$s</string>
     <string name="settings_history_reset">Reset import</string>
     <string name="settings_history_unimported_description">Count your pre-install Steam playtime toward XP. One-time only.</string>
     <string name="settings_history_import">Import Steam history</string>
     <string name="settings_history_checking">Checking</string>
     <string name="settings_history_import_title">Import Steam history?</string>
-    <string name="settings_history_import_message">This counts your past Steam playtime toward XP and can only be done once. Games matched to HowLongToBeat are capped by the usual taper; unmatched games count their full playtime.</string>
+    <string name="settings_history_import_message">This counts your past Steam playtime toward XP and can only be done once. Games matched to HowLongToBeat are capped by the usual taper; unmatched games count their full playtime. Steam lifetime totals do not provide historical session timestamps, so this does not create dated sessions or daily progress.</string>
     <string name="settings_import">Import</string>
     <string name="settings_history_reset_title">Reset imported history?</string>
     <string name="settings_history_reset_message">This removes imported past playtime from your XP; your level drops back to reflect tracked playtime only. Streaks and tracked sessions are kept, and you can import again afterward.</string>

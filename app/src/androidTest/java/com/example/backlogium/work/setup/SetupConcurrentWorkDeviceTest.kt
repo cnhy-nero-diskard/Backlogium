@@ -31,6 +31,54 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SetupConcurrentWorkDeviceTest {
     @Test
+    fun interruptedHistoryImportRecoversWithoutCreditingTwice() = runBlocking {
+        withTimeout(20_000) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val db = androidx.room.Room.inMemoryDatabaseBuilder(context,
+                com.example.backlogium.data.local.BacklogiumDatabase::class.java).build()
+            try {
+                val account = "76561198000000001"
+                db.playerProfileDao().upsert(com.example.backlogium.data.local.entity.PlayerProfile(
+                    steamId = account, lastSyncAt = 1L))
+                db.gameDao().upsertAll(listOf(com.example.backlogium.data.local.entity.Game(
+                    appId = 10L, name = "Fixture game", iconUrl = "", playtimeForever = 120,
+                    playtime2Weeks = 0, lastPlaytime = 120)))
+                val updater = com.example.backlogium.domain.GamificationUpdater(
+                    db.sessionDao(), db.dailyProgressDao(), db.playerProfileDao(), db.hltbDataDao(),
+                    db.achievementDao(), db.gameDao(), db.hiddenGameDao())
+                val transaction = com.example.backlogium.data.backup.RoomDatabaseTransactionScope(db)
+                fun importer(boundary: com.example.backlogium.data.backup.DatabaseTransactionScope) =
+                    com.example.backlogium.domain.PlaytimeBackfillUseCase(
+                        db.gameDao(), db.sessionDao(), db.playerProfileDao(),
+                        com.example.backlogium.data.local.SettingsDataStore(context), updater,
+                        com.example.backlogium.domain.SystemTimeProvider(),
+                        com.example.backlogium.domain.DerivedStateWriteCoordinator(),
+                        com.example.backlogium.work.SteamSyncCoordinator(), boundary,
+                        object : com.example.backlogium.data.repo.CredentialsProvider {
+                            override suspend fun currentCredentials() = com.example.backlogium.data.repo.CredentialsState.Configured("fixture-key", account)
+                        }, com.example.backlogium.data.credentials.AccountChangeMarkerStore(context))
+                val interrupted = object : com.example.backlogium.data.backup.DatabaseTransactionScope {
+                    override suspend fun <R> run(block: suspend () -> R): R {
+                        transaction.run(block)
+                        error("fixture interruption after capture")
+                    }
+                }
+                org.junit.Assert.assertTrue(runCatching { importer(interrupted)() }.isFailure)
+                org.junit.Assert.assertTrue(db.playerProfileDao().get()!!.pendingImportRecompute)
+                assertFalse(importer(transaction)())
+                val xp = db.playerProfileDao().get()!!.totalXp
+                org.junit.Assert.assertTrue(xp > 0)
+                assertFalse(db.playerProfileDao().get()!!.pendingImportRecompute)
+                assertFalse(importer(transaction)())
+                assertEquals(xp, db.playerProfileDao().get()!!.totalXp)
+                assertEquals(120, db.gameDao().getById(10L)!!.backfillMinutes)
+                android.util.Log.i("SetupRecoveryTest", "history=interrupted-then-recovered minutes=120 repeated=unchanged")
+            } finally { db.close() }
+        }
+        Unit
+    }
+
+    @Test
     fun reuseAndRecoveryDoNotReplaceConcurrentWork() = runBlocking {
         withTimeout(20_000) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
