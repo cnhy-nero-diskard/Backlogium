@@ -35,8 +35,7 @@ import compose.icons.tablericons.Minus
  * registered later appears here, in the run order, in the progress display, and in the summary
  * without this file being touched.
  *
- * @param showRetry the Settings entry offers a per-stage re-run; the onboarding step does not, since
- *   nothing has an outcome to retry until the run it is watching has finished.
+ * @param showRetry offers per-stage recovery once the current run has settled.
  */
 @Composable
 fun SetupChecklist(
@@ -67,8 +66,9 @@ fun SetupChecklist(
         state.stages.forEach { stage ->
             StageRow(
                 stage = stage,
-                enabled = state.credentialsConfigured && !state.running,
+                enabled = state.credentialsConfigured && !state.running && (!state.finished || state.editing),
                 showRetry = showRetry && !state.running,
+                retryEnabled = state.credentialsConfigured && !state.running,
                 onToggle = onToggle,
                 onRetry = onRetry,
             )
@@ -81,6 +81,7 @@ private fun StageRow(
     stage: SetupStageUi,
     enabled: Boolean,
     showRetry: Boolean,
+    retryEnabled: Boolean,
     onToggle: (String, Boolean) -> Unit,
     onRetry: (String) -> Unit,
 ) {
@@ -129,7 +130,7 @@ private fun StageRow(
             }
 
             if (showRetry && stage.available && stage.outcome !is SetupOutcome.NeverRun) {
-                TextButton(onClick = { onRetry(stage.id) }, enabled = enabled) {
+                TextButton(onClick = { onRetry(stage.id) }, enabled = retryEnabled) {
                     Text(if (stage.outcome is SetupOutcome.Succeeded) "Run again" else "Retry")
                 }
             }
@@ -144,6 +145,7 @@ private fun StageRow(
  */
 @Composable
 private fun RunningProgress(stage: SetupStageUi) {
+    Text(text = stage.activityLabel(), style = MaterialTheme.typography.bodySmall)
     val progress = stage.progress
     if (progress != null) {
         Text(
@@ -241,7 +243,7 @@ fun SetupActions(
     ) {
         onSkip?.let {
             // Offered throughout, including while stages run: setup must never be a trap.
-            TextButton(onClick = it) { Text("Skip setup") }
+            TextButton(onClick = it) { Text(if (state.running) "Continue" else "Skip setup") }
         }
         Button(
             onClick = onStart,

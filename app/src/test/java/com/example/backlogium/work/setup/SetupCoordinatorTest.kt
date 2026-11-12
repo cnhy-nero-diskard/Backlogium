@@ -24,6 +24,36 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SetupCoordinatorTest {
 
+    @Test
+    fun duplicateStartsDoNotQueueAnotherRun() = runTest {
+        var calls = 0
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val runner = SetupStageRunner { calls++; gate.await(); SetupOutcome.Succeeded }
+        val subject = coordinator(listOf(fakeStage("sync", runner)), scope = this)
+        subject.start(setOf("sync"))
+        subject.start(setOf("sync"))
+        advanceUntilIdle()
+        subject.start(setOf("sync"))
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, calls)
+        assertTrue(subject.state.value.finished)
+    }
+
+    @Test
+    fun recoveryCannotBeReplacedByAnEarlyStart() = runTest {
+        val held = FakeStageRunner().also { it.autoComplete = false }
+        val store = FakeSetupStateStore(activeStage = ActiveSetupStage("sync", null, setOf("sync")))
+        val subject = coordinator(listOf(fakeStage("sync", held)), store, this)
+        subject.ensureLoaded()
+        subject.start(emptySet())
+        advanceUntilIdle()
+        assertTrue(subject.state.value.running)
+        assertEquals(setOf("sync"), subject.state.value.selected)
+        held.gate.complete(Unit)
+        advanceUntilIdle()
+    }
+
     private fun coordinator(
         stages: List<SetupStage>,
         store: FakeSetupStateStore = FakeSetupStateStore(),

@@ -352,16 +352,17 @@ private fun SetupStep(onDone: () -> Unit) {
         state = state,
         onToggle = viewModel::toggle,
         onRetry = viewModel::retry,
-        // Nothing has an outcome worth retrying until this run has finished, and the summary below
-        // plus the Settings entry are where a retry belongs.
-        showRetry = false,
+        showRetry = true,
     )
 
     if (state.finished || state.running) SetupSummary(state)
 
     Spacer(Modifier.height(8.dp))
     val started = state.running || state.finished
-    if (started && state.inScreenSettled) {
+    if (state.finished && !state.editing) {
+        TextButton(onClick = viewModel::editSelection) { Text("Edit selections") }
+    }
+    if (started && state.inScreenSettled && !state.editing) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),

@@ -47,7 +47,7 @@ Alternative rejected: return early from every runner when backoff starts and pro
 
 ### 4. Make recovery commands explicit and guard admission
 
-Reject duplicate start/retry commands while the run is already claimed, before suspending on the execution mutex. The claim must be set synchronously/atomically for rapid taps and respected during initial load/recovery. Never queue another full run behind the active one.
+Reject duplicate start/retry commands while the run is already claimed, before launching execution. The atomic claim replaces the queueing execution mutex, is set synchronously for rapid taps, and is respected during initial load/recovery. Never queue another full run behind the active one.
 
 Provide explicit selection-editing state after settlement; the UI must render pending selections in that state rather than projecting the finished run's selection forever. Recovery preselects only unresolved/failed choices, not successes. Retry targets one failed stage; an edited restart preserves unrelated outcomes, including successes and skips. The original initial decision can still record unselected stages as skipped. Settings retains deliberate explicit reruns of successful work.
 

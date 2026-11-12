@@ -12,10 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Everything a setup surface needs to render, derived from the registry plus stored state.
@@ -72,8 +71,8 @@ class SetupCoordinator @Inject constructor(
      */
     override val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
 
-    /** Serializes runs so two surfaces cannot drive the loop at the same time. */
-    private val runLock = Mutex()
+    /** Claim before launch so duplicate taps cannot queue a second run behind this one. */
+    private val runClaimed = AtomicBoolean(false)
     private var loadJob: Job? = null
 
     /**
@@ -132,8 +131,9 @@ class SetupCoordinator @Inject constructor(
      * the rest skipped there would erase the outcomes the Settings list exists to show.
      */
     fun start(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean = true) {
+        if (loadJob?.isActive == true || !runClaimed.compareAndSet(false, true)) return
         scope.launch {
-            runLock.withLock {
+            try {
                 val stages = source.stages
                 // An unavailable stage cannot be selected in any surface, but a stale selection
                 // handed in from a recreated one must not slip past that.
@@ -185,6 +185,8 @@ class SetupCoordinator @Inject constructor(
 
                 toRun.forEach { stage -> runStage(stage, remaining = toRun) }
                 completeRun()
+            } finally {
+                runClaimed.set(false)
             }
         }
     }
@@ -214,7 +216,8 @@ class SetupCoordinator @Inject constructor(
         active: ActiveSetupStage,
         selectedStages: List<SetupStage>,
     ) {
-        runLock.withLock {
+        if (!runClaimed.compareAndSet(false, true)) return
+        try {
             val activeIndex = selectedStages.indexOfFirst { it.id == active.stageId }
             if (activeIndex < 0) {
                 store.clearActiveStage()
@@ -246,6 +249,8 @@ class SetupCoordinator @Inject constructor(
                 }
             }
             completeRun()
+        } finally {
+            runClaimed.set(false)
         }
     }
 

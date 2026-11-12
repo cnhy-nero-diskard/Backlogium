@@ -8,13 +8,13 @@
 ## 2. Truthful stage activity and durable observation
 
 - [x] 2.1 Add domain-facing waiting/running/retry-backoff activity snapshots and runner observation callbacks, removing synthetic terminal failure during backoff; verify `WorkStageRunnerTest` covers waiting → running → backoff → success, real failure/cancellation, live work reuse, and persisted exact-ID recovery without duplicate enqueue.
-- [ ] 2.2 Reconcile attempt-specific library results rather than equating worker SUCCEEDED with a usable library snapshot; verify tests distinguish confirmed empty-library success, private/unreadable library, stale prior error, and account-admission no-op, with actionable stage-specific reporting.
-- [ ] 2.3 Carry activity through coordinator/repository state and shared checklist/summary UI while preserving outcome codecs and stable stage IDs; verify UI derivation/render tests distinguish every state, indeterminate versus determinate progress, and eventual outcomes after a backoff/process-death recovery.
+- [x] 2.2 Reconcile attempt-specific library results rather than equating worker SUCCEEDED with a usable library snapshot; verify tests distinguish confirmed empty-library success, private/unreadable library, stale prior error, and account-admission no-op, with actionable stage-specific reporting.
+- [x] 2.3 Carry activity through coordinator/repository state and shared checklist/summary UI while preserving outcome codecs and stable stage IDs; verify UI derivation/render tests distinguish every state, indeterminate versus determinate progress, and eventual outcomes after a backoff/process-death recovery.
 
 ## 3. Onboarding retry, edited restart, and continue
 
-- [ ] 3.1 Add atomic run admission that rejects rapid duplicate start/retry requests before they can wait on the run mutex; verify coordinator tests cover double taps, two surfaces, initial-load/recovery races, and no queued second run.
-- [ ] 3.2 Add explicit post-settlement selection editing and failed-stage Retry on onboarding, preserving unrelated outcomes and excluding successes from automatic recovery selection; verify ViewModel/Compose tests exercise failure → retry and failure → edit → restart without duplicate successful work or skip-overwrites.
+- [x] 3.1 Add atomic run admission that rejects rapid duplicate start/retry requests before they can wait on the run mutex; verify coordinator tests cover double taps, two surfaces, initial-load/recovery races, and no queued second run.
+- [x] 3.2 Add explicit post-settlement selection editing and failed-stage Retry on onboarding, preserving unrelated outcomes and excluding successes from automatic recovery selection; verify ViewModel/Compose tests exercise failure → retry and failure → edit → restart without duplicate successful work or skip-overwrites.
 - [ ] 3.3 Keep Continue/exit available during waiting, running, and backoff without cancelling or relabelling active work, and expose that outstanding work on Settings re-entry; verify recreation/process-death tests retain UUID/selection/outcomes and do not reopen dismissed onboarding. Update shared setup copy and recovery documentation with these changes.
 
 ## 4. Shared import readiness and integrity
