@@ -318,6 +318,12 @@ device or emulator. Instrumentation tests and hardware-dependent sync checks nee
 a connected Android device/emulator; a passing local unit/compile run does not
 replace those checks.
 
+On macOS, use `./gradlew` in place of `.\gradlew.bat`, and `npm` in place of
+`npm.cmd`. For headless local emulator tests, use the
+[GPU-verified emulator launcher](docs/test-emulator.md); it also provides a
+Windows PowerShell entry point. Local emulators must use the host GPU, and test
+commands must target the reported emulator serial.
+
 ## Remaining roadmap
 
 The offline-first Android app is the current product. It tracks real Steam

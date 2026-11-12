@@ -5,6 +5,9 @@ rarity, completion estimates, quests, and streaks as one local progression syste
 
 `README.md` describes *what the project is*. This file covers *how to work in it*.
 
+Read [AGENTS.md](AGENTS.md) before starting local Android emulators or running
+instrumented tests. It defines the GPU-verified launcher and explicit device targeting.
+
 ## Source of truth for behaviour
 
 **`openspec/specs/` is normative, not the code.** One spec per capability lives
