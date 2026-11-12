@@ -30,4 +30,14 @@ The existing import operation now admits the configured account under the raw-le
 
 Readiness depends on a successful snapshot for the configured account, not game count: an unreadable unsynced library is rejected, while a confirmed empty snapshot may be explicitly imported. A pending recompute is not presented as completed. Tests cover both sides of a tracked-credit update, duplicate requests, capture rollback, committed-capture interruption, wrong/pending accounts, and the existing cloud-transfer reset guard.
 
-The final device exercise passed two tests. Its second run logged work UUID `a1639706-f96f-4833-ad1d-e8dae5ebbbf3`, reused through WAITING → SUCCEEDED and exact-ID recovery. A real in-memory Room import was interrupted after capture, recovered through the shared operation, and invoked again: the historical contribution remained 120 minutes and XP was unchanged by repetition. No production database or Steam API was used.
+The final device exercise passed two tests. Its second run logged work UUID `a1639706-f96f-4833-ad1d-e8dae5ebbbf3`, reused through WAITING → SUCCEEDED and exact-ID recovery. A real in-memory Room import was interrupted after capture, recovered through the shared operation, and invoked again: the historical contribution remained 120 minutes and XP was unchanged by repetition. The exercises themselves use an in-memory database and fake workers; they do not call Steam.
+
+## First-run decision and visual coverage
+
+An explicit first-run phase now survives setup completion independently of the outstanding worker marker. Completing setup advances to HISTORY; Import or Skip releases the takeover. Legacy active setup claims resume SETUP, while absence of a claim does not enroll configured users. The app resumes outstanding setup observation on startup even when the takeover was previously dismissed. Tests recreate stores/ViewModels to exercise the durable handoff and assert that a later background completion cannot undo Skip; these are restart simulations, not an OS force-stop claim.
+
+The new isolated screenshot fixtures cover seven recovery/history-choice states in both themes and both viewports (28 baselines). They assert that Skip remains visible/enabled, a missing snapshot disables Import, and edited recovery enables the selected-steps action. Recording each state in its own composition avoids stale recomposition/animation frames. Existing main-screen baseline re-recording showed unrelated pixel differences; those generated changes were restored rather than silently refreshing unrelated screens.
+
+Full unit/build/lint command passed: 2,338 app tests and 53 gamification tests, zero failures/skips, debug APK assembled, and debug lint passed with 59 existing warnings and baseline-filtered findings. Python repository checks: 48 passed. Visual verification is recorded separately after its non-recording run.
+
+Non-recording verification of the 28 new setup/history-choice baselines passed. CI and the baseline-currency classifier now include this fixture suite; local emulator/CI GPU options were not changed.

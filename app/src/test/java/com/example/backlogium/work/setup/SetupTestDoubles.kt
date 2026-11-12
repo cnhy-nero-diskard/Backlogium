@@ -15,6 +15,11 @@ class FakeSetupStateStore(
 
     private val completedState = MutableStateFlow(false)
     private val firstRunActiveState = MutableStateFlow(false)
+    private val phase = MutableStateFlow<FirstRunPhase?>(null)
+    override val firstRunPhaseFlow: Flow<FirstRunPhase?> = phase
+    override suspend fun advanceToHistory() {
+        if (phase.value == FirstRunPhase.SETUP) phase.value = FirstRunPhase.HISTORY
+    }
 
     val outcomes: Map<String, SetupOutcome> get() = initialOutcomes
     val optIns: Map<String, Boolean> get() = initialOptIns
@@ -68,6 +73,7 @@ class FakeSetupStateStore(
 
     override suspend fun setFirstRunSetupActive(active: Boolean) {
         firstRunActiveState.value = active
+        phase.value = if (active) FirstRunPhase.SETUP else null
     }
 }
 

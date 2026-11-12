@@ -81,10 +81,10 @@ fun OnboardingScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = if (state.step == OnboardingStep.SETUP) {
-                "Set up your library"
-            } else {
-                "Connect your Steam account"
+            text = when (state.step) {
+                OnboardingStep.SETUP -> "Set up your library"
+                OnboardingStep.HISTORY -> "Bring your past playtime"
+                else -> "Connect your Steam account"
             },
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
@@ -105,6 +105,7 @@ fun OnboardingScreen(
             // final action, using that step's existing inline treatment.
             OnboardingStep.STEAM_ID, OnboardingStep.VERIFY -> SteamIdStep(state, viewModel)
             OnboardingStep.SETUP -> SetupStep(onDone = viewModel::onSetupDone)
+            OnboardingStep.HISTORY -> HistoryImportStep(onDone = onCompleted)
         }
     }
 

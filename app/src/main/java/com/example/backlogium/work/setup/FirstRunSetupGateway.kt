@@ -1,6 +1,9 @@
 package com.example.backlogium.work.setup
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+enum class FirstRunPhase { SETUP, HISTORY }
 
 /**
  * Narrow view of [SetupCoordinator] for the onboarding flow: the durable first-run takeover the
@@ -9,8 +12,12 @@ import kotlinx.coroutines.flow.Flow
  */
 interface FirstRunSetupGateway {
     val firstRunSetupActive: Flow<Boolean>
+    val firstRunPhase: Flow<FirstRunPhase?>
+        get() = firstRunSetupActive.map { if (it) FirstRunPhase.SETUP else null }
 
     suspend fun claimFirstRunSetup()
 
     suspend fun releaseFirstRunSetup()
+
+    suspend fun advanceToHistory() = releaseFirstRunSetup()
 }

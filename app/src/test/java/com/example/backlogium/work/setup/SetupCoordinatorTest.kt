@@ -409,11 +409,13 @@ class SetupCoordinatorTest {
             subject.claimFirstRunSetup()
             assertTrue(subject.firstRunSetupActive.first())
 
-            // A completed run owes the user nothing further. Holding the claim past this point
-            // would reopen the checklist on the next cold launch with no run in flight, where the
-            // only exit is "Skip setup" — overwriting the outcomes that just succeeded.
+            // Setup completion advances durably to the optional history decision, not another
+            // checklist. That decision keeps the first-run claim until explicitly dismissed.
             subject.start(setOf("a"))
             advanceUntilIdle()
+            assertTrue(subject.firstRunSetupActive.first())
+            assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+            subject.releaseFirstRunSetup()
             assertFalse(subject.firstRunSetupActive.first())
         }
 

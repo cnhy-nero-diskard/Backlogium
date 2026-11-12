@@ -70,6 +70,8 @@ class SetupCoordinator @Inject constructor(
      * are already stored and nothing else distinguishes that install from a long-configured one.
      */
     override val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
+    override val firstRunPhase: Flow<FirstRunPhase?> = store.firstRunPhaseFlow
+    override suspend fun advanceToHistory() = store.advanceToHistory()
 
     /** Claim before launch so duplicate taps cannot queue a second run behind this one. */
     private val runClaimed = AtomicBoolean(false)
@@ -201,11 +203,7 @@ class SetupCoordinator @Inject constructor(
      */
     override suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
 
-    /**
-     * Release the takeover when the user leaves the first-run setup surface. Idempotent, and
-     * ordinarily redundant: a completed run has already released it. It is what covers leaving
-     * mid-run — "Skip setup" while stages are still going — where no completion is coming soon.
-     */
+    /** Resolve the first-run takeover after Import/Skip without cancelling outstanding setup work. */
     override suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
 
     /**
@@ -342,13 +340,10 @@ class SetupCoordinator @Inject constructor(
     }
 
     private suspend fun completeRun() {
-        // Released here and not only when the surface is dismissed. A run that has reached its
-        // summary owes the user nothing further, and keeping the claim past that point made the
-        // resumed surface actively harmful: a cold launch after a completed run reopened the
-        // checklist with no run in flight, so the only exit offered was "Skip setup" — which
-        // records every stage skipped and would have overwritten the outcomes that had just
-        // succeeded. Death *during* a run, which is what the claim exists for, still keeps it.
-        store.setFirstRunSetupActive(false)
+        // A completed setup owes only the optional history decision, not another checklist. Keep
+        // that decision durable even if the process ends before the user taps Continue. This is
+        // a no-op for a Settings run or when the first-run flow has already been dismissed.
+        store.advanceToHistory()
         store.clearActiveStage()
         store.markCompleted()
         _state.update {

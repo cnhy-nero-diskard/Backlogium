@@ -113,8 +113,11 @@ class SetupViewModel @Inject constructor(
     }
 
     /** Re-run one stage, replacing that stage's recorded outcome and no other's. */
-    fun retry(stageId: String) =
+    fun retry(stageId: String) {
+        if (coordinator.state.value.running) return
+        editing.value = false
         coordinator.start(selectedIds = setOf(stageId), recordUnselectedAsSkipped = false)
+    }
 
     /** Decline setup entirely: nothing runs and every stage is recorded as skipped. */
     fun skip() = coordinator.skipAll()

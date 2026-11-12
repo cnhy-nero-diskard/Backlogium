@@ -15,7 +15,7 @@
 
 - [x] 3.1 Add atomic run admission that rejects rapid duplicate start/retry requests before they can wait on the run mutex; verify coordinator tests cover double taps, two surfaces, initial-load/recovery races, and no queued second run.
 - [x] 3.2 Add explicit post-settlement selection editing and failed-stage Retry on onboarding, preserving unrelated outcomes and excluding successes from automatic recovery selection; verify ViewModel/Compose tests exercise failure → retry and failure → edit → restart without duplicate successful work or skip-overwrites.
-- [ ] 3.3 Keep Continue/exit available during waiting, running, and backoff without cancelling or relabelling active work, and expose that outstanding work on Settings re-entry; verify recreation/process-death tests retain UUID/selection/outcomes and do not reopen dismissed onboarding. Update shared setup copy and recovery documentation with these changes.
+- [x] 3.3 Keep Continue/exit available during waiting, running, and backoff without cancelling or relabelling active work, and expose that outstanding work on Settings re-entry; verify recreation/process-death tests retain UUID/selection/outcomes and do not reopen dismissed onboarding. Update shared setup copy and recovery documentation with these changes.
 
 ## 4. Shared import readiness and integrity
 
@@ -24,14 +24,14 @@
 
 ## 5. Optional history decision before Home
 
-- [ ] 5.1 Persist a first-run phase/decision independent of background setup completion and wire credential save, setup continuation/skip, and app takeover routing to it; verify tests cover process death after setup completion, active-legacy-claim migration, no migration takeover for configured users, already-imported state, durable Skip, and later credential editing.
-- [ ] 5.2 Add the default-off history decision using the existing import repository operation, explicit Import/Skip, prerequisite explanation, lifetime-total timestamp disclosure, and Retry/Skip on error; verify onboarding tests cover all setup exit paths before Home, no implicit import, success, failure/retry, unavailable baseline, and later Settings availability. Update relevant onboarding/help copy.
-- [ ] 5.3 Add bounded screenshot coverage for setup waiting/backoff/failure/recovery and history-choice ready/not-ready/error states, using incumbent visual patterns; inspect narrow/standard and light/dark evidence for action visibility, long-copy wrapping, and accessible non-color state distinctions. Re-record affected tracked goldens in the same checkpoint as fixture-rendered UI changes, and verify the screenshots pass.
+- [x] 5.1 Persist a first-run phase/decision independent of background setup completion and wire credential save, setup continuation/skip, and app takeover routing to it; verify tests cover process death after setup completion, active-legacy-claim migration, no migration takeover for configured users, already-imported state, durable Skip, and later credential editing.
+- [x] 5.2 Add the default-off history decision using the existing import repository operation, explicit Import/Skip, prerequisite explanation, lifetime-total timestamp disclosure, and Retry/Skip on error; verify onboarding tests cover all setup exit paths before Home, no implicit import, success, failure/retry, unavailable baseline, and later Settings availability. Update relevant onboarding/help copy.
+- [x] 5.3 Add bounded screenshot coverage for setup waiting/backoff/failure/recovery and history-choice ready/not-ready/error states, using incumbent visual patterns; inspect narrow/standard and light/dark evidence for action visibility, long-copy wrapping, and accessible non-color state distinctions. Re-record affected tracked goldens in the same checkpoint as fixture-rendered UI changes, and verify the screenshots pass.
 
 ## 6. Cross-flow verification
 
 - [ ] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug` plus the documented Roborazzi verification and visual-baseline currency check; verify all required checks pass and record exact outcomes and any pre-existing failures separately.
-- [ ] 6.2 Re-run the targeted concurrent sync/live-monitoring setup scenario and interrupted/continued onboarding paths, including detached completion times and repeated history import; verify #158 acceptance criteria against recorded stage/work transitions, preserved successes, durable Continue/Skip behavior, and unchanged credited quantities, updating `investigation.md` with final evidence.
+- [x] 6.2 Re-run the targeted concurrent sync/live-monitoring setup scenario and interrupted/continued onboarding paths, including detached completion times and repeated history import; verify #158 acceptance criteria against recorded stage/work transitions, preserved successes, durable Continue/Skip behavior, and unchanged credited quantities, updating `investigation.md` with final evidence.
 
 ## Workflow follow-up
 
