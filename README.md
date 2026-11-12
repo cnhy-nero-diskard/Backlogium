@@ -28,8 +28,10 @@ This is an implementation snapshot, not a claim that every device-specific check
 has been completed. Active OpenSpec proposals are separate from shipped capabilities.
 
 HowLongToBeat completion data now arrives primarily through a shared, release-served dataset.
-Library-wide scraping is gone: uncovered games can be looked up deliberately one at a time, and
-resolved matches can be exported as privacy-disclosed contributions to grow shared coverage.
+Automatic/background library-wide scraping is gone. Lookups are user-triggered:
+per game, for a selected batch, or through Library Tools → Refresh uncovered HLTB
+data / Force refresh all HLTB data. Resolved matches can be exported as
+privacy-disclosed contributions to grow shared coverage.
 
 | Area | Current state |
 |---|---|
@@ -129,8 +131,8 @@ Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
 ```
 
 The core app loop runs on-device: it pulls from the Steam Web API, applies a shared HowLongToBeat
-dataset, stores data locally, and computes XP locally. Direct HowLongToBeat requests happen only
-for a game the user explicitly names. The optional historical presence action uses the authenticated
+dataset, stores data locally, and computes XP locally. Direct HowLongToBeat requests run only
+through explicit user actions, including single-game and bulk selections. The optional historical presence action uses the authenticated
 reader; the rest of the app remains usable without it.
 
 The Cloud Function is a separate, independent writer and reader. The writer records
@@ -295,7 +297,8 @@ Your Steam profile and game details must be public for playtime to be visible.
 Completion times primarily come from a small shared dataset published independently of app
 releases. It is optional, stored locally, and can be downloaded during guided setup or checked from
 Settings. A game outside the dataset remains visibly “not covered” until the user deliberately
-looks up that game; there is no library-wide background lookup.
+looks up that game individually or includes it in an explicit batch through Library Tools;
+there is no library-wide background lookup.
 
 Settings can export resolved matches as `backlogium-hltb-contribution.json`. Before writing it,
 the app discloses that publishing the contribution reveals which included Steam app ids the user
