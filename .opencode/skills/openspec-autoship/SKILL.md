@@ -8,7 +8,7 @@ license: MIT
 compatibility: Requires openspec CLI and Git.
 metadata:
   author: auto-commit-agent
-  version: "1.1"
+  version: "1.2"
 ---
 
 # OpenSpec Autoship
@@ -142,17 +142,21 @@ After each completed task (or tightly-coupled task group), run the commit-push
 sequence. This replaces `auto-commit-agent`'s "ask when in doubt" with
 "proceed when the gate passes".
 
-When this skill runs in OpenCode, delegate the commit and push operations to
-the `shipper` subagent after the parent has staged and verified the checkpoint.
+When this skill runs in OpenCode and the `shipper` subagent is available,
+delegate the commit and push operations after the parent has staged and verified the checkpoint.
 Pass the requested mode (`commit-only`, `commit-and-push`, or `push-only`),
 current branch, upstream state, and the `$openspec-autoship` authorization
 context. For commit modes, also pass the exact staged path allowlist and exact
 commit message. The parent owns implementation, task checkboxes, checks,
 staging, and scope review; the shipper only verifies staged checkpoints,
 commits them, and pushes when requested. Wait for the shipper's commit hash
-and push result before continuing. If `shipper` is unavailable, or stops
-because its checks fail, report the blocker instead of bypassing its boundary.
-The parent handles push rejections under step 5.
+and push result before continuing. The shipper is optional: when it is not
+installed or exposed by the session, announce direct mode and perform the same
+verified commit and push sequence with Git yourself. Missing shipper alone is
+not a blocker. This fallback does not waive any safety gate, check, path
+allowlist, or platform permission. If a shipper that was invoked refuses the
+checkpoint or its checks fail, report the blocker rather than retrying directly.
+The parent handles push rejections under step 5 in either mode.
 
 ### 1. Stage explicit paths only
 
@@ -177,8 +181,9 @@ git diff --cached --stat
 
 ### 3. Commit
 
-In OpenCode, ask `shipper` to commit the already staged files using the exact
-message and path allowlist. The parent must not run `git commit` directly.
+With an available shipper, ask it to commit the already staged files using the
+exact message and path allowlist. In direct mode, recheck the staged paths
+against that allowlist, then run `git commit -m "<exact-message>"` yourself.
 
 Conventional, lowercase imperative. Derive the type from the task:
 
@@ -193,21 +198,21 @@ Scope is optional: `feat(orchestrator): add reaction ingestion`.
 
 ### 4. Push immediately
 
-For OpenCode, tell `shipper` whether to push to the configured upstream or set
-`origin` as upstream for the supplied current branch. The parent must not run
-`git push` directly.
+With an available shipper, tell it whether to push to the configured upstream or
+set `origin` as upstream for the supplied current branch. In direct mode, run
+`git push` for an existing upstream, or `git push -u origin <branch>` otherwise.
 
-With `--no-push`, ask `shipper` for `commit-only`. With `--dry-run`, do not call
-`shipper`; skip both commit and push and report intent.
+With `--no-push`, use `commit-only` or commit directly without pushing. With
+`--dry-run`, do not call `shipper` or run commit/push; report intent only.
 
 ### 5. Push rejection handling
 
-If `shipper` reports that `git push` was rejected because the remote is ahead:
+If `git push` is rejected because the remote is ahead, in either mode:
 
 1. Run `git pull --no-rebase` (merge, never rebase — history must not be rewritten).
-2. If the merge auto-resolves cleanly: re-run any affected checks, commit the
-   merge, stage and verify the merge checkpoint, then delegate its commit and
-   push to `shipper` again. Continue autonomously.
+2. If the merge auto-resolves cleanly: re-run any affected checks,
+   stage and verify the merge checkpoint, then commit and push through the
+   selected mode. Continue autonomously.
 3. If conflicts require judgment: hard blocker — report exactly which files
    conflict and stop. **Never** `git push --force` or `--force-with-lease`.
 
@@ -218,8 +223,8 @@ After the last task (or when `instructions apply` reports `all_done`):
 1. Ensure the working tree contains no unstaged task work (unrelated
    pre-existing files may remain untouched).
 2. If a push is still needed and `--no-push` or `--dry-run` was not specified,
-   delegate a `push-only` request to `shipper` (a no-op if already pushed at
-   the last checkpoint).
+   delegate a `push-only` request to the available shipper or push directly
+   in direct mode (a no-op if already pushed at the last checkpoint).
 3. Report using the template below, then suggest
    `openspec-archive-change` — do **not** archive automatically; archiving is a
    separate user decision.
