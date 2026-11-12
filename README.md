@@ -13,23 +13,25 @@ user-selected range through an authenticated reader; ordinary cloud reads still
 start with only the recent 31 days. The app works without cloud presence, and an
 OBS overlay remains a roadmap item.
 
-## Status snapshot — 2026-08-31
+## Status snapshot — 2026-11-12
 
-The current branch contains the implemented offline-first Android product loop,
-including the guided first-run setup, in-app updates, offline Steam asset download,
-haptic-feedback, and diagnostics/UI refinements merged through August 21, the
-add-post-play-sync capability (August 27), and the housekeeping audit script and agent
-skill definitions (August 27), on top of the sync write-integrity hardening merged on
-August 15 (atomic poll persistence, database-serialized concurrent polls, field-scoped
-Steam/app column ownership, versioned rule-config provenance, and tombstoned achievement
-removal) and the collection UI behavior fixes (August 12) and tiered achievement-sync
-optimization (August 11) that preceded it. The source is actively maintained; it is not
-presented here as a claim that every device-only check or future cloud consumer is
-complete.
+This snapshot reflects `origin/master` at `ffc28ff2`. The offline-first Android
+product loop now includes smart collections, Personal Pace forecasts, gap-plan
+suggestions, wishlist and shared-game discovery, hidden-game management, grouped
+Settings, and authenticated cloud-history acquisition. October's missed-playtime
+recovery and subsequent hardening preserve Steam-authoritative quantities while
+labeling uncertain dates separately from timestamped sessions. Recent maintenance
+also retries transient release-metadata failures and verifies host-GPU settings
+for local Android emulators.
+
+This is an implementation snapshot, not a claim that every device-specific check
+has been completed. Active OpenSpec proposals are separate from shipped capabilities.
 
 HowLongToBeat completion data now arrives primarily through a shared, release-served dataset.
-Library-wide scraping is gone: uncovered games can be looked up deliberately one at a time, and
-resolved matches can be exported as privacy-disclosed contributions to grow shared coverage.
+Automatic/background library-wide scraping is gone. Lookups are user-triggered:
+per game, for a selected batch, or through Library Tools → Refresh uncovered HLTB
+data / Force refresh all HLTB data. Resolved matches can be exported as
+privacy-disclosed contributions to grow shared coverage.
 
 | Area | Current state |
 |---|---|
@@ -40,9 +42,11 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
 | Offline Steam assets | A manually triggered, one-time asset download (game icons / headers / hero art, profile avatar, achievement icons) stored in app-private storage with an integrity-checked manifest; it never chains off sync or any schedule. |
 | Sync write integrity | A poll's raw persistence (sessions, playtime baselines, daily progress, profile fields) commits as one atomic unit; concurrent polls re-read baselines at commit so an increase is never double-counted; the sync writes only Steam-owned game/profile columns, never app-owned ones; rule-config changes are versioned and compared at commit so derived values can't persist under superseded rules. |
 | Achievement sync | Tiered hot/warm/cold/never selection is merged. Normal sync is bounded; cold-tier reconciliation runs weekly on charging + unmetered network or from the forced Settings action. Reconciliation and the sync's in-line refresh are serialized against each other, and achievements Steam stops returning are tombstoned rather than deleted or left to drift. |
+| Playtime recovery | Durable per-game observation baselines recover newly observed Steam minutes after downtime. Validated timing evidence places a bounded share; remaining minutes retain explicit unknown-time or multi-day estimated attribution. Reconciliation conserves credited quantity; v3 backups preserve recovery metadata. |
+| Discovery & planning | Smart collections, Personal Pace, deadline-based gap plans, wishlist prices, shared-game filtering, hidden games, and Added recently sorting complement custom collections. |
 | Cloud presence | The one-minute Firebase Admin writer and authenticated bounded reader are implemented. Android can explicitly acquire and re-file a confirmed historical range; Firestore rules still deny direct client reads, and OBS does not consume the log. |
 | Diagnostics & haptics | Sync run records, per-request timing, presence decisions, and rolling request counters (24h / 30d / 365d, surviving run pruning) are recorded and readable in release builds. A single haptics authority owns every platform haptic on the earned/committed moments. Library density/visual and per-list sort-direction refinements shipped. |
-| Verification | Kotlin/JVM tests, Android unit tests, instrumentation tests, compile checks, and function builds are available, including legacy and structured release-note presentation tests. Four hardware-dependent achievement-sync checks remain tracked in [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52). |
+| Verification | Kotlin/JVM and Android unit tests, instrumentation checks, Roborazzi visual baselines, compile checks, and function builds are available. Recovery acceptance evidence is recorded in the [hardening archive](openspec/changes/archive/2026-10-22-harden-playtime-recovery-post-merge/). |
 
 ## What Works Today
 
@@ -59,6 +63,13 @@ resolved matches can be exported as privacy-disclosed contributions to grow shar
   achievement XP.
 - Custom collections with descriptions, accents, display order, completion/deadline/queue modes,
   pacing summaries, HLTB time-basis estimates, and manual member completion marks.
+- Smart collections, Personal Pace forecasts, and rerollable gap-plan suggestions using
+  a reliable pace profile or an explicit one-off time budget.
+- Wishlist browsing and cached wishlist search, shared-game discovery, hidden-game
+  management, and Added recently sorting based on first observation in Backlogium.
+- Missed-playtime recovery from durable Steam baselines, with unknown-time and
+  multi-day estimates disclosed in History and Analytics; later timing evidence
+  can improve placement without adding credited minutes.
 - Analytics with rolling or calendar windows, daily playtime, streak/session/time-of-day insights,
   achievement rarity, and most-played games.
 - Genre enrichment and Library filtering, game-detail current-player counts, and rarity standing.
@@ -120,8 +131,8 @@ Steam Web API ----> Cloud Function (1/min) -> Firestore presence log
 ```
 
 The core app loop runs on-device: it pulls from the Steam Web API, applies a shared HowLongToBeat
-dataset, stores data locally, and computes XP locally. Direct HowLongToBeat requests happen only
-for a game the user explicitly names. The optional historical presence action uses the authenticated
+dataset, stores data locally, and computes XP locally. Direct HowLongToBeat requests run only
+through explicit user actions, including single-game and bulk selections. The optional historical presence action uses the authenticated
 reader; the rest of the app remains usable without it.
 
 The Cloud Function is a separate, independent writer and reader. The writer records
@@ -199,22 +210,26 @@ than claiming new territory.
 ## App Surfaces
 
 - **Home:** live now-playing panel, level/XP progress, today's quest, streak,
-  Steam account summary, Steam history import, manual sync, and collection cards.
+  actionable Focus/collection missions, collection cards, and an error-only sync
+  retry. Account management, routine sync, and Steam history import live in Settings.
 - **Library:** searchable owned-games list split into Focus and Your games,
   independent sorting, completion progress, XP badges, live-game indicators, HLTB
-  coverage filtering, explicit per-game lookup, and genre filtering.
+  coverage filtering, explicit per-game lookup, genre filtering, wishlist search,
+  shared-game filters, and Added recently sorting.
 - **History:** day-grouped play sessions, daily quest results, achievement unlocks,
   expandable game/session detail, and older-history pagination.
 - **Analytics:** selectable rolling/calendar windows, daily playtime chart, streak and
   session summaries, time-of-day pattern, rarity breakdown, and most-played games.
-- **Settings:** sync controls, shared HLTB dataset status/check and contribution export, tiered
+- **Settings:** four groups — Account & sync, Gameplay, Data & privacy, and
+  Advanced & diagnostics — with pushed detail controls for sync, shared HLTB dataset status/check and contribution export, tiered
   achievement refresh, genre status, live monitor, backup/restore and automatic snapshots,
   history import, diagnostics, and editable gamification rules.
 - **Collections:** pushed from Home for collection overview/editing, pacing/deadline
   planning, member management, ordering, and game-detail overlays.
 - **Game detail:** game summary, store art, HLTB lengths, current player count,
   achievement progress, rarity tiers, and completion banner.
-- **HowLongToBeat review:** candidate picker for ambiguous HLTB matches.
+- **HowLongToBeat review:** Match Center with candidate selection, session-scoped
+  skipping, forward progression, and access to skipped games.
 
 ## Gamification Rules
 
@@ -282,7 +297,8 @@ Your Steam profile and game details must be public for playtime to be visible.
 Completion times primarily come from a small shared dataset published independently of app
 releases. It is optional, stored locally, and can be downloaded during guided setup or checked from
 Settings. A game outside the dataset remains visibly “not covered” until the user deliberately
-looks up that game; there is no library-wide background lookup.
+looks up that game individually or includes it in an explicit batch through Library Tools;
+there is no library-wide background lookup.
 
 Settings can export resolved matches as `backlogium-hltb-contribution.json`. Before writing it,
 the app discloses that publishing the contribution reveals which included Steam app ids the user
@@ -307,11 +323,17 @@ imported into the encrypted store once, only when the store is empty.
 
 Use the Gradle wrapper from the repository root:
 
-```powershell
-.\gradlew.bat :app:compileDebugKotlin --offline
-.\gradlew.bat :gamification:test :app:testDebugUnitTest --offline
-npm.cmd --prefix functions run build
+```bash
+./gradlew :app:compileDebugKotlin
+./gradlew :gamification:test :app:testDebugUnitTest
+./gradlew :app:verifyRoborazziDebug
+npm --prefix functions run build
+npm --prefix functions test
 ```
+
+On Windows, use `.\gradlew.bat` and `npm.cmd`. Add `--offline` to Gradle commands
+only when the required dependencies are already cached. Visual baseline recording
+and verification are covered in [the screenshot guide](docs/visual-regression-screenshots.md).
 
 For Android Studio, open the repository root and run the `app` configuration on a
 device or emulator. Instrumentation tests and hardware-dependent sync checks need
@@ -336,7 +358,7 @@ Remaining roadmap items:
 
 - Static OBS Browser Source overlay backed by the `players/{steamId}` document.
 - Overlay polish for quest completions, streak milestones, and level-ups.
-- Close the four device-dependent achievement-sync checks tracked in
+- Review remaining device-dependent achievement-sync verification recorded in
   [#52](https://github.com/cnhy-nero-diskard/Backlogium/issues/52).
 
 Cloud timing is not a guarantee of continuous observation or a complete recovery

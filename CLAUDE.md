@@ -117,9 +117,15 @@ XP, streaks, and levels are computed on the phone, in `:gamification`. The cloud
 poller records raw observations and derives nothing. Two independent session
 detectors would produce records with disagreeing boundaries that cannot be
 deduplicated — this is a load-bearing constraint, not a stylistic preference.
+For owned-game recovery, Steam cumulative minutes authorize quantity; validated
+local/cloud timing evidence only places that quantity. Unknown-time allocations
+and later placement corrections must conserve credited minutes. See
+`openspec/specs/playtime-recovery/spec.md`.
 
-**The app must work with no network and no cloud.** Firestore is additive. Nothing
-in the app currently reads it, and the app must not come to require it.
+**The app must work with no network and no cloud.** Cloud presence is additive. Android reads
+raw observations through the authenticated HTTPS reader, never directly through
+Firestore. Historical acquisition is bounded and user-started; applying the
+complete range requires confirmation. The app must remain usable without it.
 
 ## Cloud poller specifics
 
@@ -139,7 +145,8 @@ Constraints that are expensive or impossible to reverse:
   cycles idle accounts through away and snooze on its own, which previously filled
   the log with churn and split continuous sessions into fragments.
 - **Firestore rules deny all client access.** The poller writes via the Admin SDK,
-  which bypasses rules. Any future client reader needs an auth decision first.
+  which bypasses rules. The `readPresence` HTTPS endpoint authenticates its
+  bearer token before querying through the Admin SDK; Android uses that endpoint.
 
 ## Secrets
 
