@@ -208,7 +208,8 @@ than claiming new territory.
 ## App Surfaces
 
 - **Home:** live now-playing panel, level/XP progress, today's quest, streak,
-  Steam account summary, Steam history import, manual sync, and collection cards.
+  actionable Focus/collection missions, collection cards, and an error-only sync
+  retry. Account management, routine sync, and Steam history import live in Settings.
 - **Library:** searchable owned-games list split into Focus and Your games,
   independent sorting, completion progress, XP badges, live-game indicators, HLTB
   coverage filtering, explicit per-game lookup, genre filtering, wishlist search,

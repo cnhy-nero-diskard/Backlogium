@@ -99,7 +99,8 @@ switching tabs (standard save/restoreState nav behavior). Home is the start dest
 
 ## Screen 1 — Home
 
-**Purpose:** at-a-glance status — level/XP, today's quest, streak, last sync.
+**Purpose:** live play status, the next player action, level/XP, today's quest,
+streak, and collection missions.
 
 **Layout:** single scrollable column, 16dp outer padding, 16dp vertical gaps between cards,
 full width.
@@ -149,7 +150,11 @@ full width.
    animation, when not in-game. A foreground service keeps this state current in the background and
    posts a matching ongoing "Playing X · Nm" notification while in-game (cleared when the game ends).
 2. **Error banner** (conditional, only when a sync error exists) — a `Card` tinted with the
-   M3 "error container" color, containing just the error message text, 16dp padding.
+   M3 "error container" color, containing the error message and Retry. Retry is
+   disabled and shows a spinner during sync; a successful sync clears the error.
+   Home also shows a retained-content updating indicator, conditional live-monitor
+   availability guidance, and earned quest feedback. A next-action slot follows
+   these notices, prioritizing an actionable Focus/collection mission while idle.
 3. **Level / XP card** — surface card, 16dp padding:
    - Large bold headline in the display font: `"Level {N}"`
    - Horizontal progress bar (linear, full width) showing XP progress within the level
@@ -166,19 +171,14 @@ full width.
    - Large line: a `Flame` icon + `"{N} day(s)"` count in the display font
    - Caption: `"Longest: {N}"`
    - When the streak reaches a multiple of 7, the `streak_milestone` Lottie plays once, inline.
-6. **Steam account card** — surface card, 16dp padding, horizontal: a `BrandSteam` icon (accent),
-   a column with title "Steam account" over `"SteamID {id}"` and a masked `"API key {•••}"`
-   caption, and a trailing "Edit" `TextButton` (`Pencil` icon) that opens the Onboarding screen
-   to change credentials. The raw API key never reaches this card — it is masked upstream.
-7. **Steam history card** — surface card, 16dp padding, title "Steam history":
-   - Before import: caption "Count your pre-install Steam playtime toward XP. One-time only." +
-     an outlined "Import Steam history" button (`Download` icon). Tapping opens a confirmation
-     dialog explaining the one-time effect (matched games capped by the taper, unmatched counted
-     in full).
-   - After import: a `CircleCheck` + "History imported" line, a caption, and a "Reset import"
-     `TextButton` (with its own confirmation dialog) that undoes the import.
-8. **Sync row** (bottom, full width, space-between) — left: `"Last sync: {date/time}"` (or
-   "Syncing…") caption text; right: a filled "Sync now" button (shows a spinner while syncing).
+6. **Collections** — player-arranged mission cards with collection navigation,
+   creation, gap planning, and reordering, below the progression cards.
+7. **Smart collections** — derived lists below the custom collections, in a fixed
+   order, when available.
+
+Account credentials and routine manual sync are under Settings → Account & sync.
+Steam history import/reset is under Settings → Data & privacy. Home's sync action
+is the conditional error retry described above.
 
 **Empty / alt state:** if Steam isn't configured, the whole screen is replaced by the
 full-screen **Onboarding** flow (see Screen 4) as a takeover — completing it flips the app to
