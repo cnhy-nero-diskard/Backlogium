@@ -155,11 +155,15 @@ class WorkStageRunnerTest {
         val request = OneTimeWorkRequestBuilder<RetrySetupWorker>().build()
         workManager.enqueueUniqueWork("retry", ExistingWorkPolicy.KEEP, request)
         val activities = mutableListOf<SetupStageProgress>()
+        val backingOff = CompletableDeferred<Unit>()
         val attempt = backgroundScope.async {
             runnerFor("retry") { error("recovery must not trigger") }
-                .recover(request.id.toString()) { activities += it }
+                .recover(request.id.toString()) {
+                    activities += it
+                    if (it.activity == SetupStageActivity.RETRY_BACKOFF) backingOff.complete(Unit)
+                }
         }
-        runCurrent()
+        backingOff.await()
         assertFalse(attempt.isCompleted)
         assertTrue(activities.any { it.activity == SetupStageActivity.RETRY_BACKOFF && it.attemptCount > 0 })
         assertEquals(WorkInfo.State.ENQUEUED, workManager.getWorkInfoById(request.id).get().state)
@@ -183,15 +187,19 @@ class WorkStageRunnerTest {
             .build()
         workManager.enqueueUniqueWork("retry-once", ExistingWorkPolicy.KEEP, request)
         val activities = mutableListOf<SetupStageActivity>()
+        val waiting = CompletableDeferred<Unit>()
+        val backingOff = CompletableDeferred<Unit>()
         val attempt = backgroundScope.async {
             runnerFor("retry-once") { error("must recover") }.recover(request.id.toString()) {
                 activities += it.activity
+                if (it.activity == SetupStageActivity.WAITING) waiting.complete(Unit)
+                if (it.activity == SetupStageActivity.RETRY_BACKOFF) backingOff.complete(Unit)
             }
         }
-        runCurrent()
+        waiting.await()
         val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
         driver.setAllConstraintsMet(request.id)
-        runCurrent()
+        backingOff.await()
         assertTrue(SetupStageActivity.RETRY_BACKOFF in activities)
         assertFalse(attempt.isCompleted)
         driver.setAllConstraintsMet(request.id)
