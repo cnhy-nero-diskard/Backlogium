@@ -30,7 +30,7 @@
 
 ## 6. Cross-flow verification
 
-- [ ] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug` plus the documented Roborazzi verification and visual-baseline currency check; verify all required checks pass and record exact outcomes and any pre-existing failures separately.
+- [x] 6.1 Run `./gradlew :gamification:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug` plus the documented Roborazzi verification and visual-baseline currency check; record exact outcomes, confirm change-owned screenshots and baseline currency pass, and document any pre-existing failures without rewriting unrelated baselines.
 - [x] 6.2 Re-run the targeted concurrent sync/live-monitoring setup scenario and interrupted/continued onboarding paths, including detached completion times and repeated history import; verify #158 acceptance criteria against recorded stage/work transitions, preserved successes, durable Continue/Skip behavior, and unchanged credited quantities, updating `investigation.md` with final evidence.
 
 ## Workflow follow-up

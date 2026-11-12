@@ -41,3 +41,17 @@ The new isolated screenshot fixtures cover seven recovery/history-choice states 
 Full unit/build/lint command passed: 2,338 app tests and 53 gamification tests, zero failures/skips, debug APK assembled, and debug lint passed with 59 existing warnings and baseline-filtered findings. Python repository checks: 48 passed. Visual verification is recorded separately after its non-recording run.
 
 Non-recording verification of the 28 new setup/history-choice baselines passed. CI and the baseline-currency classifier now include this fixture suite; local emulator/CI GPU options were not changed.
+
+## Final cross-flow verification (2026-11-13, macOS)
+
+`./gradlew :gamification:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug` completed successfully. The documented `:app:compileDebugUnitTestKotlin --offline` step also passed. Debug lint reported the existing warnings and baseline-filtered findings noted above. The visual-baseline currency check passed with `python3 scripts/check_visual_baseline.py check --changed-file <(git diff --name-only origin/master...HEAD)`.
+
+The documented non-recording Roborazzi verification was run from clean generated-output directories and repeated. Both runs reported the same five changed comparisons out of 78; the other 73 comparisons passed, including the spike and all 28 setup/history-choice captures. The five failures are the pre-existing Library comparisons identified for this Mac:
+
+- `alternatives/library/selection/dark/standard.png` (diff 1.3263303e-05)
+- `main/library/populated/dark/narrow.png` (diff 2.170139e-05)
+- `main/library/populated/dark/standard.png` (diff 1.3263303e-05)
+- `main/library/populated/light/narrow.png` (diff 5.642361e-05)
+- `main/library/populated/light/standard.png` (diff 3.7137248e-05)
+
+This change does not modify the Library UI, its screenshot fixtures/tests, or those existing baselines. The verification output is under ignored `app/build/` report and compare directories. No tracked baseline was recorded or rewritten; the five failures are recorded separately instead of refreshing unrelated Library goldens.
