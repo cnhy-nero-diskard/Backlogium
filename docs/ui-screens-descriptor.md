@@ -462,8 +462,9 @@ session boundaries.
 
 ## Screen 7 — HowLongToBeat review (pushed from Library)
 
-**Purpose:** resolve ambiguous HowLongToBeat matches. Games whose match was uncertain after a
-refresh are listed with their candidate entries so the user can pick the right one.
+**Purpose:** resolve ambiguous (`NEEDS_REVIEW`) and unmatched (`UNMATCHED`)
+HowLongToBeat entries. Candidate selection, broader title search, and validated
+manual HLTB links allow the player to recover a match deliberately.
 
 **Layout:** Match Center tracks the selected game through queue changes and
 allows explicit candidate selection or Skip for this review session. Matching or
@@ -473,8 +474,25 @@ Selection survives configuration recreation and temporary game-detail return.
 Library list/grid lookup actions and Settings → Gameplay provide entry points.
 Skipping leaves the stored match unresolved.
 
-**Empty state:** distinguishes a finished review session from an empty unresolved
-queue; unresolved games remain available for a later review.
+**Match states and recovery actions:**
+
+- Candidate cards use an adaptive grid. Select a candidate to persist the match;
+  broader-search candidates carry a reminder to verify the game.
+- An `UNMATCHED` game with no candidates offers Try broader search, which relaxes
+  edition, subtitle, and numeral variants with at most three additional queries.
+  Searching shows progress; exhausted results suggest a manual link; failures
+  show their failure class with Retry and Dismiss.
+- Both ambiguous and unmatched entries offer manual HLTB-link input. Validation
+  errors stay beside the input. Preview link fetches the entry with loading status;
+  missing pages have a specific message, and request failures offer Retry/Clear.
+  The preview compares the Steam title with the HLTB title and completion lengths.
+  Only explicit confirmation saves it; Dismiss closes the preview without saving.
+
+**Empty / loading states:** no selected game while loading shows a spinner. An
+empty actionable queue shows Nothing to review with Done. A pass completed with
+skipped games shows the skipped-session message and Review skipped as well as
+Done. A game-scoped route finishes when that game actually leaves the repository
+queue; skipping alone does not resolve its stored match.
 
 ---
 
