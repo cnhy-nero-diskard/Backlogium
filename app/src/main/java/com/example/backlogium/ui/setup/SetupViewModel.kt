@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -30,6 +31,7 @@ class SetupViewModel @Inject constructor(
 
     /** The user's pending checklist selection, before a run makes it the coordinator's business. */
     private val selection = MutableStateFlow<Set<String>>(emptySet())
+    private val editing = MutableStateFlow(false)
     private var prepared = false
 
     /**
@@ -43,14 +45,16 @@ class SetupViewModel @Inject constructor(
         coordinator.state,
         selection,
         credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
-    ) { run, pending, configured ->
+        editing,
+    ) { run, pending, configured, isEditing ->
         SetupUiState(
             loading = !run.loaded,
-            stages = setupStagesUi(source.stages, pending, run),
+            stages = setupStagesUi(source.stages, pending, run, isEditing),
             running = run.running,
             finished = run.finished,
             inScreenSettled = run.inScreenSettled,
             credentialsConfigured = configured,
+            editing = isEditing,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -80,6 +84,8 @@ class SetupViewModel @Inject constructor(
     }
 
     fun toggle(stageId: String, selected: Boolean) {
+        if (coordinator.state.value.running) return
+        if (coordinator.state.value.finished && !editing.value) editSelection()
         // An unavailable stage is not selectable; a toggle aimed at one is dropped rather than
         // producing a selection that the coordinator would then have to filter out again.
         if (source.stages.none { it.id == stageId && it.isAvailable }) return
@@ -88,15 +94,36 @@ class SetupViewModel @Inject constructor(
         }
     }
 
-    fun start() = coordinator.start(
-        selectedIds = selection.value,
-        recordUnselectedAsSkipped = isFirstRunFlow,
-    )
+    fun start() {
+        if (!uiState.value.canStart) return
+        val preserveOutcomes = coordinator.state.value.finished || editing.value
+        editing.value = false
+        coordinator.start(
+            selectedIds = selection.value,
+            recordUnselectedAsSkipped = isFirstRunFlow && !preserveOutcomes,
+        )
+    }
+
+    fun editSelection() {
+        val run = coordinator.state.value
+        if (!run.loaded || run.running) return
+        selection.value = source.stages.filter {
+            it.isAvailable && run.outcomes[it.id] is com.example.backlogium.work.setup.SetupOutcome.Failed
+        }.map { it.id }.toSet()
+        editing.value = true
+    }
 
     /** Re-run one stage, replacing that stage's recorded outcome and no other's. */
-    fun retry(stageId: String) =
+    fun retry(stageId: String) {
+        if (coordinator.state.value.running) return
+        editing.value = false
         coordinator.start(selectedIds = setOf(stageId), recordUnselectedAsSkipped = false)
+    }
 
     /** Decline setup entirely: nothing runs and every stage is recorded as skipped. */
-    fun skip() = coordinator.skipAll()
+    fun skip(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            if (coordinator.skipAll()) onComplete()
+        }
+    }
 }

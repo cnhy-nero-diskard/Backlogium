@@ -14,6 +14,10 @@ import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.PlaytimeBackfillResetResult
 import com.example.backlogium.domain.PlaytimeBackfillUseCase
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -48,7 +52,8 @@ class PlaytimeBackfillRecoveryTest {
             RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         settings = SettingsDataStore(RuntimeEnvironment.getApplication())
-        db.playerProfileDao().upsert(com.example.backlogium.data.local.entity.PlayerProfile(steamId = account))
+        com.example.backlogium.data.credentials.AccountChangeMarkerStore(RuntimeEnvironment.getApplication()).clear()
+        db.playerProfileDao().upsert(com.example.backlogium.data.local.entity.PlayerProfile(steamId = account, lastSyncAt = 1L))
     }
 
     @After
@@ -114,7 +119,97 @@ class PlaytimeBackfillRecoveryTest {
         assertFalse(db.playerProfileDao().get()!!.playtimeBackfilled)
     }
 
-    private fun useCase(): PlaytimeBackfillUseCase {
+    @Test
+    fun noSnapshotCannotBeImportedButAConfirmedEmptySnapshotCan() = runTest {
+        val profile = db.playerProfileDao().get()!!
+        db.playerProfileDao().upsert(profile.copy(lastSyncAt = 0L))
+        assertTrue(runCatching { useCase()() }.exceptionOrNull() is IllegalStateException)
+        assertFalse(db.playerProfileDao().get()!!.playtimeBackfilled)
+        db.playerProfileDao().upsert(profile)
+        assertTrue(useCase()())
+        assertTrue(db.playerProfileDao().get()!!.playtimeBackfilled)
+        assertEquals(0, db.playerProfileDao().get()!!.totalXp.toInt())
+    }
+
+    @Test
+    fun failedRawCaptureRollsBackOffsetsFlagAndPendingMarker() = runTest {
+        db.gameDao().upsertAll(listOf(game(40L, 120)))
+        val failing = object : DatabaseTransactionScope {
+            override suspend fun <R> run(block: suspend () -> R): R = RoomDatabaseTransactionScope(db).run {
+                block()
+                error("fixture interruption during raw capture")
+            }
+        }
+        assertTrue(runCatching { useCase(failing)() }.isFailure)
+        assertEquals(0, db.gameDao().getById(40L)!!.backfillMinutes)
+        assertFalse(db.playerProfileDao().get()!!.playtimeBackfilled)
+        assertFalse(db.playerProfileDao().get()!!.pendingImportRecompute)
+        assertTrue(useCase()())
+    }
+
+    @Test
+    fun interruptionAfterCommitResumesDerivedWorkWithoutRecapturingOffsets() = runTest {
+        db.gameDao().upsertAll(listOf(game(50L, 120)))
+        val interrupted = object : DatabaseTransactionScope {
+            override suspend fun <R> run(block: suspend () -> R): R {
+                RoomDatabaseTransactionScope(db).run(block)
+                error("fixture interruption before recompute")
+            }
+        }
+        assertTrue(runCatching { useCase(interrupted)() }.isFailure)
+        assertTrue(db.playerProfileDao().get()!!.pendingImportRecompute)
+        assertEquals(120, db.gameDao().getById(50L)!!.backfillMinutes)
+        val imported = db.gameDao().getById(50L)!!
+        db.gameDao().upsertAll(listOf(imported.copy(playtimeForever = 140)))
+        assertFalse(useCase()())
+        assertFalse(db.playerProfileDao().get()!!.pendingImportRecompute)
+        assertTrue(db.playerProfileDao().get()!!.totalXp > 0)
+        assertEquals(120, db.gameDao().getById(50L)!!.backfillMinutes)
+    }
+
+    @Test
+    fun duplicateRequestsCreditHistoryOnce() = runTest {
+        db.gameDao().upsertAll(listOf(game(60L, 120)))
+        val importer = useCase()
+        val results = listOf(async { importer() }, async { importer() }).awaitAll()
+        assertEquals(1, results.count { it })
+        assertEquals(120, db.gameDao().getById(60L)!!.backfillMinutes)
+        assertFalse(db.playerProfileDao().get()!!.pendingImportRecompute)
+    }
+
+    @Test
+    fun trackedCreditOnEitherSideOfImportKeepsTheSameTotal() = runTest {
+        for (before in listOf(true, false)) {
+            val appId = if (before) 70L else 71L
+            db.playerProfileDao().updatePlaytimeBackfilled(false)
+            db.gameDao().upsertAll(listOf(game(appId, if (before) 140 else 120)))
+            if (before) db.sessionDao().insert(session(appId, LocalDate.of(2026, 6, 8), 20))
+            useCase()()
+            if (!before) {
+                db.sessionDao().insert(session(appId, LocalDate.of(2026, 6, 8), 20))
+                val imported = db.gameDao().getById(appId)!!
+                db.gameDao().upsertAll(listOf(imported.copy(playtimeForever = 140)))
+            }
+            val tracked = db.sessionDao().creditedMinutesByGame().single { it.appId == appId }.minutes
+            assertEquals(140, db.gameDao().getById(appId)!!.backfillMinutes + tracked)
+        }
+    }
+
+    @Test
+    fun accountMismatchOrPendingResetCannotCaptureHistory() = runTest {
+        val profile = db.playerProfileDao().get()!!
+        db.playerProfileDao().upsert(profile.copy(steamId = "76561198000000002"))
+        assertTrue(runCatching { useCase()() }.isFailure)
+        db.playerProfileDao().upsert(profile)
+        val marker = com.example.backlogium.data.credentials.AccountChangeMarkerStore(RuntimeEnvironment.getApplication())
+        marker.markPending("76561198000000002")
+        try {
+            assertTrue(runCatching { useCase()() }.isFailure)
+            assertFalse(db.playerProfileDao().get()!!.playtimeBackfilled)
+        } finally { marker.clear() }
+    }
+
+    private fun useCase(transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db)): PlaytimeBackfillUseCase {
         val updater = GamificationUpdater(
             sessionDao = db.sessionDao(),
             dailyProgressDao = db.dailyProgressDao(),
@@ -132,6 +227,12 @@ class PlaytimeBackfillRecoveryTest {
             gamificationUpdater = updater,
             time = FixedTime,
             derivedStateWrites = DerivedStateWriteCoordinator(),
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            transaction = transaction,
+            credentials = object : CredentialsProvider {
+                override suspend fun currentCredentials() = CredentialsState.Configured("fixture-key", account)
+            },
+            accountChangeMarker = com.example.backlogium.data.credentials.AccountChangeMarkerStore(RuntimeEnvironment.getApplication()),
         )
     }
 

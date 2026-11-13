@@ -107,7 +107,8 @@ interface PlayerProfileDao {
     )
 
     /**
-     * Marks that a backup merge's raw-data transaction has committed and the follow-up recompute
+     * Marks that an import's raw-data transaction (backup merge or Steam-history capture) has
+     * committed and the follow-up recompute
      * has not yet run — set as the last write inside that same transaction, so it commits
      * atomically with the merged data (auditfix-backup-integrity).
      */

@@ -1502,10 +1502,15 @@ class SettingsViewModel @Inject constructor(
     // concurrent taps can't overlap.
     private fun runHistoryOp(op: suspend () -> Unit) {
         if (isImportingHistory.value) return
+        isImportingHistory.value = true
         viewModelScope.launch {
-            isImportingHistory.update { true }
             try {
                 op()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _toastMessages.tryEmit(SettingsText(R.string.settings_history_operation_failed,
+                    listOf(error.message ?: "Try again.")))
             } finally {
                 isImportingHistory.update { false }
             }

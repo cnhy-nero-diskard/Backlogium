@@ -114,6 +114,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
 
     @Inject
+    lateinit var setupRecovery: dagger.Lazy<com.example.backlogium.work.setup.SetupCoordinator>
+
+    @Inject
     lateinit var snapshotStore: SnapshotStore
 
     @Inject
@@ -172,6 +175,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
+            setupRecovery.get().ensureLoaded()
 
             // Resume recipe materialization and staged derived writes before any fresh sync can
             // compute over their incomplete baseline. Account-change recovery above has completed;

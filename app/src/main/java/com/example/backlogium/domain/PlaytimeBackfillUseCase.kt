@@ -4,7 +4,10 @@ import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
-import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
+import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.work.SteamSyncCoordinator
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
@@ -39,6 +42,10 @@ class PlaytimeBackfillUseCase @Inject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val syncCoordinator: SteamSyncCoordinator,
+    private val transaction: DatabaseTransactionScope,
+    private val credentials: CredentialsProvider,
+    private val accountChangeMarker: AccountChangeMarkerStore,
 ) {
 
     /**
@@ -47,26 +54,37 @@ class PlaytimeBackfillUseCase @Inject constructor(
      * @return `true` if this call performed the import, `false` if it was a no-op because
      *   history had already been imported (idempotence guarantee).
      */
-    suspend operator fun invoke(): Boolean = derivedStateWrites.withLock {
-        val storedProfile = playerProfileDao.get()
-        val profile = storedProfile ?: PlayerProfile()
-        if (storedProfile == null) playerProfileDao.insertIfMissing()
-        // Idempotent: once imported, never re-import or double-count.
-        if (profile.playtimeBackfilled) {
-            false
-        } else {
-            val trackedByGame = sessionDao.creditedMinutesByGame().associate { it.appId to it.minutes }
-            val backfillByAppId = gameDao.getAll().associate { game ->
-                val tracked = trackedByGame[game.appId] ?: 0
-                game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
+    suspend operator fun invoke(): Boolean = syncCoordinator.withLock {
+        check(accountChangeMarker.pendingSteamId() == null) { "An account change is still in progress." }
+        val account = credentials.currentCredentials()?.steamId
+            ?: error("Connect your Steam account before importing history.")
+        derivedStateWrites.withLock {
+            // The offsets, completion flag and pending-derived marker commit together. Sharing the
+            // raw ledger transaction prevents an overlapping poll from being subtracted halfway.
+            // Lock order matches sync: raw-ledger admission before derived-state writes.
+            val imported = transaction.run {
+                val profile = playerProfileDao.get()
+                check(profile?.steamId == account && profile.lastSyncAt > 0L) {
+                    "Finish syncing your Steam library before importing history."
+                }
+                if (profile.playtimeBackfilled) {
+                    false
+                } else {
+                    val trackedByGame = sessionDao.creditedMinutesByGame().associate { it.appId to it.minutes }
+                    val backfillByAppId = gameDao.getAll().associate { game ->
+                        val tracked = trackedByGame[game.appId] ?: 0
+                        game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
+                    }
+                    gameDao.applyBackfill(backfillByAppId)
+                    playerProfileDao.updatePlaytimeBackfilled(true)
+                    playerProfileDao.markPendingImportRecompute()
+                    true
+                }
             }
-
-            gameDao.applyBackfill(backfillByAppId)
-            playerProfileDao.updatePlaytimeBackfilled(true)
-
-            // Reflect the freshly imported history in XP/level using the injected clock + rules.
-            recompute()
-            true
+            // Repeating an interrupted import must finish derived work, not just return a no-op.
+            // Startup also resumes this existing Room marker via PendingImportRecomputeUseCase.
+            if (playerProfileDao.get()?.pendingImportRecompute == true) recompute()
+            imported
         }
     }
 
@@ -77,20 +95,25 @@ class PlaytimeBackfillUseCase @Inject constructor(
      * an add, so re-importing is safe and restores the prior result). Tracked sessions, daily
      * progress, and streaks are untouched.
      */
-    suspend fun reset(): PlaytimeBackfillResetResult = derivedStateWrites.withLock {
-        val refilingApplied = settings.cloudPresenceRefilingAppliedFlow.first()
-        val receipt = settings.cloudPresenceRefilingReceiptFlow.first()
-        if (refilingApplied && receipt?.transferredMinutesByAppId?.any { it.minutes > 0 } == true) {
-            return@withLock PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER
+    suspend fun reset(): PlaytimeBackfillResetResult = syncCoordinator.withLock {
+        derivedStateWrites.withLock {
+            val refilingApplied = settings.cloudPresenceRefilingAppliedFlow.first()
+            val receipt = settings.cloudPresenceRefilingReceiptFlow.first()
+            if (refilingApplied && receipt?.transferredMinutesByAppId?.any { it.minutes > 0 } == true) {
+                return@withLock PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER
+            }
+
+            val profile = playerProfileDao.get()
+            if (profile == null) return@withLock PlaytimeBackfillResetResult.NO_OP
+
+            transaction.run {
+                gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
+                playerProfileDao.updatePlaytimeBackfilled(false)
+                playerProfileDao.markPendingImportRecompute()
+            }
+            recompute()
+            PlaytimeBackfillResetResult.RESET
         }
-
-        val profile = playerProfileDao.get()
-        if (profile == null) return@withLock PlaytimeBackfillResetResult.NO_OP
-
-        gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
-        playerProfileDao.updatePlaytimeBackfilled(false)
-        recompute()
-        PlaytimeBackfillResetResult.RESET
     }
 
     private suspend fun recompute() {

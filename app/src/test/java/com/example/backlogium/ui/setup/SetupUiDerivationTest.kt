@@ -21,6 +21,31 @@ import org.junit.Test
  */
 class SetupUiDerivationTest {
 
+    @Test
+    fun editedSelectionReplacesTheFinishedRunsSelectionButNotItsOutcomes() {
+        val rows = setupStagesUi(registered, setOf("assets"), SetupRunState(
+            loaded = true, finished = true, selected = setOf("sync"),
+            outcomes = mapOf("sync" to SetupOutcome.Succeeded)), editing = true)
+        assertFalse(rows.first { it.id == "sync" }.selected)
+        assertTrue(rows.first { it.id == "assets" }.selected)
+        assertEquals(SetupOutcome.Succeeded, rows.first { it.id == "sync" }.outcome)
+    }
+
+    @Test
+    fun backoffAndWaitingAreTextualOutstandingStatesWithoutStaleProgress() {
+        for (activity in com.example.backlogium.work.setup.SetupStageActivity.entries) {
+            val row = setupStagesUi(registered, emptySet(), SetupRunState(
+                loaded = true, running = true, currentStageId = "sync",
+                progress = SetupStageProgress(4, 10, activity = activity),
+            )).first { it.id == "sync" }
+            assertEquals(activity, row.activity)
+            assertEquals(SetupOutcome.NeverRun, row.outcome)
+            assertTrue(row.activityLabel().isNotBlank())
+            if (activity != com.example.backlogium.work.setup.SetupStageActivity.RUNNING) assertNull(row.progress)
+            assertFalse(setupSummaryLines(listOf(row)).single().contains("not run"))
+        }
+    }
+
     private val registered = listOf(
         fakeStage("sync", defaultOptIn = true, execution = SetupStageExecution.IN_SCREEN),
         fakeStage("assets", execution = SetupStageExecution.DETACHED),

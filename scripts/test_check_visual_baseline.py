@@ -50,6 +50,14 @@ class PathClassificationTest(unittest.TestCase):
         self.assertFalse(is_fixture_input("app/src/main/java/com/example/backlogium/ui/historyical/X.kt"))
         self.assertFalse(is_fixture_input("app/src/main/res/values/strings-es.xml"))
 
+    def test_setup_recovery_and_history_decision_are_fixture_inputs(self):
+        for path in (
+            "app/src/main/java/com/example/backlogium/ui/setup/SetupChecklist.kt",
+            "app/src/main/java/com/example/backlogium/ui/onboarding/HistoryImportStep.kt",
+            "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
+        ):
+            self.assertTrue(is_fixture_input(path), path)
+
 
 class CheckVisualBaselineTest(unittest.TestCase):
     def test_change_outside_the_golden_fixture_scope_never_blocks(self):

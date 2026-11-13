@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
@@ -217,7 +218,7 @@ class SteamSyncWorker @AssistedInject constructor(
             coordinator = syncCoordinator,
             accountChangePending = { accountChangeMarker.pendingSteamId() != null },
             work = { doWorkUnlocked() },
-        ) ?: Result.success()
+        ) ?: setupSkipped("An account change is still in progress. Retry when it finishes.")
     }
 
     private suspend fun doWorkUnlocked(): Result {
@@ -233,7 +234,7 @@ class SteamSyncWorker @AssistedInject constructor(
             if (creds == null) {
                 recordErrorIfAccountActive(null, "Steam not configured")
                 outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
-                return Result.success()
+                return setupSkipped("Connect your Steam account before syncing your library.")
             }
             val apiKey = creds.apiKey
             val steamId = creds.steamId
@@ -245,7 +246,7 @@ class SteamSyncWorker @AssistedInject constructor(
                     "Stored library belongs to a different Steam account; confirm the account change first",
                 )
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
-                return Result.success()
+                return setupSkipped("The stored library belongs to a different Steam account.")
             }
             val recoveryReady = syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
@@ -259,7 +260,7 @@ class SteamSyncWorker @AssistedInject constructor(
             }
             if (!recoveryReady) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
-                return Result.success()
+                return setupSkipped("The Steam account changed before the sync could finish.")
             }
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
@@ -314,7 +315,7 @@ class SteamSyncWorker @AssistedInject constructor(
                     if (isAccountActive(steamId)) recoveryReadStatus.unavailable(steamId, time.nowMillis())
                 }
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
-                return Result.success()
+                return setupSkipped("Steam did not return a readable library. Check your profile privacy, then retry.")
             }
 
             // Per-game trust, applied once at the envelope boundary: positive identity, a usable
@@ -329,7 +330,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
             if (!persistPoll(trustedGames, apiKey, steamId, steamLevel, summary, scope)) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
-                return Result.success()
+                return setupSkipped("The Steam account changed before the sync could finish.")
             }
             examined = games.size
             updated = games.size
@@ -772,7 +773,11 @@ class SteamSyncWorker @AssistedInject constructor(
         profileDao.updateLastSyncError(message)
     }
 
+    private fun setupSkipped(reason: String): Result =
+        Result.success(workDataOf(KEY_SETUP_FAILURE to reason))
+
     companion object {
+        const val KEY_SETUP_FAILURE = "setup_failure"
         const val UNIQUE_PERIODIC_NAME = "steam_sync_periodic"
         const val ONE_TIME_NAME = "steam_sync_now"
         /** Input key carrying the scheduler trigger; retries never overwrite it. */

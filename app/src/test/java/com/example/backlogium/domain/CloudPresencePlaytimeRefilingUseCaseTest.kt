@@ -79,6 +79,14 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             gamificationUpdater = updater,
             time = FixedTime,
             derivedStateWrites = derivedStateWrites,
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            transaction = RoomDatabaseTransactionScope(database),
+            credentials = object : com.example.backlogium.data.repo.CredentialsProvider {
+                override suspend fun currentCredentials() = com.example.backlogium.data.repo.CredentialsState.Configured(
+                    "fixture-key", "76561198000000001")
+            },
+            accountChangeMarker = com.example.backlogium.data.credentials.AccountChangeMarkerStore(
+                org.robolectric.RuntimeEnvironment.getApplication()),
         )
         val fromAt = utc("2026-07-25T00:00:00Z")
         val throughAt = utc("2026-07-26T12:00:00Z")
