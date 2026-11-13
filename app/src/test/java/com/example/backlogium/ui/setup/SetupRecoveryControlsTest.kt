@@ -63,11 +63,12 @@ class SetupRecoveryControlsTest {
         subject.ensureLoaded()
         runCurrent()
         assertEquals(false, subject.state.value.loaded)
+        val loading = !subject.state.value.loaded
 
         compose.setContent {
             BacklogiumTheme {
                 SetupActions(
-                    state = SetupUiState(loading = !subject.state.value.loaded),
+                    state = SetupUiState(loading = loading),
                     startLabel = "Start setup",
                     onStart = {},
                     // Mirrors the pre-run onboarding action: decline, then advance to history.
