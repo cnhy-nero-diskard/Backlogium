@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,10 @@ import com.example.backlogium.data.repo.HistoryImportReadiness
 @Composable
 fun HistoryImportStep(onDone: () -> Unit, viewModel: HistoryImportViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    BackHandler(enabled = state.importing) {
+        // The import owns a committed pending-recompute marker until derived XP is persisted.
+        // Keep this navigation-scoped ViewModel alive until that recovery boundary is cleared.
+    }
     LaunchedEffect(state.completed) { if (state.completed) onDone() }
     HistoryImportContent(state, onImport = viewModel::importHistory, onSkip = viewModel::skip)
 }
