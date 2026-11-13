@@ -3,12 +3,14 @@ package com.example.backlogium.ui.onboarding
 import com.example.backlogium.data.repo.HistoryImportGateway
 import com.example.backlogium.data.repo.HistoryImportReadiness
 import com.example.backlogium.work.setup.FirstRunSetupGateway
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -63,6 +65,35 @@ class HistoryImportViewModelTest {
         assertEquals(2, history.calls)
     }
 
+    @Test fun skipDuringDelayedImportWaitsForXpRecomputeBeforeLeavingOnboarding() = runTest(dispatcher) {
+        val recompute = CompletableDeferred<Unit>()
+        val history = DelayedHistoryImport(recompute)
+        val setup = FakeFirstRun()
+        val vm = HistoryImportViewModel(history, setup)
+        advanceUntilIdle()
+
+        vm.importHistory()
+        runCurrent()
+        assertTrue(vm.uiState.value.importing)
+        assertTrue(history.pendingImportRecompute)
+
+        // This is the interval after the import transaction commits but before derived XP is final.
+        vm.skip()
+        runCurrent()
+        assertFalse(vm.uiState.value.completed)
+        assertTrue(setup.firstRunSetupActive.value)
+        assertEquals(0L, history.totalXp)
+        assertTrue(history.pendingImportRecompute)
+
+        recompute.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(125L, history.totalXp)
+        assertFalse(history.pendingImportRecompute)
+        assertTrue(vm.uiState.value.completed)
+        assertFalse(setup.firstRunSetupActive.value)
+    }
+
     @Test fun completedImportOnRestartDismissesWithoutAnotherInvocation() = runTest(dispatcher) {
         val history = FakeHistory(HistoryImportReadiness.IMPORTED)
         val setup = FakeFirstRun()
@@ -80,6 +111,24 @@ class HistoryImportViewModelTest {
         override suspend fun importSteamHistory(): Boolean {
             calls++
             if (fail) error("Fixture import failed")
+            historyImportReadiness.value = HistoryImportReadiness.IMPORTED
+            return true
+        }
+    }
+
+    private class DelayedHistoryImport(
+        private val recompute: CompletableDeferred<Unit>,
+    ) : HistoryImportGateway {
+        override val historyImportReadiness = MutableStateFlow(HistoryImportReadiness.READY)
+        var pendingImportRecompute = false
+        var totalXp = 0L
+
+        override suspend fun importSteamHistory(): Boolean {
+            // Model the committed import marker while the derived-state recompute is still pending.
+            pendingImportRecompute = true
+            recompute.await()
+            totalXp = 125L
+            pendingImportRecompute = false
             historyImportReadiness.value = HistoryImportReadiness.IMPORTED
             return true
         }

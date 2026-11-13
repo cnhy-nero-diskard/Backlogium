@@ -136,65 +136,85 @@ class SetupCoordinator @Inject constructor(
         if (loadJob?.isActive == true || !runClaimed.compareAndSet(false, true)) return
         scope.launch {
             try {
-                val stages = source.stages
-                // An unavailable stage cannot be selected in any surface, but a stale selection
-                // handed in from a recreated one must not slip past that.
-                val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
-                val runIds = toRun.map { it.id }.toSet()
-                val previous = _state.value.outcomes
-
-                stages.forEach { stage ->
-                    if (stage.id in runIds || recordUnselectedAsSkipped) {
-                        store.writeOptIn(stage.id, stage.id in runIds)
-                    }
-                }
-                if (toRun.isNotEmpty()) {
-                    // Establish the durable recovery point before the first enqueue can happen.
-                    // Every stage in the run is reset here, not just the first: recovery skips a
-                    // selected stage that already holds a terminal outcome, so a stage left
-                    // `Succeeded` by an earlier run would be mistaken for one this run finished.
-                    store.beginRun(toRun.first().id, runIds)
-                } else {
-                    store.clearActiveStage()
-                }
-                _state.update { current ->
-                    current.copy(
-                        loaded = true,
-                        running = runIds.isNotEmpty(),
-                        selected = runIds,
-                        finished = false,
-                        currentStageId = null,
-                        progress = null,
-                        // A stage in this run starts from a clean slate rather than showing a
-                        // previous verdict; one outside it keeps whatever it last recorded, unless
-                        // this run is the decision that it was skipped.
-                        outcomes = stages.associate { stage ->
-                            stage.id to when {
-                                stage.id in runIds -> SetupOutcome.NeverRun
-                                recordUnselectedAsSkipped -> SetupOutcome.Skipped
-                                else -> previous[stage.id] ?: SetupOutcome.NeverRun
-                            }
-                        },
-                        inScreenSettled = toRun.none {
-                            it.execution == SetupStageExecution.IN_SCREEN
-                        },
-                    )
-                }
-                if (recordUnselectedAsSkipped) {
-                    stages.filterNot { it.id in runIds }
-                        .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
-                }
-
-                toRun.forEach { stage -> runStage(stage, remaining = toRun) }
-                completeRun()
+                run(selectedIds, recordUnselectedAsSkipped)
             } finally {
                 runClaimed.set(false)
             }
         }
     }
 
-    /** Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable. */
-    fun skipAll() = start(emptySet(), recordUnselectedAsSkipped = true)
+    /**
+     * Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable.
+     * Returns true only after that decision is durable; false means another load/run owns setup.
+     */
+    suspend fun skipAll(): Boolean {
+        // The surface only calls this for a loaded, idle checklist. Let the load coroutine finish
+        // its final bookkeeping before claiming the run; an active recovery is exposed as running
+        // and is handled as Continue by the surface instead.
+        if (!_state.value.loaded || _state.value.running) return false
+        loadJob?.takeIf { it.isActive }?.join()
+        if (_state.value.running || !runClaimed.compareAndSet(false, true)) return false
+        try {
+            run(emptySet(), recordUnselectedAsSkipped = true)
+            return true
+        } finally {
+            runClaimed.set(false)
+        }
+    }
+
+    private suspend fun run(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean) {
+        val stages = source.stages
+        // An unavailable stage cannot be selected in any surface, but a stale selection
+        // handed in from a recreated one must not slip past that.
+        val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
+        val runIds = toRun.map { it.id }.toSet()
+        val previous = _state.value.outcomes
+
+        stages.forEach { stage ->
+            if (stage.id in runIds || recordUnselectedAsSkipped) {
+                store.writeOptIn(stage.id, stage.id in runIds)
+            }
+        }
+        if (toRun.isNotEmpty()) {
+            // Establish the durable recovery point before the first enqueue can happen.
+            // Every stage in the run is reset here, not just the first: recovery skips a
+            // selected stage that already holds a terminal outcome, so a stage left
+            // `Succeeded` by an earlier run would be mistaken for one this run finished.
+            store.beginRun(toRun.first().id, runIds)
+        } else {
+            store.clearActiveStage()
+        }
+        _state.update { current ->
+            current.copy(
+                loaded = true,
+                running = runIds.isNotEmpty(),
+                selected = runIds,
+                finished = false,
+                currentStageId = null,
+                progress = null,
+                // A stage in this run starts from a clean slate rather than showing a
+                // previous verdict; one outside it keeps whatever it last recorded, unless
+                // this run is the decision that it was skipped.
+                outcomes = stages.associate { stage ->
+                    stage.id to when {
+                        stage.id in runIds -> SetupOutcome.NeverRun
+                        recordUnselectedAsSkipped -> SetupOutcome.Skipped
+                        else -> previous[stage.id] ?: SetupOutcome.NeverRun
+                    }
+                },
+                inScreenSettled = toRun.none {
+                    it.execution == SetupStageExecution.IN_SCREEN
+                },
+            )
+        }
+        if (recordUnselectedAsSkipped) {
+            stages.filterNot { it.id in runIds }
+                .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
+        }
+
+        toRun.forEach { stage -> runStage(stage, remaining = toRun) }
+        completeRun()
+    }
 
     /**
      * Claim the first-run takeover, as credentials are persisted on a first configuration. Suspends

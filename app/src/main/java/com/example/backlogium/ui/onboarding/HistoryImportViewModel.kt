@@ -55,7 +55,10 @@ class HistoryImportViewModel @Inject constructor(
         }
     }
 
-    fun skip() { viewModelScope.launch { finish() } }
+    fun skip() {
+        if (state.value.importing || state.value.completed) return
+        viewModelScope.launch { finish() }
+    }
 
     private suspend fun finish() {
         setup.releaseFirstRunSetup()
