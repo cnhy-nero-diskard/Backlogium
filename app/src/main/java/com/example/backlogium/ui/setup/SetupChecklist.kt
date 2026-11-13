@@ -242,8 +242,11 @@ fun SetupActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         onSkip?.let {
-            // Offered throughout, including while stages run: setup must never be a trap.
-            TextButton(onClick = it) { Text(if (state.running) "Continue" else "Skip setup") }
+            // Wait for persisted state to load before a decline can bypass recovery. Once loaded,
+            // this remains available throughout a run so setup can never be a trap.
+            TextButton(onClick = it, enabled = !state.loading) {
+                Text(if (state.running) "Continue" else "Skip setup")
+            }
         }
         Button(
             onClick = onStart,
