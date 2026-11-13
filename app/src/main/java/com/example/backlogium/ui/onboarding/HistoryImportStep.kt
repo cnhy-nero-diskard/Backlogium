@@ -41,7 +41,11 @@ fun HistoryImportContent(state: HistoryImportUiState, onImport: () -> Unit, onSk
             if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             else Text(if (state.error != null) "Retry import" else "Import Steam history")
         }
-        TextButton(onClick = onSkip, enabled = !state.completed, modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = onSkip,
+            enabled = !state.importing && !state.completed,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text("Skip")
         }
         Text("You can import or undo this later in Settings.", style = MaterialTheme.typography.bodySmall)
