@@ -12,6 +12,7 @@ class FakeSetupStateStore(
     private val initialOptIns: MutableMap<String, Boolean> = mutableMapOf(),
     private var activeStage: ActiveSetupStage? = null,
     private val storedOutcomesGate: CompletableDeferred<Unit>? = null,
+    private val outcomeWriteGate: CompletableDeferred<Unit>? = null,
 ) : SetupStateStore {
 
     private val completedState = MutableStateFlow(false)
@@ -64,6 +65,7 @@ class FakeSetupStateStore(
     }
 
     override suspend fun writeOutcome(stageId: String, outcome: SetupOutcome) {
+        outcomeWriteGate?.await()
         initialOutcomes[stageId] = outcome
     }
 

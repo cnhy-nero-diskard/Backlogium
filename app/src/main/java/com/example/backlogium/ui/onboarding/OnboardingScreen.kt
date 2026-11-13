@@ -383,8 +383,7 @@ private fun SetupStep(onDone: () -> Unit) {
             // run is under way it only leaves — relabelling a stage that is actually running as
             // "skipped" would put a false outcome in front of the Settings list that reads them.
             onSkip = {
-                if (!started) viewModel.skip()
-                onDone()
+                if (!started) viewModel.skip(onDone) else onDone()
             },
         )
     }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -120,5 +121,9 @@ class SetupViewModel @Inject constructor(
     }
 
     /** Decline setup entirely: nothing runs and every stage is recorded as skipped. */
-    fun skip() = coordinator.skipAll()
+    fun skip(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            if (coordinator.skipAll()) onComplete()
+        }
+    }
 }

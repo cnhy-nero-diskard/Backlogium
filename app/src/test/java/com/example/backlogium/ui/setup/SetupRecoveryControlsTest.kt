@@ -72,8 +72,9 @@ class SetupRecoveryControlsTest {
                     onStart = {},
                     // Mirrors the pre-run onboarding action: decline, then advance to history.
                     onSkip = {
-                        subject.skipAll()
-                        testScope.launch { subject.advanceToHistory() }
+                        testScope.launch {
+                            if (subject.skipAll()) subject.advanceToHistory()
+                        }
                     },
                 )
             }
