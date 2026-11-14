@@ -34,6 +34,9 @@ interface AchievementWatchDao {
     @Query("UPDATE achievement_watch_work SET deliveryState = :state WHERE eventId = :eventId AND deliveryState IN ('pending', 'background')")
     suspend fun finishDelivery(eventId: String, state: String)
 
+    @Query("UPDATE achievement_watch_work SET epochClosed = 1")
+    suspend fun closeAbandonedEpochs()
+
     @Query("UPDATE achievement_watch_work SET epochClosed = 1 WHERE epoch = :epoch")
     suspend fun closeEpoch(epoch: String)
 

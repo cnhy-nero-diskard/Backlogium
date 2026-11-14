@@ -9,6 +9,9 @@ import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.dto.*
 import com.example.backlogium.domain.*
 import com.example.backlogium.work.SteamSyncCoordinator
+import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.async
 import java.io.IOException
 import java.lang.reflect.Proxy
 import kotlinx.coroutines.flow.first
@@ -33,10 +36,11 @@ class AchievementDetailHydrationTest {
     private val requestedGames = mutableListOf<Long>()
     private var playerCalls = 0
     private var online = true
+    private var playerGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     @Before fun setUp() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
-        db = Room.inMemoryDatabaseBuilder(context, BacklogiumDatabase::class.java).allowMainThreadQueries().build()
+        db = Room.inMemoryDatabaseBuilder(context, BacklogiumDatabase::class.java).allowMainThreadQueries().setQueryExecutor(java.util.concurrent.Executor { it.run() }).build()
         db.playerProfileDao().insertIfMissing()
         db.playerProfileDao().resetForAccountChange("fixture")
         // Hundreds of unplayed games must not turn one inspected detail into a sweep.
@@ -48,7 +52,12 @@ class AchievementDetailHydrationTest {
                     if (failSchema) throw IOException("fixture failure")
                     GameSchemaResponse(GameSchemaResult(schema?.let { AvailableGameStatsDto(it) }))
                 }
-                "getPlayerAchievements" -> { playerCalls++; PlayerAchievementsResponse(player) }
+                "getPlayerAchievements" -> {
+                    val block: suspend () -> Any = { playerCalls++; playerGate?.await(); PlayerAchievementsResponse(player) }
+                    @Suppress("UNCHECKED_CAST")
+                    val continuation = args.last() as kotlin.coroutines.Continuation<Any>
+                    block.startCoroutineUninterceptedOrReturn(continuation)
+                }
                 "getGlobalAchievementPercentages" -> GlobalAchievementPercentagesResponse()
                 else -> error("Unexpected ${method.name}")
             }
@@ -61,10 +70,27 @@ class AchievementDetailHydrationTest {
             }, AccountChangeMarkerStore(context), SteamSyncCoordinator()),
             object : com.example.backlogium.data.achievement.AchievementNetwork(context) {
                 override fun isOnline() = online
-            })
+            }, com.example.backlogium.data.diagnostics.SyncRunRecorder(db.diagnosticsDao(), time))
     }
 
     @After fun close() = db.close()
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun detailCompletesCatalogueWhenJoiningAFreshSchemaPlayerOnlyWatchFetch() = kotlinx.coroutines.test.runTest {
+        val now = System.currentTimeMillis()
+        db.gameAchievementSyncDao().upsert(com.example.backlogium.data.local.entity.GameAchievementSync(1, now, now, null, now))
+        playerGate = kotlinx.coroutines.CompletableDeferred()
+        val watch = async { repo.prepareWatch("fixture", "fixture", 1) }
+        runCurrent()
+        assertTrue("Ordinary watch must reuse fresh schema metadata", requestedGames.isEmpty())
+        val detail = async { repo.hydrateDetail(1).toList() }
+        runCurrent()
+        playerGate!!.complete(Unit)
+        watch.await()
+        assertEquals(AchievementHydrationState.Ready, detail.await().last())
+        assertEquals(1, playerCalls)
+        assertEquals(listOf(1L), requestedGames)
+    }
 
     @Test fun offlineOpeningDoesNotRequestAndCachedObjectivesRemainBrowsable() = runBlocking {
         online = false
@@ -104,6 +130,9 @@ class AchievementDetailHydrationTest {
         repo.hydrateDetail(1).toList()
         assertEquals(listOf(1L), requestedGames)
         assertEquals(1, playerCalls)
+        val diagnostic = db.diagnosticsDao().observeRuns().first().single()
+        assertEquals("achievement_detail", diagnostic.trigger)
+        assertEquals("appId=1;catalogue=positive;player=unavailable", diagnostic.errorMessage)
         assertEquals(AchievementProgressAvailability.UNKNOWN, repo.observeCatalogue(1).first().progress)
     }
 

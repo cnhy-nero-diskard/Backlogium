@@ -858,7 +858,8 @@ internal fun AchievementAvailability(state: GameDetailUiState, onRetry: () -> Un
             else if (offline) "Achievements unavailable while offline." else "Achievements unavailable. Try again."
         }
         state.catalogue.confirmedEmpty -> "This game has no achievements."
-        state.achievements.any { !it.progressKnown } -> "Personal achievement progress is unavailable. Browse the objectives below."
+        state.achievements.any { !it.progressKnown } -> "Cached objectives. Personal achievement progress is unavailable."
+        cached && state.catalogue.fetchedAt != null -> "Achievements cached for offline browsing."
         !cached && !state.loading -> "Achievement data is unavailable."
         else -> null
     }

@@ -19,20 +19,20 @@
 - [x] 3.1 Extend event vocabulary/priority without changing existing transition WAL recovery; verify all pending groups remain individually consumable.
 - [x] 3.2 Implement durable surface claims and idempotent notification IDs; verify crash windows, onlyAlertOnce replacement, denied permission, preference changes, and account/hidden suppression.
 - [x] 3.3 Present grouped accessible in-app unlock feedback with one central haptic and game-detail actions; verify single/group copy, TalkBack, reduced motion, and notification destination.
-- [ ] 3.4 Add independent watch, interval, and alert controls with honest live-monitor prerequisite; verify opt-out stops traffic while alert opt-out still stores achievements.
-- [ ] 3.5 Add bounded diagnostics with no credentials; verify success, unchanged, deferred rarity, offline, cancellation, and throttling records.
+- [x] 3.4 Add independent watch, interval, and alert controls with honest live-monitor prerequisite; verify opt-out stops traffic while alert opt-out still stores achievements.
+- [x] 3.5 Add bounded diagnostics with no credentials; verify success, unchanged, deferred rarity, offline, cancellation, and throttling records.
 
 ## 4. Integration acceptance
 
 - [ ] 4.1 Run relevant repository/unit/migration tests and Android lint; verify existing playtime/session/cloud tests still pass and no new playtime polling path exists.
 - [ ] 4.2 Verify on device: active game refresh at selected cadence, switch/exit cleanup, process restart, denied notification permission, and independent alert disabling.
-- [ ] 4.3 Record/verify affected visual baselines and run strict OpenSpec validation; document best-effort cadence and the foreground claim/render crash trade-off.
+- [x] 4.3 Record/verify affected visual baselines and run strict OpenSpec validation; document best-effort cadence and the foreground claim/render crash trade-off.
 
 ## 5. Achievement browsing before play
 
 - [x] 5.1 Trigger one on-demand hydration from either game-detail entry point; render cache immediately, reuse the 30-day schema window including confirmed empty catalogues, and verify recomposition/reopening do not repeatedly request unknown player progress or start recurring/background library work.
 - [x] 5.2 Add accessible loading, cached/stale, unavailable-with-retry, confirmed-empty, and personal-progress-unavailable states; verify offline first opening, offline cached browsing, schema success/player failure, hidden objectives, and no fabricated locked progress/completion/XP.
 - [x] 5.3 Implement connectivity-aware bounded retry and shared cancellation for detail hydration; verify 60-second initial/15-minute capped automatic backoff, longer Retry-After, explicit retry, close/reopen, and continued work for another caller sharing a fetch.
-- [ ] 5.4 Explain full achievement refresh scope in Settings and add bounded detail-hydration diagnostics; verify catalogue/player outcomes remain distinct and browsing works with monitor/watch/alerts disabled.
+- [x] 5.4 Explain full achievement refresh scope in Settings and add bounded detail-hydration diagnostics; verify catalogue/player outcomes remain distinct and browsing works with monitor/watch/alerts disabled.
 - [ ] 5.5 Verify the reported zero-play owned games (1462040, 2909400, 552520) load their catalogue on opening, without hardcoded achievement counts or requests for the rest of a hundreds-game unplayed backlog; cover both game-detail presentations, negative cache, process restart, and later confirmed player progress. Keep captured account data and credentials out of fixtures.
-- [ ] 5.6 Run relevant repository, migration, domain/projection, ViewModel/UI checks and affected visual baselines; run strict OpenSpec validation. Record that the unrelated app 553850 playtime-recovery conservation failures observed during investigation are outside this change rather than disabling that guard to test browsing.
+- [x] 5.6 Run relevant repository, migration, domain/projection, ViewModel/UI checks and affected visual baselines; run strict OpenSpec validation. Record that the unrelated app 553850 playtime-recovery conservation failures observed during investigation are outside this change rather than disabling that guard to test browsing.

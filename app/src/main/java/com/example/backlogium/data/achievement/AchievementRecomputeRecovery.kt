@@ -21,6 +21,12 @@ class AchievementRecomputeRecovery @Inject constructor(
     private val writes: DerivedStateWriteCoordinator,
     private val marker: AccountChangeMarkerStore,
 ) {
+    suspend fun prepareStartup() = sync.withLock {
+        database.achievementWatchDao().closeAbandonedEpochs()
+        resumeWhileLocked()
+        database.achievementWatchDao().prune(time.nowMillis() - 30L * 24 * 60 * 60 * 1_000)
+    }
+
     suspend fun resume() = sync.withLock { resumeWhileLocked() }
 
     /** Called outside Room and outside the non-reentrant progress-transition protocol. */

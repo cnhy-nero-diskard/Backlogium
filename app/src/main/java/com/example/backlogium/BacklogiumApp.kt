@@ -181,7 +181,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
-            achievementRecomputeRecovery.resume()
+            achievementRecomputeRecovery.prepareStartup()
             achievementUnlockDispatcher.start()
             setupRecovery.get().ensureLoaded()
 

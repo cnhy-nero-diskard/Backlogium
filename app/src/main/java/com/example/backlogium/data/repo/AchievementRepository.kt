@@ -116,6 +116,8 @@ data class AchievementRefresh(
     val account: String? = null,
     val retryAt: Long? = null,
     val playerUnavailable: Boolean = false,
+    val schemaAttempted: Boolean = false,
+    val globalsAttempted: Boolean = false,
 )
 
 /** Write-free result of the fetch phase used by [SteamSyncWorker]. */
@@ -165,6 +167,7 @@ class AchievementRepository @Inject constructor(
     private val time: TimeProvider,
     private val observationStore: AchievementObservationStore? = null,
     private val network: AchievementNetwork? = null,
+    private val diagnostics: SyncRunRecorder? = null,
 ) {
 
     /**
@@ -197,6 +200,7 @@ class AchievementRepository @Inject constructor(
     private val mergeMutex = Mutex()
     private data class Flight(val result: Deferred<AchievementRefresh?>, var subscribers: Int)
     private val inFlightGameFetches = mutableMapOf<FetchKey, Flight>()
+    private val inFlightCatalogueFetches = mutableMapOf<FetchKey, Flight>()
     private val fetchMonitor = Any()
     private val rateLimitDeadlines = ConcurrentHashMap<FetchKey, Long>()
 
@@ -242,18 +246,24 @@ class AchievementRepository @Inject constructor(
             val now = time.nowMillis()
             val deadline = rateLimitDeadlines[FetchKey(account, appId)] ?: 0L
             if (network?.isOnline() == false) {
+                recordDetail(appId, "offline")
                 emit(AchievementHydrationState.Unavailable(offline = true))
                 delay(60_000)
                 continue
             }
             if (deadline > now) {
+                recordDetail(appId, "throttled")
                 emit(AchievementHydrationState.Unavailable(retryAt = deadline))
                 delay(deadline - now)
                 continue
             }
             emit(AchievementHydrationState.Loading)
-            val refresh = try { fetchGame(creds.apiKey, account, appId, null) }
-                catch (cancelled: CancellationException) { throw cancelled }
+            val run = diagnostics?.begin("achievement_detail")
+            val refresh = try { fetchGame(creds.apiKey, account, appId, null, run, requireCatalogue = true) }
+                catch (cancelled: CancellationException) {
+                    withContext(NonCancellable) { recordDetail(appId, "cancelled", run = run) }
+                    throw cancelled
+                }
                 catch (_: Exception) { null }
             if (refresh != null) {
                 store.commit(account, appId, { true }) {
@@ -272,6 +282,15 @@ class AchievementRepository @Inject constructor(
                 }
             }
             val nextCache = store.database.achievementCatalogueDao().cache(appId)
+            val catalogueCommitted = refresh?.schemaLoaded == true && nextCache?.fetchedAt == refresh.schemaFetchedAt
+            val catalogueOutcome = when {
+                !catalogueCommitted -> "unavailable"
+                refresh?.schemaByName.isNullOrEmpty() -> "confirmed_empty"
+                else -> "positive"
+            }
+            val playerOutcome = if (refresh?.achievements != null) "usable" else "unavailable"
+            recordDetail(appId, "catalogue=$catalogueOutcome;player=$playerOutcome" +
+                if (refresh?.retryAt != null) ";throttled" else "", refresh?.takeIf { catalogueCommitted }, run)
             if (nextCache != null && time.nowMillis() - nextCache.fetchedAt <= SCHEMA_WINDOW_MILLIS) {
                 emit(AchievementHydrationState.Ready)
                 return@flow
@@ -279,6 +298,16 @@ class AchievementRepository @Inject constructor(
             val wait = maxOf(achievementRetryDelay(failures++), (refresh?.retryAt ?: 0) - time.nowMillis())
             emit(AchievementHydrationState.Unavailable(retryAt = time.nowMillis() + wait))
             delay(wait)
+        }
+    }
+
+    private suspend fun recordDetail(appId: Long, outcome: String, refresh: AchievementRefresh? = null, run: SyncRunRecorder.RunScope? = null) {
+        val recorder = diagnostics ?: return
+        runCatching {
+            recorder.finish(run ?: recorder.begin("achievement_detail"),
+                if (refresh?.schemaLoaded == true) com.example.backlogium.data.diagnostics.SyncOutcome.SUCCESS
+                else com.example.backlogium.data.diagnostics.SyncOutcome.INCOMPLETE,
+                "appId=$appId;$outcome", 1, if (refresh?.schemaLoaded == true) 1 else 0)
         }
     }
 
@@ -733,36 +762,71 @@ class AchievementRepository @Inject constructor(
         return refreshes
     }
 
-    /** @return a write-free payload if this game's response is usable. */
+    /** A detail subscriber may complete missing schema work after joining a player-only flight. */
     private suspend fun fetchGame(
         apiKey: String,
         steamId: String,
         appId: Long,
         schemaFetchedAt: Long?,
         scope: SyncRunRecorder.RunScope? = null,
+        requireCatalogue: Boolean = false,
     ): AchievementRefresh? {
-        val key = FetchKey(steamId = steamId, appId = appId)
+        val key = FetchKey(steamId, appId)
+        val cache = observationStore?.database?.achievementCatalogueDao()
+        val cachedSchemaAt = cache?.cache(appId)?.fetchedAt
+        val freshness = if (requireCatalogue) cachedSchemaAt else listOfNotNull(schemaFetchedAt, cachedSchemaAt).maxOrNull()
+        val refresh = coalesce(inFlightGameFetches, key) {
+            fetchGameUncoordinated(apiKey, steamId, appId, freshness, scope)
+        } ?: return null
+        if (!requireCatalogue || refresh.schemaAttempted || refresh.retryAt != null) return refresh
+        val cachedAt = cache?.cache(appId)?.fetchedAt
+        if (cachedAt != null && time.nowMillis() - cachedAt <= SCHEMA_WINDOW_MILLIS) return refresh
+        val supplement = coalesce(inFlightCatalogueFetches, key) {
+            val now = time.nowMillis()
+            var deadline: Long? = rateLimitDeadlines[key]?.takeIf { it > now }
+            suspend fun <T> attempt(block: suspend () -> T): T? = try { block() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    achievementRetryAfter(error, now)?.let { deadline = it; rateLimitDeadlines.merge(key, it, ::maxOf) }
+                    null
+                }
+            val schema = if (deadline == null) attempt {
+                steamApi.getSchemaForGame(apiKey, appId, scope).game.availableGameStats?.achievements
+            } else null
+            val globals = if (deadline == null && !refresh.globalsAttempted && !schema.isNullOrEmpty()) attempt {
+                steamApi.getGlobalAchievementPercentages(appId, scope).achievementpercentages.achievements
+                    .filter { it.percent.isFinite() && it.percent in 0.0..100.0 }.associate { it.name to it.percent }
+            }.orEmpty() else emptyMap()
+            AchievementRefresh(appId, now, null, globals, schema?.associateBy { it.name }.orEmpty(),
+                if (schema != null) now else null, schemaLoaded = schema != null, account = steamId,
+                retryAt = deadline, schemaAttempted = true)
+        } ?: return refresh
+        return refresh.copy(schemaByName = supplement.schemaByName, schemaFetchedAt = supplement.schemaFetchedAt,
+            schemaLoaded = supplement.schemaLoaded, schemaAttempted = true, retryAt = supplement.retryAt,
+            globalPercentByName = refresh.globalPercentByName + supplement.globalPercentByName,
+            achievements = refresh.achievements?.takeUnless { it.isEmpty() && supplement.schemaByName.isNotEmpty() })
+    }
+
+    private suspend fun coalesce(
+        flights: MutableMap<FetchKey, Flight>,
+        key: FetchKey,
+        fetch: suspend () -> AchievementRefresh?,
+    ): AchievementRefresh? {
         val context = currentCoroutineContext()
         val flight = synchronized(fetchMonitor) {
-            inFlightGameFetches[key]?.also { it.subscribers++ } ?: run {
+            flights[key]?.also { it.subscribers++ } ?: run {
                 val job = SupervisorJob()
                 val result = CoroutineScope(context.minusKey(Job) + job).async(start = CoroutineStart.LAZY) {
-                    try {
-                        fetchGameUncoordinated(apiKey, steamId, appId, schemaFetchedAt, scope)
-                    } finally { job.complete() }
+                    try { fetch() } finally { job.complete() }
                 }
-                Flight(result, 1).also { inFlightGameFetches[key] = it }
+                Flight(result, 1).also { flights[key] = it }
             }
         }
-        try {
-            return flight.result.await()
-        } finally {
+        try { return flight.result.await() }
+        finally {
             synchronized(fetchMonitor) {
                 flight.subscribers--
-                if (flight.subscribers == 0) {
-                    inFlightGameFetches.remove(key, flight)
-                    flight.result.cancel()
-                }
+                if (flight.subscribers == 0) { flights.remove(key, flight); flight.result.cancel() }
             }
         }
     }
@@ -792,9 +856,7 @@ class AchievementRepository @Inject constructor(
                 }
                 null
             }
-        val cachedAt = observationStore?.database?.achievementCatalogueDao()?.cache(appId)?.fetchedAt
-        val effectiveSchemaAt = if (observationStore != null) cachedAt else schemaFetchedAt
-        val schemaWasStale = effectiveSchemaAt == null || now - effectiveSchemaAt > SCHEMA_WINDOW_MILLIS
+        val schemaWasStale = schemaFetchedAt == null || now - schemaFetchedAt > SCHEMA_WINDOW_MILLIS
         val schema = if (schemaWasStale) attempt {
             steamApi.getSchemaForGame(apiKey, appId, scope).game.availableGameStats?.achievements
         } else null
@@ -802,7 +864,8 @@ class AchievementRepository @Inject constructor(
             try { steamApi.getPlayerAchievements(apiKey, steamId, appId, scope).playerstats }
             catch (error: Exception) { playerFailure = error; throw error }
         } else null
-        val globals = if (retryAt == null && (!schema.isNullOrEmpty() || !player?.achievements.isNullOrEmpty())) attempt {
+        val globalsAttempted = retryAt == null && (!schema.isNullOrEmpty() || !player?.achievements.isNullOrEmpty())
+        val globals = if (globalsAttempted) attempt {
             steamApi.getGlobalAchievementPercentages(appId, scope).achievementpercentages.achievements
                 .filter { it.percent.isFinite() && it.percent in 0.0..100.0 }.associate { it.name to it.percent }
         }.orEmpty() else emptyMap()
@@ -818,8 +881,9 @@ class AchievementRepository @Inject constructor(
             return null
         }
         currentCoroutineContext().ensureActive()
-        return AchievementRefresh(appId, now, usablePlayer, globals, schema?.associateBy { it.name }.orEmpty(),
-            if (schema != null) now else schemaFetchedAt, schemaLoaded = schema != null, account = steamId, retryAt = retryAt, playerUnavailable = playerFailure != null)
+        return AchievementRefresh(appId, now, usablePlayer, globals, knownCatalogue?.associateBy { it.name }.orEmpty(),
+            if (schema != null) now else schemaFetchedAt, schemaLoaded = schema != null, account = steamId, retryAt = retryAt, playerUnavailable = playerFailure != null,
+            schemaAttempted = schemaWasStale, globalsAttempted = globalsAttempted)
     }
 
     /**
@@ -835,7 +899,7 @@ class AchievementRepository @Inject constructor(
         val catalogue = db?.achievementCatalogueDao()
         val previousRows = achievementDao.getForGame(refresh.appId)
         if (catalogue != null && refresh.schemaLoaded &&
-            (catalogue.cache(refresh.appId)?.fetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt &&
+            (catalogue.cache(refresh.appId)?.fetchedAt ?: Long.MIN_VALUE) <= (refresh.schemaFetchedAt ?: refresh.fetchedAt) &&
             (refresh.schemaByName.isNotEmpty() || (previousRows.isEmpty() && refresh.achievements.isNullOrEmpty()))
         ) {
             catalogue.clearEntries(refresh.appId)
@@ -843,7 +907,7 @@ class AchievementRepository @Inject constructor(
                 refresh.appId, schema.name, schema.displayName, schema.icon.takeIf { it.isNotBlank() },
                 schema.description.takeIf { it.isNotBlank() }, schema.hidden != 0, refresh.globalPercentByName[schema.name],
             ) })
-            catalogue.upsert(AchievementCatalogueCache(refresh.appId, refresh.fetchedAt))
+            catalogue.upsert(AchievementCatalogueCache(refresh.appId, refresh.schemaFetchedAt ?: refresh.fetchedAt))
         }
         val metadata = gameAchievementSyncDao.get(refresh.appId)
         if ((metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) > refresh.fetchedAt) return

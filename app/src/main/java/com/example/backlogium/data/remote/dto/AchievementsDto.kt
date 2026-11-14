@@ -60,7 +60,7 @@ data class GameSchemaResult(
 
 @Serializable
 data class AvailableGameStatsDto(
-    val achievements: List<AchievementSchemaDto> = emptyList(),
+    val achievements: List<AchievementSchemaDto>? = null,
 )
 
 /**
