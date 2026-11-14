@@ -11,8 +11,8 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 @Singleton
-class AchievementNetwork @Inject constructor(@ApplicationContext private val context: Context) {
-    fun isOnline(): Boolean {
+open class AchievementNetwork @Inject constructor(@ApplicationContext private val context: Context) {
+    open fun isOnline(): Boolean {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val caps = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&

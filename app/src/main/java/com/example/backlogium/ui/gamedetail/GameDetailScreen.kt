@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.example.backlogium.domain.AchievementHydrationState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -143,6 +144,7 @@ fun GameDetailScreen(
     LaunchedEffect(viewModel, appId) {
         appId?.let(viewModel::setAppId)
         viewModel.startPolling()
+        viewModel.startBrowsing()
     }
     LaunchedEffect(viewModel, onRemoved) {
         viewModel.removedSharedGameEvents.collect { onRemoved() }
@@ -152,7 +154,7 @@ fun GameDetailScreen(
     }
 
     DisposableEffect(viewModel) {
-        onDispose { viewModel.stopPolling() }
+        onDispose { viewModel.stopPolling(); viewModel.stopBrowsing() }
     }
 
     state.hideEffect?.let { effect ->
@@ -243,9 +245,8 @@ private fun GameDetailList(
         if (state.allUnlocked) {
             item { GameCompletedBanner() }
         }
-        if (!state.loading && state.achievements.isEmpty()) {
-            item { NoAchievementsNotice() }
-        } else if (state.achievements.isNotEmpty()) {
+        item { AchievementAvailability(state, viewModel::retryAchievements) }
+        if (state.achievements.isNotEmpty()) {
             item {
                 AchievementSortControl(
                     selected = state.sort,
@@ -846,13 +847,30 @@ private val AchievementSort.label: String
  * still stands, so the screen explains the absence rather than looking broken.
  */
 @Composable
-private fun NoAchievementsNotice() {
-    Text(
-        text = "No achievements to show for this game yet.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 16.dp),
-    )
+internal fun AchievementAvailability(state: GameDetailUiState, onRetry: () -> Unit) {
+    val cached = state.achievements.isNotEmpty()
+    val message = when {
+        state.hydration is AchievementHydrationState.Loading ->
+            if (cached) "Showing cached achievements. Refreshing…" else "Loading achievements…"
+        state.hydration is AchievementHydrationState.Unavailable -> {
+            val offline = state.hydration.offline
+            if (cached) "Showing cached achievements. ${if (offline) "You’re offline." else "Fresh data is unavailable."}"
+            else if (offline) "Achievements unavailable while offline." else "Achievements unavailable. Try again."
+        }
+        state.catalogue.confirmedEmpty -> "This game has no achievements."
+        state.achievements.any { !it.progressKnown } -> "Personal achievement progress is unavailable. Browse the objectives below."
+        !cached && !state.loading -> "Achievement data is unavailable."
+        else -> null
+    }
+    if (message != null) {
+        Column(Modifier.padding(vertical = 16.dp)) {
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.hydration is AchievementHydrationState.Unavailable ||
+                (!cached && !state.catalogue.confirmedEmpty && state.hydration !is AchievementHydrationState.Loading)) {
+                TextButton(onClick = onRetry) { Text("Retry achievements") }
+            }
+        }
+    }
 }
 
 /**
@@ -1054,7 +1072,7 @@ private fun AchievementRow(achievement: AchievementUi) {
         Row(
             modifier = Modifier
                 .padding(12.dp)
-                .alpha(if (achievement.unlocked) 1f else 0.5f),
+                .alpha(if (achievement.unlocked || !achievement.progressKnown) 1f else 0.5f),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AchievementIcon(achievement.apiName, achievement.iconUrl, achievement.tier)
@@ -1106,6 +1124,7 @@ private fun AchievementDescription(achievement: AchievementUi) {
  */
 private fun achievementStatusLabel(achievement: AchievementUi): String {
     val rate = achievement.unlockPercent?.let { "${formatPercent(it)}% of players have this" }
+    if (!achievement.progressKnown) return listOfNotNull("Progress unavailable", rate).joinToString(" · ")
     if (!achievement.unlocked) {
         return listOfNotNull("Locked", rate).joinToString(" · ")
     }

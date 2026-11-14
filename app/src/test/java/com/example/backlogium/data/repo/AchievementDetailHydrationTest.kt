@@ -32,6 +32,7 @@ class AchievementDetailHydrationTest {
     private var failSchema = false
     private val requestedGames = mutableListOf<Long>()
     private var playerCalls = 0
+    private var online = true
 
     @Before fun setUp() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
@@ -57,10 +58,38 @@ class AchievementDetailHydrationTest {
             HiddenGamesRepository(db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time), time,
             AchievementObservationStore(db, object : CredentialsProvider {
                 override suspend fun currentCredentials() = CredentialsState.Configured("fixture", "fixture")
-            }, AccountChangeMarkerStore(context), SteamSyncCoordinator()))
+            }, AccountChangeMarkerStore(context), SteamSyncCoordinator()),
+            object : com.example.backlogium.data.achievement.AchievementNetwork(context) {
+                override fun isOnline() = online
+            })
     }
 
     @After fun close() = db.close()
+
+    @Test fun offlineOpeningDoesNotRequestAndCachedObjectivesRemainBrowsable() = runBlocking {
+        online = false
+        assertEquals(AchievementHydrationState.Unavailable(offline = true), repo.hydrateDetail(1).first())
+        assertTrue(requestedGames.isEmpty())
+        online = true
+        repo.hydrateDetail(1).toList()
+        online = false
+        assertEquals(AchievementHydrationState.Ready, repo.hydrateDetail(1).first())
+        assertEquals(1, repo.observeForGame(1).first().size)
+        assertEquals(listOf(1L), requestedGames)
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun failureRetriesAfterSixtySecondsAndStopsAfterSuccess() = kotlinx.coroutines.test.runTest {
+        failSchema = true
+        val states = mutableListOf<AchievementHydrationState>()
+        repo.hydrateDetail(1).collect {
+            states += it
+            if (it is AchievementHydrationState.Unavailable) failSchema = false
+        }
+        assertEquals(60_000L, testScheduler.currentTime)
+        assertEquals(listOf(1L, 1L), requestedGames)
+        assertEquals(AchievementHydrationState.Ready, states.last())
+    }
 
     @Test fun privatePlayerStillCachesOneUnplayedCatalogueWithoutCompletionOrXp() = runBlocking {
         assertEquals(AchievementHydrationState.Ready, repo.hydrateDetail(1).toList().last())

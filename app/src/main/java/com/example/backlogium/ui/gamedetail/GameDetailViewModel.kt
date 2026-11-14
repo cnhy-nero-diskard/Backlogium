@@ -13,6 +13,8 @@ import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.AchievementCatalogueState
+import com.example.backlogium.domain.AchievementHydrationState
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameVisibilityUseCase
@@ -191,6 +193,8 @@ data class GameDetailUiState(
     val achievements: List<AchievementUi> = emptyList(),
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
     val isRefreshingPlayerCount: Boolean = false,
+    val catalogue: AchievementCatalogueState = AchievementCatalogueState(),
+    val hydration: AchievementHydrationState = AchievementHydrationState.Idle,
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
@@ -206,7 +210,7 @@ data class GameDetailUiState(
 @HiltViewModel
 class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    achievementRepository: AchievementRepository,
+    private val achievementRepository: AchievementRepository,
     private val gameRepository: GameRepository,
     private val sharedGames: FamilySharedGameRepository,
     private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
@@ -235,6 +239,10 @@ class GameDetailViewModel @Inject constructor(
     private val activePlayers = MutableStateFlow<Int?>(null)
     private val refreshingPlayerCount = MutableStateFlow(false)
     private var activePlayersPollingJob: Job? = null
+    private var hydrationJob: Job? = null
+    private val hydration = MutableStateFlow<AchievementHydrationState>(AchievementHydrationState.Idle)
+    private val catalogue = appIdState.filterNotNull().distinctUntilChanged()
+        .flatMapLatest(achievementRepository::observeCatalogue)
     private val _removedSharedGameEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val removedSharedGameEvents: SharedFlow<Unit> = _removedSharedGameEvents.asSharedFlow()
 
@@ -315,7 +323,9 @@ class GameDetailViewModel @Inject constructor(
             hidePreviewing = hide.first,
             hideEffect = hide.second,
         )
-    }.stateIn(
+    }.combine(catalogue) { state, catalogue -> state.copy(catalogue = catalogue) }
+        .combine(hydration) { state, hydration -> state.copy(hydration = hydration) }
+        .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = GameDetailUiState(),
@@ -325,8 +335,29 @@ class GameDetailViewModel @Inject constructor(
     internal fun setAppId(value: Long) {
         if (appIdState.value == value) return
         stopPolling()
+        stopBrowsing()
         appIdState.value = value
         activePlayers.value = null
+    }
+
+    /** A composition owns one subscription, including retries; opening never sweeps the library. */
+    internal fun startBrowsing() {
+        if (hydrationJob?.isActive == true) return
+        val id = appIdState.value ?: return
+        hydrationJob = viewModelScope.launch {
+            achievementRepository.hydrateDetail(id).collect { hydration.value = it }
+        }
+    }
+
+    internal fun stopBrowsing() {
+        hydrationJob?.cancel()
+        hydrationJob = null
+        hydration.value = AchievementHydrationState.Idle
+    }
+
+    fun retryAchievements() {
+        stopBrowsing()
+        startBrowsing()
     }
 
     /** Start live polling while this screen presentation is composed. */
