@@ -82,6 +82,13 @@ Published releases use tag `hltb-dataset-vN`, asset `hltb-dataset.json`, and che
 
 ## Refresh selected libraries
 
+For agent-assisted fetching, resuming, inspecting, applying, or preparing a data PR,
+use the repository's [`hltb-dataset-refresh` skill](../../.claude/skills/hltb-dataset-refresh/SKILL.md).
+It accepts entry at any stage, keeps inspection read-only, verifies candidate/report
+integrity, and asks before unapproved fetches, canonical writes, and publication.
+Invoke it explicitly or describe the HLTB dataset task naturally to an agent with
+repository skill discovery. Matching a task does not itself grant write/publication consent.
+
 The dependency-free Node 22 `refresh.mjs` CLI resolves the current owned libraries of explicitly
 selected SteamID64s. Set `STEAM_WEB_API_KEY` privately in the process environment. The key is
 never accepted as a command argument or written to state. Target IDs are validated as individual
