@@ -12,6 +12,9 @@ interface AchievementWatchDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(work: AchievementWatchWork): Long
 
+    @Query("SELECT * FROM achievement_watch_work WHERE eventId = :eventId")
+    suspend fun get(eventId: String): AchievementWatchWork?
+
     @Query("SELECT * FROM achievement_watch_work WHERE account = :account ORDER BY observedAt, eventId")
     suspend fun getAll(account: String): List<AchievementWatchWork>
 

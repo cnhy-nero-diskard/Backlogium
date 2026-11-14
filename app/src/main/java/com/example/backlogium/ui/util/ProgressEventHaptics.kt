@@ -8,6 +8,7 @@ import com.example.backlogium.domain.ProgressEvent
  * haptically.
  */
 internal fun ProgressEvent.toHapticIntent(): HapticIntent = when (this) {
+    is ProgressEvent.UnlockGroup -> HapticIntent.AchievementUnlock
     is ProgressEvent.LevelUp -> HapticIntent.LevelUp
     is ProgressEvent.QuestMet -> HapticIntent.QuestMet
     is ProgressEvent.StreakMilestone -> HapticIntent.StreakMilestone

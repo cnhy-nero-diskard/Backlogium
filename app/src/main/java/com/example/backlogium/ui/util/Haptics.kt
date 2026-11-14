@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalView
  * decision. Every other surface is silent by default.
  */
 sealed interface HapticIntent {
+    data object AchievementUnlock : HapticIntent
     data object LevelUp : HapticIntent
     data object QuestMet : HapticIntent
     data object StreakMilestone : HapticIntent
@@ -45,6 +46,7 @@ internal fun HapticPlayer.playIfNotSilent(intent: HapticIntent) {
  * degrading the interaction to silence.
  */
 internal fun hapticConstantFor(intent: HapticIntent, sdkInt: Int): Int? = when (intent) {
+    HapticIntent.AchievementUnlock -> HapticFeedbackConstants.CONTEXT_CLICK
     HapticIntent.LevelUp -> HapticFeedbackConstants.CONFIRM
     HapticIntent.QuestMet -> HapticFeedbackConstants.CONTEXT_CLICK
     HapticIntent.StreakMilestone -> HapticFeedbackConstants.GESTURE_END

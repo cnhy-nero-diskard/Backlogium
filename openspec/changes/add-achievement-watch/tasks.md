@@ -16,9 +16,9 @@
 
 ## 3. Delivery and settings
 
-- [ ] 3.1 Extend event vocabulary/priority without changing existing transition WAL recovery; verify all pending groups remain individually consumable.
-- [ ] 3.2 Implement durable surface claims and idempotent notification IDs; verify crash windows, onlyAlertOnce replacement, denied permission, preference changes, and account/hidden suppression.
-- [ ] 3.3 Present grouped accessible in-app unlock feedback with one central haptic and game-detail actions; verify single/group copy, TalkBack, reduced motion, and notification destination.
+- [x] 3.1 Extend event vocabulary/priority without changing existing transition WAL recovery; verify all pending groups remain individually consumable.
+- [x] 3.2 Implement durable surface claims and idempotent notification IDs; verify crash windows, onlyAlertOnce replacement, denied permission, preference changes, and account/hidden suppression.
+- [x] 3.3 Present grouped accessible in-app unlock feedback with one central haptic and game-detail actions; verify single/group copy, TalkBack, reduced motion, and notification destination.
 - [ ] 3.4 Add independent watch, interval, and alert controls with honest live-monitor prerequisite; verify opt-out stops traffic while alert opt-out still stores achievements.
 - [ ] 3.5 Add bounded diagnostics with no credentials; verify success, unchanged, deferred rarity, offline, cancellation, and throttling records.
 

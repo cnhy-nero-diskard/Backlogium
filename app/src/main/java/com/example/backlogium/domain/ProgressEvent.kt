@@ -4,6 +4,7 @@ import java.time.LocalDate
 
 /** A player-facing transition produced by persisted, earned gamification progress. */
 sealed interface ProgressEvent {
+    data class UnlockGroup(val group: AchievementUnlockGroup) : ProgressEvent
     data class LevelUp(val from: Int, val to: Int) : ProgressEvent
     data class QuestMet(val date: LocalDate) : ProgressEvent
     data class StreakMilestone(val days: Int) : ProgressEvent
@@ -12,14 +13,15 @@ sealed interface ProgressEvent {
 
 /**
  * Stable presentation order for simultaneous events. Lower values are presented first:
- * level-up, streak milestone, quest met, then streak broken.
+ * level-up, streak milestone, unlock group, quest met, then streak broken.
  */
 val ProgressEvent.priority: Int
     get() = when (this) {
         is ProgressEvent.LevelUp -> 0
         is ProgressEvent.StreakMilestone -> 1
-        is ProgressEvent.QuestMet -> 2
-        is ProgressEvent.StreakBroken -> 3
+        is ProgressEvent.UnlockGroup -> 2
+        is ProgressEvent.QuestMet -> 3
+        is ProgressEvent.StreakBroken -> 4
     }
 
 val progressEventPriorityComparator: Comparator<ProgressEvent> =

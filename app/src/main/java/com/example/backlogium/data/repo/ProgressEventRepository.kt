@@ -40,8 +40,9 @@ class ProgressEventRepository @Inject constructor(
     private val profileDao: PlayerProfileDao,
     private val dailyProgressDao: DailyProgressDao,
     private val transitionCoordinator: ProgressTransitionCoordinator,
+    private val watchDao: com.example.backlogium.data.local.dao.AchievementWatchDao? = null,
 ) {
-    val pendingEvents: Flow<List<ProgressEvent>> = flow {
+    private val transitionEvents: Flow<List<ProgressEvent>> = flow {
         // A leftover pending transition from a persist() that crashed before finalizing its marks
         // must be resolved before any comparison below, or a non-earned write's Room-only half
         // would read as earned progress. Acquires the coordinator, so a persist() that is merely
@@ -119,10 +120,25 @@ class ProgressEventRepository @Inject constructor(
         )
     }
 
+    val pendingEvents: Flow<List<ProgressEvent>> = watchDao?.let { dao ->
+        combine(transitionEvents, dao.observePending()) { transitions, work ->
+            (transitions + work.filter { it.deliveryState == "pending" }.mapNotNull { item ->
+                item.payload?.let { payload -> runCatching {
+                    ProgressEvent.UnlockGroup(kotlinx.serialization.json.Json.decodeFromString<com.example.backlogium.domain.AchievementUnlockGroup>(payload))
+                }.getOrNull() }
+            }).inPresentationOrder()
+        }
+    } ?: transitionEvents
+
     /** Advance only the delivery mark corresponding to [event], after it has been presented. */
     suspend fun acknowledge(event: ProgressEvent) {
+        if (event is ProgressEvent.UnlockGroup) {
+            watchDao?.claim(event.group.eventId, com.example.backlogium.data.local.entity.AchievementWatchWork.FOREGROUND)
+            return
+        }
         marksStore.update { marks ->
             when (event) {
+                is ProgressEvent.UnlockGroup -> marks
                 is ProgressEvent.LevelUp -> marks.copy(
                     lastCelebratedLevel = maxOf(marks.lastCelebratedLevel, event.to),
                     // Exactly the transition presented is removed; any other owed level-up survives

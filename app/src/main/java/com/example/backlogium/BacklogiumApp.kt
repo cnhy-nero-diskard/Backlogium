@@ -138,6 +138,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var recoveryDerivedFinalizer: RecoveryDerivedFinalizer
 
     @Inject
+    lateinit var achievementUnlockDispatcher: com.example.backlogium.data.achievement.AchievementUnlockDispatcher
+
+    @Inject
     lateinit var achievementRecomputeRecovery: com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 
     @Inject
@@ -179,6 +182,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .isSuccess
             if (!ready) return@launch
             achievementRecomputeRecovery.resume()
+            achievementUnlockDispatcher.start()
             setupRecovery.get().ensureLoaded()
 
             // Resume recipe materialization and staged derived writes before any fresh sync can

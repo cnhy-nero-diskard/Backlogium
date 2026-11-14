@@ -21,6 +21,7 @@ class AchievementObservationStore @Inject constructor(
 ) {
     suspend fun currentCredentials() = credentials.currentCredentials()
     suspend fun currentAccount() = currentCredentials()?.steamId
+    suspend fun accountReady(account: String) = marker.pendingSteamId() == null && currentAccount() == account
 
     suspend fun <T> commit(account: String, appId: Long, valid: () -> Boolean, watch: Boolean = false, block: suspend () -> T): T? =
         coordinator.withLock {
