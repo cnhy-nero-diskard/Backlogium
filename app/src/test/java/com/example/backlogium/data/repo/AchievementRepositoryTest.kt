@@ -311,7 +311,8 @@ class AchievementRepositoryTest {
     /**
      * Cancellation is owned by the caller: when the reconciliation leader is stopped (e.g. its
      * charging/unmetered constraints drop) a still-active manual sync waiting on the shared
-     * flight must start a replacement rather than inherit the leader's cancellation.
+     * flight retains the shared work rather than inheriting the leader's cancellation
+     * (add-achievement-watch shared subscription ownership).
      */
     @Test
     fun `a cancelled leader does not cancel a waiting manual sync`() = runTest {
@@ -343,8 +344,8 @@ class AchievementRepositoryTest {
         reconciliation.cancel()
         runCurrent()
         assertEquals(
-            "the still-active waiter replaces the cancelled leader's flight",
-            listOf(1L, 1L),
+            "the still-active waiter retains the shared flight",
+            listOf(1L),
             api.playerAchievementCalls,
         )
 
@@ -357,8 +358,8 @@ class AchievementRepositoryTest {
         manual.await()
 
         assertEquals(
-            "the replacement request completes the manual sync",
-            listOf(1L, 1L),
+            "the shared request completes the manual sync",
+            listOf(1L),
             api.playerAchievementCalls,
         )
         assertTrue("the manual sync must not inherit the leader's cancellation", manual.isCompleted)

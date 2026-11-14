@@ -16,6 +16,9 @@ class AchievementObservationStore @Inject constructor(
     private val marker: AccountChangeMarkerStore,
     private val coordinator: SteamSyncCoordinator,
 ) {
+    suspend fun currentCredentials() = credentials.currentCredentials()
+    suspend fun currentAccount() = currentCredentials()?.steamId
+
     suspend fun <T> commit(account: String, appId: Long, valid: () -> Boolean, block: suspend () -> T): T? =
         coordinator.withLock {
             if (!valid() || marker.pendingSteamId() != null ||
