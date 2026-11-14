@@ -7,6 +7,10 @@ The user explicitly requested this change branch from and target
 `011c0a59`. Only skill instructions, its read-only checker/tests, documentation,
 planning artifacts and HLTB validation CI are added by this follow-up.
 
+Draft PR [#190](https://github.com/cnhy-nero-diskard/Backlogium/pull/190) targets
+`feat/hltb-targeted-dataset-refresh` from `feat/hltb-refresh-skill`. The CLI dependency
+remains PR #189. Neither PR was merged as part of this task.
+
 The skill was discovered by the active harness after creating
 `.claude/skills/hltb-dataset-refresh/SKILL.md`. No duplicate runtime-specific skill
 copy is necessary here. Discoverability in another harness depends on that harness's
