@@ -20,19 +20,22 @@ The tool SHALL accept one or more valid SteamID64 values, resolve their current 
 - **THEN** the run reports blocked scope and leaves the dataset unchanged
 
 ### Requirement: Refresh modes use entry evidence within selected scope
-The tool SHALL expose missing-only, stale with a positive age threshold, and refresh-all modes. Missing-only SHALL select reviewed mappings without a length tuple and report unmapped titles. Stale SHALL select missing lengths, entries whose last validated fetch is older than the threshold, and entries with unknown or inapplicable per-entry freshness. Refresh-all SHALL select all reviewed HLTB IDs in the chosen scope. A dataset-wide timestamp SHALL NOT be treated as evidence that an individual entry was fetched successfully.
+The tool SHALL provide missing-only, stale with a positive age threshold, and refresh-all modes scoped to selected libraries. An optional app-ID restriction SHALL intersect, never expand, that scope. Missing-only SHALL select mapped entries without a length tuple and report unmapped titles; refresh-all SHALL select every reviewed HLTB ID in scope.
 
 #### Scenario: Default missing-only scope
 - **WHEN** missing-only runs against a library containing mapped lengths, mapped missing lengths, and unmapped titles
 - **THEN** only the mapped missing lengths are fetched and the unmapped titles are listed for review
 
-#### Scenario: Stale mode without trustworthy entry history
-- **WHEN** a selected entry has no applicable successful-fetch history but the canonical dataset has a recent global timestamp
-- **THEN** the entry is treated as having unknown freshness and is eligible for refresh
-
 #### Scenario: Refresh-all remains targeted
 - **WHEN** refresh-all is selected
 - **THEN** only reviewed HLTB IDs reached from the selected library/app intersection are fetched
+
+### Requirement: Stale mode uses per-entry successful-fetch evidence
+Stale mode SHALL select missing lengths and entries whose successful per-entry fetch evidence is absent, inapplicable, or older than the requested threshold. A dataset-wide timestamp SHALL NOT establish successful fetch evidence for an individual entry.
+
+#### Scenario: Stale mode without trustworthy entry history
+- **WHEN** a selected entry has no applicable successful-fetch history but the canonical dataset has a recent global timestamp
+- **THEN** the entry is treated as having unknown freshness and is eligible for refresh
 
 ### Requirement: Mapping admission requires an explicit reviewed correspondence
 The tool SHALL reuse canonical reviewed correspondences and accept explicit reviewed mapping input in the existing contribution format. Only mappings inside selected scope SHALL be admitted. An unmapped or ambiguous title SHALL be reported for human review without automatic title matching. A correspondence disagreement SHALL identify both HLTB IDs and block candidate output rather than replace the canonical mapping.
@@ -46,7 +49,7 @@ The tool SHALL reuse canonical reviewed correspondences and accept explicit revi
 - **THEN** the conflict is reported with the app and both HLTB IDs and no publishable candidate is emitted
 
 ### Requirement: Fetches validate identity and have bounded request behavior
-The tool SHALL fetch each selected HLTB ID once per successful run observation even when several apps share it. It SHALL validate that the response describes the requested entry and contains a recognized completion-time representation. Known values SHALL become integer minutes and unknown values SHALL remain null. Invalid identity, units, values, or response structure SHALL be reported as failures. Requests SHALL have finite concurrency, timeout, retry, and total request/wait budgets; valid rate-limit instructions SHALL be respected within those budgets, with exhaustion reported explicitly.
+The tool SHALL fetch each selected HLTB ID at most once per run observation, even when multiple apps share it. It SHALL validate that each response identifies the requested entry and contains recognized completion-time data. Known values SHALL become integer minutes; unknown values SHALL remain null. Invalid identity, units, values, or structure SHALL be reported as failures.
 
 #### Scenario: Shared HLTB entry
 - **WHEN** several selected apps map to one HLTB ID
@@ -56,16 +59,22 @@ The tool SHALL fetch each selected HLTB ID once per successful run observation e
 - **WHEN** a response describes a different entry or contains an unrecognized payload
 - **THEN** it is recorded as a failure and its values are not merged
 
+### Requirement: Request budgets bound retries and waiting
+Requests SHALL have finite limits for concurrency, timeout, retries, and total request/wait time. Valid rate-limit instructions SHALL be respected within those limits; exhaustion SHALL be reported explicitly.
+
 #### Scenario: Rate-limit budget exhausted
 - **WHEN** backoff would exceed the remaining run budget
 - **THEN** the tool stops further requests and reports rate-limited or unattempted entries without marking them successful
 
 ### Requirement: Failed observations preserve existing values and fetch evidence
-The tool SHALL retain valid existing mappings and length tuples when a fetch fails, is skipped, or yields no usable lengths. It SHALL contribute only validated observations and explicit reviewed mappings, SHALL NOT resubmit retained failed values as newly fetched observations, and SHALL NOT advance those entries' successful-fetch timestamps. Complete validated observations with some unknown styles SHALL preserve those nulls in the contribution. Partial success SHALL be distinguishable from a complete refresh.
+On failed, skipped, or no-usable-length fetches, the tool SHALL retain valid existing mappings and length tuples, SHALL NOT resubmit retained values as newly fetched, and SHALL NOT advance successful-fetch timestamps for those entries.
 
 #### Scenario: One success and one failed read
 - **WHEN** one selected entry changes and another fails
 - **THEN** the candidate contains the successful change, retains the failed entry's values, and the report and entry history preserve its failure and previous successful-fetch time
+
+### Requirement: Contributions include only validated observations
+Contributions SHALL contain only validated observations and explicit reviewed mappings. Validated partial lengths SHALL preserve unknown styles as null; an all-null result SHALL not replace existing values. Reports SHALL distinguish partial from complete refresh.
 
 #### Scenario: No usable lengths
 - **WHEN** a valid page supplies no known completion lengths
@@ -76,11 +85,14 @@ The tool SHALL retain valid existing mappings and length tuples when a fetch fai
 - **THEN** the report explains that this is global merge metadata and does not claim that failed or untouched entries were refreshed
 
 ### Requirement: Candidate datasets obey the existing canonical contract
-The tool SHALL output a candidate using only schemaVersion, datasetVersion, gatheredAt, mappings, and lengths under schema v1. It SHALL apply the existing numeric bounds, null representation, canonical ordering, merge precedence, conflict behavior, and version rules. A byte-identical merge SHALL preserve metadata. A run SHALL write a validated candidate atomically to a separate output destination and SHALL leave the canonical source unchanged. It SHALL verify that the source still matches the run baseline before finalizing output.
+The tool SHALL output schema-v1 datasets containing only `schemaVersion`, `datasetVersion`, `gatheredAt`, `mappings`, and `lengths`. It SHALL preserve existing numeric bounds, null representation, canonical ordering, merge precedence, conflict behavior, and version rules. A byte-identical merge SHALL preserve metadata.
 
 #### Scenario: Redundant validated observations
 - **WHEN** successful observations add no mappings or changed lengths
 - **THEN** candidate bytes and dataset metadata match the source even though private successful-fetch history can advance
+
+### Requirement: Candidate output is separate and atomic
+The tool SHALL validate and write candidates atomically to a destination separate from the canonical source. It SHALL leave the source unchanged and verify the source still matches the recorded baseline before finalizing the candidate.
 
 #### Scenario: Source changes during a run
 - **WHEN** the canonical source differs from the recorded baseline before output is finalized
@@ -105,22 +117,28 @@ The tool SHALL checkpoint a frozen target plan and completed observations so an 
 - **THEN** resume is blocked and a new run or an explicit reviewed reconciliation is required
 
 ### Requirement: Results provide a sanitized verifiable report
-The tool SHALL emit a versioned machine-readable report describing plan versus execution, complete/partial/blocked outcome, baseline and candidate hashes when applicable, scope counts, added mappings, affected per-app old/new four-style values, unchanged totals, mapping gaps/conflicts, and fetch/retry failures. Every changed mapping or length tuple in the candidate SHALL be accounted for; shared-entry changes SHALL include affected canonical app aliases outside the target set without fetching extra entries. Unavailable-library details SHALL be aggregate counts. Report consumers SHALL be able to distinguish changed values, successfully checked unchanged entries, and entries that were not refreshed.
+The tool SHALL emit a versioned machine-readable report covering plan/execution outcome, baseline and candidate hashes when applicable, scope counts, added mappings, per-app old/new four-style values, unchanged totals, mapping gaps/conflicts, and fetch/retry failures.
 
 #### Scenario: Report covers the actual candidate
 - **WHEN** a successful observation alters a shared HLTB tuple
 - **THEN** the report includes all app mappings affected by that tuple and distinguishes which apps were inside the target scope
+
+### Requirement: Reports account for changes and distinguish coverage
+Every candidate mapping or length change SHALL be accounted for. Shared-entry changes SHALL report all affected canonical app aliases, including aliases outside the requested scope, without fetching extra entries. Unavailable library details SHALL be aggregate counts. Reports SHALL distinguish changed, successfully checked unchanged, and not-refreshed entries.
 
 #### Scenario: Partial result
 - **WHEN** there are mapping gaps, unavailable libraries, failed reads, or exhausted budgets
 - **THEN** these appear as explicit counts/categories alongside successful changes and the run is not reported as complete
 
 ### Requirement: Private targeting data is excluded from public artifacts
-Steam credentials SHALL be accepted through a private environment input, SHALL NOT be saved in run state, and SHALL be redacted from errors and request diagnostics. Account IDs, account names, profile URLs, raw account responses, and private state locations SHALL NOT appear in dataset or public report output. Private resume/observation state SHALL be stored outside tracked artifacts or in an ignored local directory. Documentation SHALL explain unreadable-library limits, account-independent reports, the global timestamp limitation, and that publishing selected mappings reveals owned app IDs.
+Steam credentials SHALL be accepted only through a private environment input, SHALL NOT be saved in run state, and SHALL be redacted from errors and request diagnostics. Public dataset/report output SHALL exclude account IDs, names, profile URLs, raw account responses, private paths, and user-to-game attribution.
 
 #### Scenario: Error involving a credentialed request
 - **WHEN** a Steam request fails
 - **THEN** public output contains a sanitized category without the key, account ID, request query, or raw response
+
+### Requirement: Private refresh state and its limitations are documented
+Private resume and observation state SHALL be stored outside tracked artifacts or in an ignored local directory. Documentation SHALL explain unreadable-library limits, account-independent reports, the global timestamp limitation, and that publishing selected mappings reveals owned app IDs.
 
 #### Scenario: Preparing a contribution
 - **WHEN** the maintainer inspects candidate and public report artifacts
