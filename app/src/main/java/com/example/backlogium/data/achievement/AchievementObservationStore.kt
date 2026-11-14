@@ -15,6 +15,7 @@ class AchievementObservationStore @Inject constructor(
     private val credentials: CredentialsProvider,
     private val marker: AccountChangeMarkerStore,
     private val coordinator: SteamSyncCoordinator,
+    private val recovery: AchievementRecomputeRecovery? = null,
 ) {
     suspend fun currentCredentials() = credentials.currentCredentials()
     suspend fun currentAccount() = currentCredentials()?.steamId
@@ -24,11 +25,18 @@ class AchievementObservationStore @Inject constructor(
             if (!valid() || marker.pendingSteamId() != null ||
                 credentials.currentCredentials()?.steamId != account
             ) return@withLock null
-            database.withTransaction {
+            recovery?.resumeWhileLocked()
+            val result = database.withTransaction {
                 if (!valid() || database.playerProfileDao().get()?.steamId != account ||
                     database.gameDao().getById(appId) == null || database.hiddenGameDao().isHidden(appId)
                 ) return@withTransaction null
                 block()
             }
+            // The raw commit is authoritative even if the follow-up fails: keep its marker and
+            // return the committed baseline. The next admitted write/startup retries it first.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { recovery?.resumeWhileLocked() }
+            }
+            result
         }
 }

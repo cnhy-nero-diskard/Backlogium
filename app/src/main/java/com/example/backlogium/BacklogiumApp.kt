@@ -138,6 +138,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var recoveryDerivedFinalizer: RecoveryDerivedFinalizer
 
     @Inject
+    lateinit var achievementRecomputeRecovery: com.example.backlogium.data.achievement.AchievementRecomputeRecovery
+
+    @Inject
     lateinit var timeProvider: TimeProvider
 
     @Inject
@@ -175,6 +178,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
+            achievementRecomputeRecovery.resume()
             setupRecovery.get().ensureLoaded()
 
             // Resume recipe materialization and staged derived writes before any fresh sync can

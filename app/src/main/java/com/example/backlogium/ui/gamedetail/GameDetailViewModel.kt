@@ -72,6 +72,7 @@ data class AchievementUi(
     val unlockedAt: Long?,
     val description: String?,
     val hidden: Boolean,
+    val progressKnown: Boolean = true,
 ) {
     /**
      * Steam withholds a hidden achievement's description until it is unlocked, so a locked hidden
@@ -193,7 +194,7 @@ data class GameDetailUiState(
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
-        get() = achievements.isNotEmpty() && achievements.all { it.unlocked }
+        get() = achievements.isNotEmpty() && achievements.all { it.progressKnown && it.unlocked }
 }
 
 /**
@@ -515,7 +516,7 @@ internal data class Content(
  * [GameAchievement.rarityPercent], which is intentionally frozen for XP/tier stability.
  */
 internal fun Content.toRarityStanding(): RarityStanding.Result? {
-    if (achievements.isEmpty()) return null
+    if (achievements.isEmpty() || achievements.any { !it.progressKnown }) return null
     return RarityStanding.derive(
         RarityStanding.Input(
             totalAchievements = achievements.size,
@@ -539,8 +540,8 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         mainExtraMinutes = game.mainExtraMinutes,
         completionistMinutes = game.completionistMinutes,
         allStylesMinutes = game.allStylesMinutes,
-        achievementsUnlocked = rows.count { it.unlocked },
-        achievementsTotal = rows.size,
+        achievementsUnlocked = if (rows.all { it.progressKnown }) rows.count { it.unlocked } else 0,
+        achievementsTotal = if (rows.all { it.progressKnown }) rows.size else 0,
         // The Library's own derivation, called rather than re-written, so the two agree by
         // construction: engine inputs (backfill + tracked minutes), never `playtimeForever`.
         xpContributed = LibraryXp.contribution(
@@ -604,6 +605,7 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
         unlockedAt = unlockedAt,
         description = description,
         hidden = hidden,
+        progressKnown = progressKnown,
     )
 }
 
