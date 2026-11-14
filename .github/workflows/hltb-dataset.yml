@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'tools/hltb-dataset/**'
+      - '.claude/skills/hltb-dataset-refresh/**'
       - '.github/workflows/hltb-dataset.yml'
   push:
     branches: [master]
@@ -25,6 +26,9 @@ jobs:
 
       - name: Run dataset tooling tests
         run: node --test tools/hltb-dataset/test/*.test.mjs
+
+      - name: Test HLTB skill pair verification
+        run: node --test .claude/skills/hltb-dataset-refresh/test/*.test.mjs
 
       - name: Validate and regenerate committed dataset
         run: node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json
