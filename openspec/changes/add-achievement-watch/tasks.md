@@ -1,6 +1,6 @@
 ## 1. Storage and repository boundary
 
-- [ ] 1.1 Add the account-scoped unlock outbox, uniqueness, recompute marker, and migration; verify upgrade creates no historic events and multiple groups persist across restart.
+- [x] 1.1 Add the account-scoped unlock outbox, uniqueness, recompute marker, and migration; verify upgrade creates no historic events and multiple groups persist across restart.
 - [ ] 1.2 Add prepared watch observations through existing keyed fetch/write coordination; verify missing globals defer without writes/baseline advancement and null snapshots can recover.
 - [ ] 1.3 Commit achievement merge and outbox group atomically with timestamp/account guards; verify rollback, concurrent normal refresh, retired rows, and stable snapshot behavior.
 - [ ] 1.4 Exclude pending/terminal alert records from backup export and clear them on account reset; verify old backups restore without replay.

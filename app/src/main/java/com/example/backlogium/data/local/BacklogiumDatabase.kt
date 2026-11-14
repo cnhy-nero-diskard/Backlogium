@@ -1,5 +1,7 @@
 package com.example.backlogium.data.local
 
+import com.example.backlogium.data.local.dao.AchievementWatchDao
+import com.example.backlogium.data.local.entity.AchievementWatchWork
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -79,6 +81,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HltbDatasetMapping::class,
         HltbDatasetLength::class,
         Achievement::class,
+        AchievementWatchWork::class,
         SyncRun::class,
         RequestBreakdown::class,
         RequestTotal::class,
@@ -110,7 +113,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 43,
+    version = 44,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -121,6 +124,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun hltbDatasetDao(): HltbDatasetDao
+    abstract fun achievementWatchDao(): AchievementWatchDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
     abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
@@ -1281,6 +1285,23 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                         "NULL, NULL, 'UNKNOWN', g.`lastSyncedAt` " +
                         "FROM `games` g INNER JOIN `player_profile` p ON p.`id` = 0 " +
                         "WHERE p.`steamId` <> '' AND g.`source` = 'STEAM_OWNED' AND g.`lastPlaytime` >= 0",
+                )
+            }
+        }
+
+        /** Additive: never turn historical achievements into delivery events on upgrade. */
+        val MIGRATION_43_44 = object : Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `achievement_watch_work` (" +
+                        "`eventId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, " +
+                        "`epoch` TEXT NOT NULL, `observedAt` INTEGER NOT NULL, " +
+                        "`recomputeNeeded` INTEGER NOT NULL, `payload` TEXT, " +
+                        "`deliveryState` TEXT NOT NULL, `epochClosed` INTEGER NOT NULL, PRIMARY KEY(`eventId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_achievement_watch_work_account_observedAt` " +
+                        "ON `achievement_watch_work` (`account`, `observedAt`)",
                 )
             }
         }
