@@ -2,6 +2,9 @@ package com.example.backlogium.data.local
 
 import com.example.backlogium.data.local.dao.AchievementWatchDao
 import com.example.backlogium.data.local.entity.AchievementWatchWork
+import com.example.backlogium.data.local.dao.AchievementCatalogueDao
+import com.example.backlogium.data.local.entity.AchievementCatalogueEntry
+import com.example.backlogium.data.local.entity.AchievementCatalogueCache
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -82,6 +85,8 @@ import com.example.backlogium.data.local.entity.SyncRun
         HltbDatasetLength::class,
         Achievement::class,
         AchievementWatchWork::class,
+        AchievementCatalogueEntry::class,
+        AchievementCatalogueCache::class,
         SyncRun::class,
         RequestBreakdown::class,
         RequestTotal::class,
@@ -113,7 +118,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 44,
+    version = 45,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -124,6 +129,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun hltbDatasetDao(): HltbDatasetDao
+    abstract fun achievementCatalogueDao(): AchievementCatalogueDao
     abstract fun achievementWatchDao(): AchievementWatchDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
@@ -1303,6 +1309,19 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_achievement_watch_work_account_observedAt` " +
                         "ON `achievement_watch_work` (`account`, `observedAt`)",
                 )
+            }
+        }
+
+        val MIGRATION_44_45 = object : Migration(44, 45) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `achievement_catalogue` (" +
+                    "`appId` INTEGER NOT NULL, `apiName` TEXT NOT NULL, `displayName` TEXT NOT NULL, " +
+                    "`iconUrl` TEXT, `description` TEXT, `hidden` INTEGER NOT NULL, `globalPercent` REAL, " +
+                    "PRIMARY KEY(`appId`, `apiName`), FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `achievement_catalogue_cache` (" +
+                    "`appId` INTEGER NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`appId`), " +
+                    "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("ALTER TABLE `achievement_watch_work` ADD COLUMN `recomputeSource` TEXT NOT NULL DEFAULT 'SYNC'")
             }
         }
 

@@ -19,6 +19,7 @@ data class AchievementWatchWork(
     val payload: String? = null,
     val deliveryState: String = PENDING,
     val epochClosed: Boolean = false,
+    @androidx.room.ColumnInfo(defaultValue = "'SYNC'") val recomputeSource: String = "SYNC",
 ) {
     companion object {
         const val PENDING = "pending"
