@@ -27,6 +27,7 @@ class AccountChangeCoordinator @Inject constructor(
     private val progressTransitions: ProgressTransitionCoordinator,
     private val cloudPresence: CloudPresenceRepository,
     private val credentials: OnboardingCredentialsGateway,
+    private val achievementWatch: com.example.backlogium.data.achievement.AchievementWatchLifecycle? = null,
 ) : AccountChangeGateway {
     /** Start a confirmed account change and finish it, or leave the marker for recovery on error. */
     override suspend fun apply(apiKey: String, steamId: String) {
@@ -37,6 +38,7 @@ class AccountChangeCoordinator @Inject constructor(
 
         // The active credentials remain untouched until the Room reset has committed. Staging
         // first is necessary because the marker intentionally contains no plaintext API key.
+        achievementWatch?.beforePresence(null, null)
         credentialStore.stagePending(normalizedApiKey, normalizedSteamId)
         markerStore.markPending(normalizedSteamId)
         completePendingChange()

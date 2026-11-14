@@ -233,6 +233,10 @@ internal class FakeSettingsRepository : SettingsRepository {
     override val notificationPermissionRequested: Flow<Boolean> = MutableStateFlow(true)
     override suspend fun setNotificationPermissionRequested() = Unit
 
+    private val watchPreferences = MutableStateFlow(AchievementWatchPreferences())
+    override val achievementWatch = watchPreferences
+    override suspend fun setAchievementWatch(value: AchievementWatchPreferences) { watchPreferences.value = value }
+
     private val liveMonitor = MutableStateFlow(false)
     override val liveMonitorEnabled: Flow<Boolean> = liveMonitor
     override val acquiredGames: Flow<AcquiredGamesAnnouncement> =

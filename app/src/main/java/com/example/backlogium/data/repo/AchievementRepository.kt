@@ -521,7 +521,7 @@ class AchievementRepository @Inject constructor(
         valid: () -> Boolean,
     ): WatchCommit {
         val store = checkNotNull(observationStore)
-        return store.commit(account, refresh.appId, valid) {
+        return store.commit(account, refresh.appId, valid, watch = true) {
             mergeMutex.withLock {
                 val incoming = refresh.achievements ?: return@withLock WatchCommit.Stale
                 val metadata = gameAchievementSyncDao.get(refresh.appId)

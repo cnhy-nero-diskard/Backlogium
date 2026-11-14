@@ -74,6 +74,11 @@ abstract class AppModule {
 
     @Binds
     @Singleton
+    abstract fun bindAchievementWatch(impl: com.example.backlogium.data.achievement.AchievementWatchCoordinator):
+        com.example.backlogium.data.achievement.AchievementWatchLifecycle
+
+    @Binds
+    @Singleton
     abstract fun bindTimeProvider(impl: SystemTimeProvider): TimeProvider
 
     @Binds

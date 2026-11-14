@@ -1,5 +1,6 @@
 package com.example.backlogium.data.achievement
 
+import kotlinx.coroutines.flow.first
 import androidx.room.withTransaction
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
@@ -16,15 +17,17 @@ class AchievementObservationStore @Inject constructor(
     private val marker: AccountChangeMarkerStore,
     private val coordinator: SteamSyncCoordinator,
     private val recovery: AchievementRecomputeRecovery? = null,
+    private val settings: com.example.backlogium.data.repo.SettingsRepository? = null,
 ) {
     suspend fun currentCredentials() = credentials.currentCredentials()
     suspend fun currentAccount() = currentCredentials()?.steamId
 
-    suspend fun <T> commit(account: String, appId: Long, valid: () -> Boolean, block: suspend () -> T): T? =
+    suspend fun <T> commit(account: String, appId: Long, valid: () -> Boolean, watch: Boolean = false, block: suspend () -> T): T? =
         coordinator.withLock {
             if (!valid() || marker.pendingSteamId() != null ||
                 credentials.currentCredentials()?.steamId != account
             ) return@withLock null
+            if (watch && settings != null && (!settings.achievementWatch.first().enabled || !settings.liveMonitorEnabled.first())) return@withLock null
             recovery?.resumeWhileLocked()
             val result = database.withTransaction {
                 if (!valid() || database.playerProfileDao().get()?.steamId != account ||

@@ -62,6 +62,49 @@ import java.time.ZoneId
 class LiveStatusRepositoryTest {
 
     @Test
+    fun successfulPresenceOrdersWatchAroundExistingHooksAndFailuresDoNotDispatch() = runTest {
+        val api = FakeSteamApi()
+        val settings = FakeSettingsRepository()
+        val time = FakeTimeProvider(1_000)
+        val order = mutableListOf<String>()
+        val ends = PlaySessionEndPublisher()
+        val collector = backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+            ends.events.collect { order += "end:${it.appId}" }
+        }
+        val watch = object : com.example.backlogium.data.achievement.AchievementWatchLifecycle {
+            override fun monitorStarted() { order += "started" }
+            override fun stop() { order += "stopped" }
+            override fun beforePresence(account: String?, appId: Long?) {
+                assertEquals(appId, settings.session.value.appId)
+                order += "cancel:$appId"
+            }
+            override suspend fun afterPresence(account: String?, appId: Long?) { order += "activate:$appId" }
+        }
+        val observer = object : PresenceObserver {
+            override suspend fun onObservation(appId: Long?, observedAt: Long) { order += "shared:$appId" }
+        }
+        val repo = repository(api, settings, time, this, sessionEnds = ends, observer = observer, watch = watch)
+        api.setInGame(10, "A")
+        repo.checkNow()
+        assertEquals(listOf("cancel:10", "shared:10", "activate:10"), order)
+        order.clear()
+        api.setInGame(20, "B")
+        repo.checkNow()
+        assertEquals(listOf("cancel:20", "end:10", "shared:20", "activate:20"), order)
+        order.clear()
+        api.throwOnNextCall = true
+        repo.checkNow()
+        assertTrue(order.isEmpty())
+        api.setNotInGame()
+        repo.checkNow()
+        assertEquals(listOf("cancel:null", "end:20", "shared:null", "activate:null"), order)
+        order.clear()
+        repo.stopPolling()
+        assertEquals(listOf("stopped"), order)
+        collector.cancel()
+    }
+
+    @Test
     fun presenceTransitions_driveStartTimeWritesCorrectly() = runTest {
         val steamApi = FakeSteamApi()
         val settings = FakeSettingsRepository()
@@ -1166,6 +1209,8 @@ class LiveStatusRepositoryTest {
         sessionEnds: PlaySessionEndPublisher = PlaySessionEndPublisher(),
         hidden: Set<Long> = emptySet(),
         hiddenGameDao: HiddenGameDao = FakeHiddenGameDao(hidden),
+        observer: PresenceObserver = RecordingPresenceObserver(),
+        watch: com.example.backlogium.data.achievement.AchievementWatchLifecycle? = null,
     ) = LiveStatusRepository(
         steamApi = steamApi,
         gameDao = gameDao,
@@ -1177,7 +1222,8 @@ class LiveStatusRepositoryTest {
         sessionEnds = sessionEnds,
         // The observation side-effect is exercised in its own tests; here it only has to not
         // interfere with the live-status emissions under test.
-        presenceObserver = RecordingPresenceObserver(),
+        presenceObserver = observer,
+        achievementWatch = watch,
         scope = scope,
     )
 

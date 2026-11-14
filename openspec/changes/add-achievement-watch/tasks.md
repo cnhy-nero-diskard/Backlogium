@@ -10,9 +10,9 @@
 
 ## 2. Lifecycle and cadence
 
-- [ ] 2.1 Connect one coordinator to the successful-presence seam while preserving session-end and shared-game hooks; verify the ordered sequence of state commit → old-watch cancellation → session-end publication → shared observation → current-watch activation for same-game, failed fetch, stop, A→B, hidden-game, and account-switch cases.
-- [ ] 2.2 Implement 60/30-second scheduling, offline pause, cancellation, and failure backoff without overlaps; verify fake-clock cadence and stale in-flight result rejection.
-- [ ] 2.3 Seed only successfully committed session baselines and recover recompute-needed work; verify first-read suppression, locked→unlocked/globals failure/retry, crash after baseline/repair/event Room commits, and no recompute for unchanged XP inputs.
+- [x] 2.1 Connect one coordinator to the successful-presence seam while preserving session-end and shared-game hooks; verify the ordered sequence of state commit → old-watch cancellation → session-end publication → shared observation → current-watch activation for same-game, failed fetch, stop, A→B, hidden-game, and account-switch cases.
+- [x] 2.2 Implement 60/30-second scheduling, offline pause, cancellation, and failure backoff without overlaps; verify fake-clock cadence and stale in-flight result rejection.
+- [x] 2.3 Seed only successfully committed session baselines and recover recompute-needed work; verify first-read suppression, locked→unlocked/globals failure/retry, crash after baseline/repair/event Room commits, and no recompute for unchanged XP inputs.
 
 ## 3. Delivery and settings
 
