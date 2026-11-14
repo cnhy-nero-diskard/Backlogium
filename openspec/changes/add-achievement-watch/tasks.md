@@ -1,9 +1,9 @@
 ## 1. Storage and repository boundary
 
 - [x] 1.1 Add the account-scoped unlock outbox, uniqueness, recompute marker, and migration; verify upgrade creates no historic events and multiple groups persist across restart.
-- [ ] 1.2 Add prepared watch observations through existing keyed fetch/write coordination; verify missing globals defer without writes/baseline advancement and null snapshots can recover.
-- [ ] 1.3 Commit achievement merge and outbox group atomically with timestamp/account guards; verify rollback, concurrent normal refresh, retired rows, and stable snapshot behavior.
-- [ ] 1.4 Exclude pending/terminal alert records from backup export and clear them on account reset; verify old backups restore without replay.
+- [x] 1.2 Add prepared watch observations through existing keyed fetch/write coordination; verify missing globals defer without writes/baseline advancement and null snapshots can recover.
+- [x] 1.3 Commit achievement merge and outbox group atomically with timestamp/account guards; verify rollback, concurrent normal refresh, retired rows, and stable snapshot behavior.
+- [x] 1.4 Exclude pending/terminal alert records from backup export and clear them on account reset; verify old backups restore without replay.
 - [ ] 1.5 Add separate catalogue entries/cache metadata and domain progress-availability states; verify positive/empty catalogue persistence, upgrade preservation of player rows/snapshots, old backup restore, cache exclusion from export, and reset cleanup.
 - [ ] 1.6 Extend repository hydration/coalescing for independent schema/player/global outcomes and the zero-play detail exception; verify same-game overlap across detail/watch/manual/sync/reconciliation/post-play, missing-catalogue completion, stale timestamp/account/hidden/removed guards, and cancellation ownership.
 - [ ] 1.7 Keep catalogue-only entries out of XP, completion, rarity standing, smart collections, and watch baselines; verify private/no-stats and contradictory empty player responses preserve catalogues/last-good progress, while later authoritative player states merge and recompute recoverably without historical alerts.

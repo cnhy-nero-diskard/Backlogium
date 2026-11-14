@@ -1,5 +1,12 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.achievement.AchievementObservationStore
+import com.example.backlogium.data.local.entity.AchievementWatchWork
+import com.example.backlogium.domain.AchievementUnlockGroup
+import com.example.backlogium.domain.AchievementUnlockItem
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.security.MessageDigest
 import com.example.backlogium.data.achievement.AchievementFreshness
 import com.example.backlogium.data.achievement.AchievementMerge
 import com.example.backlogium.data.local.dao.AchievementCounts
@@ -134,6 +141,7 @@ class AchievementRepository @Inject constructor(
     private val gameDao: GameDao,
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val time: TimeProvider,
+    private val observationStore: AchievementObservationStore? = null,
 ) {
 
     /**
@@ -377,6 +385,76 @@ class AchievementRepository @Inject constructor(
             total = achievements.size,
             unlocked = achievements.count { it.achieved != 0 },
         )
+    }
+
+    /** A write-free read shared with sync/manual/detail work. Never advances a watch baseline. */
+    suspend fun prepareWatch(
+        apiKey: String,
+        steamId: String,
+        appId: Long,
+        scope: SyncRunRecorder.RunScope? = null,
+    ): AchievementRefresh? {
+        if (hiddenGamesRepository.isHidden(appId)) return null
+        return fetchGame(apiKey, steamId, appId, gameAchievementSyncDao.get(appId)?.schemaFetchedAt, scope)
+    }
+
+    sealed interface WatchCommit {
+        data class Committed(val unlocked: Set<String>, val changedXp: Boolean, val eventId: String?) : WatchCommit
+        data object DeferredRarity : WatchCommit
+        data object Stale : WatchCommit
+    }
+
+    /** Validate and merge under the same account/Room boundary as the outbox insert. */
+    suspend fun commitWatch(
+        account: String,
+        epoch: String,
+        refresh: AchievementRefresh,
+        baseline: Set<String>?,
+        valid: () -> Boolean,
+    ): WatchCommit {
+        val store = checkNotNull(observationStore)
+        return store.commit(account, refresh.appId, valid) {
+            mergeMutex.withLock {
+                val incoming = refresh.achievements ?: return@withLock WatchCommit.Stale
+                val metadata = gameAchievementSyncDao.get(refresh.appId)
+                val previous = achievementDao.getForGame(refresh.appId)
+                if (!valid() || (metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) > refresh.fetchedAt ||
+                    previous.any { it.fetchedAt > refresh.fetchedAt }
+                ) return@withLock WatchCommit.Stale
+                // An empty response contradicting real rows is not a usable baseline.
+                if (incoming.isEmpty() && previous.isNotEmpty()) return@withLock WatchCommit.Stale
+                val byName = previous.associateBy { it.apiName }
+                if (incoming.any { it.achieved != 0 && byName[it.apiName]?.snapshotPercent == null &&
+                        refresh.globalPercentByName[it.apiName]?.let { percent -> percent.isFinite() && percent in 0.0..100.0 } != true
+                    }
+                ) return@withLock WatchCommit.DeferredRarity
+                val unlocked = incoming.filter { it.achieved != 0 }.mapTo(sortedSetOf()) { it.apiName }
+                val newlyObserved = if (baseline == null) emptySet() else unlocked - baseline
+                applyRefresh(refresh.copy(fullReconciliation = false))
+                val after = achievementDao.getForGame(refresh.appId)
+                fun xpInputs(rows: List<Achievement>) = rows.filter { it.unlocked && !it.retired }
+                    .associate { it.apiName to it.snapshotPercent }
+                val changedXp = xpInputs(previous) != xpInputs(after)
+                val eventId = canonicalObservationId(account, refresh.appId, epoch,
+                    if (newlyObserved.isEmpty()) listOf("observation", refresh.fetchedAt.toString()) else newlyObserved.sorted())
+                val group = if (newlyObserved.isEmpty()) null else AchievementUnlockGroup(
+                    eventId, account, refresh.appId,
+                    gameDao.getById(refresh.appId)?.name ?: "App ${refresh.appId}", refresh.fetchedAt,
+                    after.filter { it.apiName in newlyObserved && !it.retired }.sortedBy { it.apiName }.map {
+                        AchievementUnlockItem(it.apiName, it.displayName ?: it.apiName, it.iconUrl, it.unlockedAt, it.snapshotPercent)
+                    },
+                )
+                if (changedXp || group != null) {
+                    store.database.achievementWatchDao().insert(
+                        AchievementWatchWork(eventId, account, refresh.appId, epoch, refresh.fetchedAt,
+                            changedXp, group?.let { Json.encodeToString(it) }),
+                    )
+                }
+                currentCoroutineContext().ensureActive()
+                if (!valid()) throw CancellationException("Watch generation closed before commit")
+                WatchCommit.Committed(unlocked, changedXp, group?.eventId)
+            }
+        } ?: WatchCommit.Stale
     }
 
     data class ReconciliationResult(
@@ -742,3 +820,10 @@ private fun Achievement.toDomain() = GameAchievement(
     description = description?.takeIf { it.isNotBlank() },
     hidden = hidden,
 )
+
+/** Length-prefixed components avoid ambiguous account/game/achievement concatenations. */
+internal fun canonicalObservationId(account: String, appId: Long, epoch: String, names: List<String>): String {
+    val canonical = (listOf(account, appId.toString(), epoch) + names.sorted()).joinToString("") { "${it.length}:$it" }
+    return MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+}
