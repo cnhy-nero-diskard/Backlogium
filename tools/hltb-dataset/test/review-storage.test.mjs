@@ -35,3 +35,23 @@ test('private reviews refuse existing destinations and all protected path/inode 
   await assert.rejects(guardReview(path.join(TOOL_DIR, 'README.md'), config), /review-must-be-private/);
   assert.equal(await readFile(source, 'utf8'), 'original'); assert.equal(await readFile(checkpoint, 'utf8'), 'checkpoint');
 });
+test('forced tracked private files and nested state aliases remain protected', async t => {
+  const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util');
+  const local = path.join(TOOL_DIR, '.local'); await mkdir(local, { recursive: true });
+  const dir = await mkdtemp(path.join(local, 'guard-test-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const tracked = path.join(dir, 'tracked.json'); await writeFile(tracked, '{}');
+  const previous = process.env.GIT_INDEX_FILE;
+  process.env.GIT_INDEX_FILE = path.join(dir, 'isolated-index');
+  try {
+    await promisify(execFile)('git', ['add', '-f', '--', tracked], { cwd: TOOL_DIR, env: process.env });
+    await assert.rejects(guardReview(tracked), /review-must-be-untracked/);
+  } finally { if (previous === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = previous; }
+  const stateDir = path.join(dir, 'nested-state'); await mkdir(path.join(stateDir, 'runs'), { recursive: true });
+  const checkpoint = path.join(stateDir, 'runs', 'checkpoint.json'); await writeFile(checkpoint, 'checkpoint');
+  const alias = path.join(dir, 'alias.json'); await link(checkpoint, alias);
+  await assert.rejects(guardReview(alias), /review-path-alias/);
+  await assert.rejects(guardReview(path.join(stateDir, 'runs', 'future.json')), /review-path-alias/);
+  const reportAlias = path.join(dir, 'report-alias.json'); await link(checkpoint, reportAlias);
+  await assert.rejects(guardPaths({ stateDir, output: path.join(dir, 'candidate.json'), report: reportAlias }, path.join(TOOL_DIR, 'dataset.json')), /output-path-alias/);
+  assert.equal(await readFile(checkpoint, 'utf8'), 'checkpoint');
+});

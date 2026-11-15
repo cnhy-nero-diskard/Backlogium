@@ -27,6 +27,21 @@ export async function resolved(file) {
 }
 const pathKey = (file) => process.platform === "win32" ? file.toLowerCase() : file;
 const inside = (file, directory) => file === directory || file.startsWith(directory + path.sep);
+async function protectedStateFiles(root) {
+  const found = [];
+  const walk = async (dir, inRuns = false) => {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch (e) { if (e.code === 'ENOENT') return; fail('invalid-output-path'); }
+    for (const entry of entries) {
+      const file = path.join(dir, entry.name);
+      if (inRuns || entry.name === 'runs' || entry.name === 'history.json') found.push(file);
+      // Do not follow directory symlinks while enumerating; their realpath is protected above.
+      if (entry.isDirectory()) await walk(file, inRuns || entry.name === 'runs');
+    }
+  };
+  await walk(root); return found;
+}
 export async function guardPaths(options, source) {
   const inputs = [source, options.reviewedMappings, options.reviewCandidates].filter(Boolean);
   if (options.reviewCandidates) await guardReview(options.reviewCandidates, { source, stateDir: options.stateDir, protectedFiles: [options.output, options.report] });
@@ -38,11 +53,16 @@ export async function guardPaths(options, source) {
     resolved(path.join(TOOL_DIR, ".local")).then(pathKey),
   ]);
   if (inside(stateKey, repoKey) && !inside(stateKey, localKey)) fail("state-must-be-private");
+  const stateFiles = await protectedStateFiles(options.stateDir);
   const protectedState = await Promise.all(["runs", "history.json"].map(async (name) => pathKey(await resolved(path.join(options.stateDir, name)))));
+  for (const file of stateFiles) {
+    const key = pathKey(await resolved(file));
+    if (outputKeys.some((f) => inside(f, key))) fail("output-path-alias");
+  }
   if (inputKeys.some((f, i) => inputs[i] !== options.reviewCandidates && inside(f, stateKey))) fail("state-input-overlap");
   if (outputKeys[0] === outputKeys[1] || outputKeys.some((f) => inputKeys.includes(f) || protectedState.some((p) => inside(f, p)))) fail("output-path-alias");
   // Existing hard links can alias despite different real paths.
-  const files = await Promise.all([...inputs, ...outputs, path.join(options.stateDir, "history.json")].map((f) => stat(f).catch((e) => {
+  const files = await Promise.all([...inputs, ...outputs, path.join(options.stateDir, "history.json"), ...stateFiles].map((f) => stat(f).catch((e) => {
     if (e.code === "ENOENT") return null; fail("invalid-output-path");
   })));
   const same = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino;
@@ -69,19 +89,11 @@ export async function guardReview(file, { source, stateDir = path.join(TOOL_DIR,
     protectedPaths.push(path.join(root, 'history.json'));
     const runs = pathKey(await resolved(path.join(root, 'runs')));
     if (inside(key, runs)) fail('review-state-overlap');
-    const walk = async (dir) => {
-      let entries; try { entries = await readdir(dir, { withFileTypes: true }); }
-      catch (e) { if (e.code === 'ENOENT') return; fail('invalid-review-path'); }
-      for (const entry of entries) {
-        const child = path.join(dir, entry.name);
-        if (entry.isDirectory()) await walk(child); else protectedPaths.push(child);
-      }
-    };
-    await walk(path.join(root, 'runs'));
+    protectedPaths.push(...await protectedStateFiles(root));
   }
   const info = await stat(file).catch((e) => { if (e.code !== 'ENOENT') fail('invalid-review-path'); return null; });
   for (const p of protectedPaths) {
-    if (key === pathKey(await resolved(p))) fail('review-path-alias');
+    if (inside(key, pathKey(await resolved(p)))) fail('review-path-alias');
     const other = await stat(p).catch((e) => { if (e.code !== 'ENOENT') fail('invalid-review-path'); return null; });
     if (info && other && info.dev === other.dev && info.ino === other.ino) fail('review-path-alias');
   }
