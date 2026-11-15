@@ -97,3 +97,33 @@ metadata is not evidence of a full-catalog or full-library refresh. The refresh 
 separate private successful-fetch evidence for stale selection and reports actual checked,
 changed, failed and untouched scope. Per-row ages in the published file and Android consumers
 would require a separate schema/consumer change.
+
+## Private review format version 1
+
+This separate format never changes public schema v1. Keep artifacts beneath ignored
+`tools/hltb-dataset/.local/discovery/<opaque-id>/review.json`; they disclose owned app IDs
+and human decisions even without account attribution. Do not publish them.
+
+The exact fields are `reviewVersion: 1`, `discoveryId` (32 lowercase hex),
+`baselineHash` and `scopeHash` (SHA-256 lowercase hex), `createdAt` (positive epoch
+milliseconds, discovery metadata only), `libraries` (`requested`, `readable`,
+`unavailable`, `empty` nonnegative counts), `requests` (`attempts`, `retries`,
+`elapsedMs` nonnegative integers), `warning`, and `apps`.
+The warning is exactly: “Search previews and discovery times are not direct-page
+observations or successful-fetch times.”
+
+Each app has `appId` (positive safe integer), `steamTitle` (sanitized text or null),
+`outcome` (`candidates`, `unmatched`, `failed`, `unattempted`), `category` (null for
+successful search, an allowlisted search failure otherwise), and `candidates`.
+Only `candidates` outcomes have nonempty candidates. Each candidate has `hltbId`
+(positive safe integer), `hltbTitle` (sanitized text or null), `previewMinutes`
+(exactly four integer minutes 0–600000 or null, in public style order), `source`
+(`primary` or `broader`), `query` (sanitized nonempty text), `score` (0–1 inclusive),
+and `decision` (`pending`, `approved`, `rejected`). Duplicate app or per-app candidate
+IDs and multiple approvals for one app are invalid. Unknown fields are rejected.
+
+A person edits only `decision`, approving or rejecting exact app/HLTB pairs.
+Exact titles and scores never grant approval. Search outcomes remain independent
+of decisions. Preview lengths and creation times are never final fetch evidence.
+Secrets, account attribution, session state, raw responses and instructions belong
+in none of these fields. `review.mjs` defines the failure-category allowlist.
