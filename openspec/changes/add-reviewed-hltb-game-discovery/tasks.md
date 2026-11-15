@@ -11,7 +11,7 @@ Planning only: all boxes remain unchecked until a later explicitly authorized ap
 
 - [x] 2.1 Add pure search-response, initialization, chunk-path, and endpoint parsers referencing the Android fixtures/test examples; test valid and empty results, malformed payloads, candidate-ID deduplication, minute conversion, unsafe paths, endpoint rotation, and same-origin limits. Verify no upstream JavaScript is executed and annotate behavior-source references in tests.
 - [x] 2.2 Port candidate-only primary scoring and explicit broader query generation/scoring; fixture-test exact matches remaining pending, edition/subtitle variants, the three-query bound, duplicate/empty variants, original-title scoring, and Arabic/Roman sequel penalties. Document parity boundaries and deterministic tie order beside the helpers.
-- [ ] 2.3 Extend the existing budgeted request boundary for controlled search POSTs/session headers without altering GET callers; fixture-test session reuse, finite chunk/endpoint attempts, serial spacing, timeout/body caps, Retry-After, total attempt/runtime limits, and immediate denial/challenge stops at every search phase. Verify all existing refresh transport tests still pass and tokens/headers never enter reports or persisted state.
+- [x] 2.3 Extend the existing budgeted request boundary for controlled search POSTs/session headers without altering GET callers; fixture-test session reuse, finite chunk/endpoint attempts, serial spacing, timeout/body caps, Retry-After, total attempt/runtime limits, and immediate denial/challenge stops at every search phase. Verify all existing refresh transport tests still pass and tokens/headers never enter reports or persisted state.
 
 ## 3. Explicit discovery and offline review
 

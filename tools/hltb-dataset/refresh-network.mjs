@@ -20,7 +20,9 @@ export class RequestBudget {
     if (backoff) this.stats.backoffMs += ms;
     if (ms > 0) await this.sleep(ms);
   }
-  async request(url, kind) {
+  async request(url, kind, request = {}) {
+    if (Object.keys(request).some((k) => !["method", "headers", "body"].includes(k)) ||
+      (request.method && request.method !== "POST") || (request.method && kind !== "hltb")) fail("invalid-request");
     for (let attempt = 0; attempt <= 2; attempt++) {
       if (this.stopped) fail(this.stopped);
       if (this.stats.requests >= this.options.maxRequests || this.remaining() <= 0) {
@@ -36,9 +38,10 @@ export class RequestBudget {
       try {
         [response, text] = await Promise.race([
           (async () => {
-            const r = await this.fetch(url, { signal: controller.signal, redirect: "error", headers: {
+            const r = await this.fetch(url, { signal: controller.signal, redirect: "error", method: request.method ?? "GET", body: request.body, headers: {
               Accept: kind === "steam" ? "application/json" : "text/html",
               "User-Agent": "Backlogium-HLTB-Refresh/1",
+              ...request.headers,
             } });
             // Bound streaming response bodies as well as wall time.
             let body;
@@ -63,6 +66,10 @@ export class RequestBudget {
         if (error.category === "response-too-large") throw error;
         transport = true;
       } finally { clearTimeout(timer); }
+      if (!transport && kind === "hltb" && /cf-chl-|challenge-platform|just a moment|verify you are human|captcha|access denied/i.test(text)) {
+        this.stopped = "challenge-response"; fail("challenge-response");
+      }
+      if (!transport && kind === "hltb" && response.status === 404) fail("not-found");
       if (!transport && response.status >= 200 && response.status < 300) return text;
       if (!transport && [401, 403].includes(response.status)) {
         if (kind === "hltb") this.stopped = "access-denied";

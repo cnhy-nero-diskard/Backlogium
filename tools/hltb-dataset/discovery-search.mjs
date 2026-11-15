@@ -107,3 +107,41 @@ export function rank(original, candidates, broader = false) {
   return deduplicate(candidates.map((c) => ({ ...c, score: scoreCandidate(original, c.hltbTitle, broader), decision: 'pending' })))
     .sort((a, b) => b.score - a.score || a.hltbId - b.hltbId);
 }
+
+export class SearchSession {
+  constructor(budget, privateStrings = []) { this.budget = budget; this.privateStrings = privateStrings; this.session = null; }
+  async init(endpoint) {
+    if (!safeEndpoint(endpoint)) fail('endpoint-absent');
+    const init = parseInit(await this.budget.request(`${ORIGIN}${endpoint}/init?t=${this.budget.now()}`, 'hltb'));
+    return { ...init, endpoint, expiresAt: this.budget.now() + 300000 };
+  }
+  async resolve() {
+    try { return await this.init(FAST_ENDPOINT); } catch (e) { if (e.category !== 'not-found') throw e; }
+    const homepage = await this.budget.request(`${ORIGIN}/`, 'hltb');
+    const attempted = new Set([FAST_ENDPOINT]);
+    for (const chunk of chunkPaths(homepage).slice(0, 12)) {
+      let js;
+      try { js = await this.budget.request(`${ORIGIN}${chunk}`, 'hltb'); }
+      catch (e) { if (e.category === 'not-found') continue; throw e; }
+      for (const endpoint of endpointPaths(js)) {
+        if (attempted.has(endpoint)) continue;
+        if (attempted.size >= 4) fail('endpoint-absent');
+        attempted.add(endpoint);
+        try { return await this.init(endpoint); } catch (e) { if (e.category !== 'not-found') throw e; }
+      }
+    }
+    fail('endpoint-absent');
+  }
+  async search(query) {
+    if (!publicTitle(query, this.privateStrings)) fail('unsearchable-title');
+    if (!this.session || this.session.expiresAt <= this.budget.now()) this.session = await this.resolve();
+    const { token, hpKey, hpVal, endpoint } = this.session;
+    const payload = { searchType: 'games', searchTerms: query.trim().split(/\s+/), searchPage: 1, size: 20,
+      searchOptions: { games: { userId: 0, platform: '', sortCategory: 'popular', rangeCategory: 'main', rangeTime: { min: null, max: null },
+        gameplay: { perspective: '', flow: '', genre: '', difficulty: '' }, rangeYear: { min: '', max: '' }, modifier: '' },
+      users: { sortCategory: 'postcount' }, lists: { sortCategory: 'follows' }, filter: '', sort: 0, randomizer: 0 }, useCache: true };
+    const headers = { Accept: 'application/json', 'Content-Type': 'application/json', Origin: ORIGIN, Referer: ORIGIN + '/', 'x-auth-token': token };
+    if (hpKey) { payload[hpKey] = hpVal; headers['x-hp-key'] = hpKey; headers['x-hp-val'] = hpVal; }
+    return parseSearch(await this.budget.request(`${ORIGIN}${endpoint}`, 'hltb', { method: 'POST', headers, body: JSON.stringify(payload) }), this.privateStrings);
+  }
+}
