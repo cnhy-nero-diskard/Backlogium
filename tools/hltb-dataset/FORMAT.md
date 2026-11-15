@@ -127,3 +127,13 @@ Exact titles and scores never grant approval. Search outcomes remain independent
 of decisions. Preview lengths and creation times are never final fetch evidence.
 Secrets, account attribution, session state, raw responses and instructions belong
 in none of these fields. `review.mjs` defines the failure-category allowlist.
+
+Review destinations are created atomically with private permissions and must not
+already exist. Default discovery files live under `.local/discovery/<id>/`;
+default fetch state lives in `.local/runs/` and `.local/history.json`. Fetch can
+read a review under that default private root without writing it. Custom layouts
+should use sibling `.local/reviews/`, `.local/fetch-state/` and `.local/outputs/`
+directories. Never place a review beneath either state's `runs/`, at `history.json`,
+or at an alias of an input/output/history/checkpoint. Existing decisions and all
+input bytes survive refusal. Discovery recovery uses a fresh destination; it does
+not resume or reset a prior review.

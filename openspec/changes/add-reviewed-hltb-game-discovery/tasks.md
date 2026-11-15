@@ -5,7 +5,7 @@ Planning only: all boxes remain unchecked until a later explicitly authorized ap
 ## 1. Private review contract and storage
 
 - [x] 1.1 Add the version-1 private review parser/validator with independent search outcomes and candidate decisions; fixture-test valid pending/approved/rejected records, duplicate IDs, unknown/absent statuses, invalid IDs/previews, and multiple approvals per app. Document exact fields, units, edit rules, and ownership disclosure in the private-format section of `FORMAT.md` without changing public schema v1.
-- [ ] 1.2 Add atomic private review output and read-only input guards, including safe consumption under default `.local/` state; test tracked/outside paths, pre-existing review files, protected history/checkpoints, and symlink/hard-link aliases. Verify fixtures preserve source/input bytes and existing decisions; document default and custom directory layouts.
+- [x] 1.2 Add atomic private review output and read-only input guards, including safe consumption under default `.local/` state; test tracked/outside paths, pre-existing review files, protected history/checkpoints, and symlink/hard-link aliases. Verify fixtures preserve source/input bytes and existing decisions; document default and custom directory layouts.
 
 ## 2. Search behavior and budgeted transport
 
