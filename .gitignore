@@ -46,5 +46,5 @@ logs/
 # Python bytecode from running the release-note tooling tests
 __pycache__/
 
-# Local HLTB dataset acceptance-run artifacts
+# Private HLTB refresh and acceptance-run artifacts, observation history, candidates and recovery state
 /tools/hltb-dataset/.local/

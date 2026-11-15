@@ -1,0 +1,21 @@
+{
+  "props": {
+    "pageProps": {
+      "game": {
+        "count": 1,
+        "data": {
+          "game": [
+            {
+              "game_id": 7231,
+              "game_name": "Portal 2",
+              "comp_main": 30883,
+              "comp_plus": 49552,
+              "comp_100": 82580,
+              "comp_all": 38263
+            }
+          ]
+        }
+      }
+    }
+  }
+}
