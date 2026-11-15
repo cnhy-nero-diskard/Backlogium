@@ -27,7 +27,7 @@ export function parseReview(text) {
       !title(a.steamTitle) || !outcomes.has(a.outcome) || !Array.isArray(a.candidates)) fail('invalid-review');
     apps.add(a.appId);
     if ((a.outcome === 'candidates') !== (a.candidates.length > 0) ||
-      (['failed', 'unattempted'].includes(a.outcome) ? !SEARCH_FAILURES.has(a.category) : a.category !== null)) fail('invalid-review');
+      (['failed', 'unattempted'].includes(a.outcome) ? !SEARCH_FAILURES.has(a.category) : a.outcome === 'candidates' ? a.category !== null && !SEARCH_FAILURES.has(a.category) : a.category !== null)) fail('invalid-review');
     const seen = new Set(); let approvals = 0;
     for (const c of a.candidates) {
       if (!exact(c, ['hltbId', 'hltbTitle', 'previewMinutes', 'source', 'query', 'score', 'decision']) ||
@@ -49,7 +49,7 @@ export function reviewSummary(review, currentApps = review.apps) {
   const scope = new Set(currentApps.map((a) => a.appId));
   const pairs = review.apps.flatMap((a) => a.candidates.map((c) => ({ appId: a.appId, hltbId: c.hltbId, decision: c.decision })));
   const result = { artifactVersion: 1, candidateApps: review.apps.filter((a) => a.candidates.length).length,
-    candidatePairs: pairs.length, unmatchedApps: review.apps.filter((a) => a.outcome === 'unmatched').map((a) => a.appId),
+    candidatePairs: pairs.length, partialSearchFailures: review.apps.filter((a) => a.outcome === 'candidates' && a.category !== null).map((a) => ({ appId: a.appId, category: a.category })), unmatchedApps: review.apps.filter((a) => a.outcome === 'unmatched').map((a) => a.appId),
     failedApps: review.apps.filter((a) => a.outcome === 'failed').map((a) => ({ appId: a.appId, category: a.category })),
     unattemptedApps: review.apps.filter((a) => a.outcome === 'unattempted').map((a) => a.appId) };
   for (const d of decisions) {

@@ -114,7 +114,8 @@ observations or successful-fetch times.”
 
 Each app has `appId` (positive safe integer), `steamTitle` (sanitized text or null),
 `outcome` (`candidates`, `unmatched`, `failed`, `unattempted`), `category` (null for
-successful search, an allowlisted search failure otherwise), and `candidates`.
+successful search, an allowlisted search failure otherwise; candidate-bearing
+apps may retain a failure category for a partially failed broader search), and `candidates`.
 Only `candidates` outcomes have nonempty candidates. Each candidate has `hltbId`
 (positive safe integer), `hltbTitle` (sanitized text or null), `previewMinutes`
 (exactly four integer minutes 0–600000 or null, in public style order), `source`

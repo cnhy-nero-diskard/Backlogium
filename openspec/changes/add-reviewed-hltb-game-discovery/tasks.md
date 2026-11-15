@@ -15,9 +15,9 @@ Planning only: all boxes remain unchecked until a later explicitly authorized ap
 
 ## 3. Explicit discovery and offline review
 
-- [ ] 3.1 Add the discovery CLI and uncovered-game planner using the existing readable-library union/app intersection; fixture-test overlapping/unavailable/empty libraries, covered/unowned exclusion, missing titles, primary-only default, and optional broader search only after a successful empty primary. Add README/help examples and verify discovery never calls direct game pages or changes the dataset/history.
-- [ ] 3.2 Add private per-app discovery output and sanitized outcome reporting; fixture-test pending candidates, unmatched apps, partial search failures, budget stops, and unattempted apps with explicit app/pair units and no credential/account/raw-response leakage. Verify dry-run performs Steam reads only and writes nothing except an explicitly requested plan report; document exit/outcome meanings and fresh-run recovery without discovery resume.
-- [ ] 3.3 Add read-only `--inspect` review validation and current decision summaries; fixture-test credential-free zero-network inspection after manual decisions, invalid-review refusal, and stale-original-report avoidance. Document exact-pair approval/rejection and confirm only an explicit separate report output can be written.
+- [x] 3.1 Add the discovery CLI and uncovered-game planner using the existing readable-library union/app intersection; fixture-test overlapping/unavailable/empty libraries, covered/unowned exclusion, missing titles, primary-only default, and optional broader search only after a successful empty primary. Add README/help examples and verify discovery never calls direct game pages or changes the dataset/history.
+- [x] 3.2 Add private per-app discovery output and sanitized outcome reporting; fixture-test pending candidates, unmatched apps, partial search failures, budget stops, and unattempted apps with explicit app/pair units and no credential/account/raw-response leakage. Verify dry-run performs Steam reads only and writes nothing except an explicitly requested plan report; document exit/outcome meanings and fresh-run recovery without discovery resume.
+- [x] 3.3 Add read-only `--inspect` review validation and current decision summaries; fixture-test credential-free zero-network inspection after manual decisions, invalid-review refusal, and stale-original-report avoidance. Document exact-pair approval/rejection and confirm only an explicit separate report output can be written.
 
 ## 4. Handoff to the existing refresh
 

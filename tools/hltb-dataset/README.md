@@ -172,3 +172,50 @@ unavailable libraries and exhausted budgets. Dry runs distinguish plan-only from
 Schema-v1 `gatheredAt` remains global merge metadata. Existing Android consumers may assign that
 age to imported failed/untouched rows. Local entry history and this report do not migrate that
 consumer behavior or claim that every row was refreshed. See [FORMAT.md](FORMAT.md).
+
+## Discover uncovered games for private review
+
+Discovery is separate from refresh. It searches only uncovered apps in the union
+of selected readable Steam libraries, intersected with repeated `--app-id` options.
+Unavailable libraries are reported separately from readable empty ones. Credentials
+come from `STEAM_WEB_API_KEY`; never put the key in arguments or reports.
+
+```bash
+node tools/hltb-dataset/discover.mjs --steam-id "$STEAM_ID" --dry-run
+# With explicit authorization for bounded HLTB searching:
+node tools/hltb-dataset/discover.mjs --steam-id "$STEAM_ID" --app-id 620 --max-requests 30 --max-run-seconds 90
+# Optional --broader permits <=3 variants only after a successful empty primary.
+```
+
+Execution prints a sanitized report and saves review/report JSON beneath a fresh
+`tools/hltb-dataset/.local/discovery/<opaque-id>/` directory. Use `--output` for a
+new review path beneath `.local/` and `--report` for a separate report. Outputs
+never replace existing reviews. Keep private artifacts out of publication: owned
+app IDs and exact-pair decisions disclose ownership even without account IDs.
+
+Review both identities and titles, and edit only each candidate's `decision` to
+`approved` or `rejected`; leave unresolved pairs `pending`. At most one candidate
+per Steam app may be approved. Even an exact-title score of 1 remains pending.
+Scores, queries and preview minutes are untrusted guidance, never permission or
+fresh completion evidence. No direct game pages are read during discovery.
+
+```bash
+node tools/hltb-dataset/discover.mjs --inspect tools/hltb-dataset/.local/discovery/RUN/review.json
+# Optional --report <separate-file> saves only this current inspection summary.
+```
+
+Inspection needs no credentials, performs zero network requests, and recomputes
+counts from the edited file. The original discovery report predates decisions.
+`--inspect` cannot be mixed with search options. Invalid reviews fail closed.
+The [private format](FORMAT.md#private-review-format-version-1) defines fields,
+minute units, outcomes and guarded custom layouts.
+
+Discovery exit codes: 0 clean plan or complete search/inspection, 2 usable partial
+(unavailable libraries, unmatched/failed/unattempted apps or partial broader search),
+1 blocked/invalid. Candidate apps and candidate pairs have separate units; pending,
+approved and rejected pairs are independent of search success. Search success is
+never counted as a completion fetch. A controlled stop retains completed results
+and marks remaining apps unattempted. There is no discovery resume: authorize a
+fresh bounded run to a new destination, preserving earlier decisions. Dry run
+reads Steam only and writes nothing except an explicitly requested plan report.
+Neither command applies a candidate or modifies the canonical dataset/history.
