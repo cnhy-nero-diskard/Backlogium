@@ -24,6 +24,7 @@ export const HELP = `Usage: node tools/hltb-dataset/refresh.mjs --steam-id <Stea
   --mode <mode>            missing-only (default), stale, refresh-all
   --max-age-days <number>  Required positive threshold for stale only
   --reviewed-mappings <file>  Schema-v1 reviewed correspondences, not fetch evidence
+  --review-candidates <file> Private version-1 review; only exact approved pairs
   --dry-run               Resolve Steam scope; no HLTB/candidate/state/history writes
   --resume <run-id>        Resume a frozen compatible plan (repeat original options)
   --state-dir <directory>  Private state; default tools/hltb-dataset/.local
@@ -43,7 +44,7 @@ export function parseOptions(args) {
   const options = { steamIds: [], appIds: [], mode: "missing-only", dryRun: false,
     stateDir: path.join(TOOL_DIR, ".local"), maxRequests: 500, maxRunSeconds: 900 };
   const fields = new Map([["--mode", "mode"], ["--max-age-days", "maxAgeDays"],
-    ["--reviewed-mappings", "reviewedMappings"], ["--resume", "resume"], ["--state-dir", "stateDir"],
+    ["--reviewed-mappings", "reviewedMappings"], ["--review-candidates", "reviewCandidates"], ["--resume", "resume"], ["--state-dir", "stateDir"],
     ["--output", "output"], ["--report", "report"], ["--max-requests", "maxRequests"], ["--max-run-seconds", "maxRunSeconds"]]);
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
@@ -56,6 +57,7 @@ export function parseOptions(args) {
     else if (flag === "--app-id") options.appIds.push(positiveId(value));
     else { if (seen.has(flag)) fail("duplicate-option"); seen.add(flag); options[fields.get(flag)] = value; }
   }
+  if (options.reviewedMappings && options.reviewCandidates) fail("review-input-conflict");
   if (!options.steamIds.length) fail("missing-steam-ids");
   if (!["missing-only", "stale", "refresh-all"].includes(options.mode)) fail("invalid-mode");
   if (options.mode === "stale") {
@@ -76,5 +78,6 @@ export function parseOptions(args) {
   options.explicitReport = seen.has("--report");
   options.report = path.resolve(options.report ?? path.join(options.stateDir, "report.json"));
   if (options.reviewedMappings) options.reviewedMappings = path.resolve(options.reviewedMappings);
+  if (options.reviewCandidates) options.reviewCandidates = path.resolve(options.reviewCandidates);
   return options;
 }

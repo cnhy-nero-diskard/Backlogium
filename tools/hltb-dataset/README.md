@@ -219,3 +219,49 @@ and marks remaining apps unattempted. There is no discovery resume: authorize a
 fresh bounded run to a new destination, preserving earlier decisions. Dry run
 reads Steam only and writes nothing except an explicitly requested plan report.
 Neither command applies a candidate or modifies the canonical dataset/history.
+
+After the human has approved exact pairs, hand the same private file to refresh:
+
+```bash
+node tools/hltb-dataset/refresh.mjs --steam-id "$STEAM_ID" \
+  --review-candidates tools/hltb-dataset/.local/discovery/RUN/review.json --dry-run
+# With separate authorization for the planned direct-page fetching:
+node tools/hltb-dataset/refresh.mjs --steam-id "$STEAM_ID" \
+  --review-candidates tools/hltb-dataset/.local/discovery/RUN/review.json \
+  --max-requests 30 --max-run-seconds 90
+node .claude/skills/hltb-dataset-refresh/scripts/verify-pair.mjs \
+  tools/hltb-dataset/dataset.json tools/hltb-dataset/.local/candidate.json \
+  tools/hltb-dataset/.local/report.json
+```
+
+Use fresh guarded output/report paths when earlier fetch results must be retained.
+`--review-candidates` and legacy `--reviewed-mappings` are mutually exclusive.
+The latter remains available for a schema-v1 reviewed contribution, including an
+Android Match Center export; that format alone does not attest to human approval.
+Only approved pairs inside both artifact and current owned-library/app scope are
+admitted. Stale discovery baselines and global correspondence conflicts block output.
+Pending/rejected pairs never authorize mapping or fetching, even when another
+approved pair legitimately shares their numeric HLTB ID.
+
+Each new correspondence schedules a direct-page read independently of mode/shared
+lengths; each distinct HLTB ID is read once. Search previews never supply contribution
+values or successful history. Failed, empty and unattempted reads retain baseline
+lengths and may leave an approved addition mapping-only. These are partial results,
+not successful fresh observations. Reports retain version 1 and add `review` with
+artifact hash/version, candidate app/pair counts, approved/rejected/pending pair
+counts and IDs, scope exclusions, and discovery outcomes. Fetch `unmapped`,
+`noLengths`, `failures` and `unattempted` remain separate; the last three use unique
+HLTB IDs. Actual shared tuple changes report every canonical app alias.
+
+The entire review byte hash and input kind bind a frozen fetch plan. Changing any
+decision or title, including withdrawing approval, blocks resume before requests
+and blocks active-run finalization. Use a newly authorized run or an explicitly
+reviewed reconciliation; never edit checkpoint hashes. Completed observations
+retain their original times and are not fetched again on compatible resume. Legacy
+version-1 checkpoints without review input remain compatible.
+
+Stop after offline verification for human review. Dataset application and data
+publication require separate authorization. Pair verification establishes byte and
+diff consistency, not human approval or live provenance. Global schema-v1
+`gatheredAt` can advance for changed rows while untouched/failed rows keep old
+values; it does not prove per-row freshness or full-library coverage.

@@ -43,6 +43,9 @@ export class RequestBudget {
               "User-Agent": "Backlogium-HLTB-Refresh/1",
               ...request.headers,
             } });
+            if (kind === "hltb" && [401, 403].includes(r.status)) {
+              this.stopped = "access-denied"; fail("access-denied");
+            }
             // Bound streaming response bodies as well as wall time.
             let body;
             if (r.body?.getReader) {
@@ -63,7 +66,7 @@ export class RequestBudget {
           new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("timeout")); }, timeoutMs); }),
         ]);
       } catch (error) {
-        if (error.category === "response-too-large") throw error;
+        if (error.category) throw error;
         transport = true;
       } finally { clearTimeout(timer); }
       if (!transport && kind === "hltb" && /cf-chl-|challenge-platform|just a moment|verify you are human|captcha|access denied/i.test(text)) {
