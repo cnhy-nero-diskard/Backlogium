@@ -199,6 +199,15 @@ per Steam app may be approved. Even an exact-title score of 1 remains pending.
 Scores, queries and preview minutes are untrusted guidance, never permission or
 fresh completion evidence. No direct game pages are read during discovery.
 
+Discovery uses Android's existing browser user agent, HLTB Origin and homepage
+Referer consistently across initialization, same-origin endpoint discovery, and
+search POSTs. Initialization/discovery accept `*/*`; POSTs use JSON headers.
+Steam and direct-page refresh defaults are unchanged. These headers are a fixed
+request contract, not profiles to cycle after a denial; all existing stop rules apply.
+Denied response bodies are cancelled without reading them. Diagnostics never infer
+an upstream error value or claim that an unread response had no challenge markers;
+only fixed categories and validated HTTP statuses are retained.
+
 ```bash
 node tools/hltb-dataset/discover.mjs --inspect tools/hltb-dataset/.local/discovery/RUN/review.json
 # Optional --report <separate-file> saves only this current inspection summary.
@@ -219,6 +228,19 @@ and marks remaining apps unattempted. There is no discovery resume: authorize a
 fresh bounded run to a new destination, preserving earlier decisions. Dry run
 reads Steam only and writes nothing except an explicitly requested plan report.
 Neither command applies a candidate or modifies the canonical dataset/history.
+
+Session initialization and endpoint discovery are shared setup, not game searches.
+If setup fails before any search POST begins, execution is **blocked (exit 1)**;
+the private review is still saved and searchable apps remain **unattempted**. If
+setup/renewal fails after earlier POSTs, execution is **partial (exit 2)** and
+earlier candidates or unmatched results survive. Exhausted setup is not repeated
+for later apps. A denied search POST is instead a failure of that app's search.
+The optional `sessionFailure` in the review summary identifies `session-init` or
+`endpoint-discovery`, a fixed category, and numeric HTTP status (or null). It is
+also shown by offline `--inspect`; original reviews without it remain readable.
+A successful empty search remains unmatched. Empty/unsearchable scope never
+initializes HLTB. Live search acceptance needs separate bounded authorization;
+a successful initialization GET alone does not prove a POST works.
 
 After the human has approved exact pairs, hand the same private file to refresh:
 

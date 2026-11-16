@@ -5,9 +5,12 @@ export const TOOL_VERSION = 1;
 export const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const SOURCE = path.join(TOOL_DIR, "dataset.json");
 export class RefreshError extends Error {
-  constructor(category) { super(category); this.category = category; }
+  constructor(category, status = null) {
+    super(category); this.category = category;
+    this.status = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  }
 }
-export function fail(category) { throw new RefreshError(category); }
+export function fail(category, status = null) { throw new RefreshError(category, status); }
 export function positiveId(value) {
   if (!/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value))) fail("invalid-app-id");
   return Number(value);

@@ -112,6 +112,16 @@ milliseconds, discovery metadata only), `libraries` (`requested`, `readable`,
 The warning is exactly: “Search previews and discovery times are not direct-page
 observations or successful-fetch times.”
 
+An optional top-level `sessionFailure` contains exactly `phase` (`session-init`
+or `endpoint-discovery`), `category` (the existing fixed failure allowlist), and
+`status` (an integer HTTP status 100–599, or null when unknown). It identifies
+shared setup failure, not a failed game search, and is included in offline
+inspection. It never contains tokens, raw error strings, URLs, or response bodies.
+Older version-1 artifacts without it remain valid without rewriting any bytes;
+older tool versions may reject new artifacts containing this optional field.
+All other unknown fields remain invalid, and the entire artifact's bytes still
+bind approved-input/resume integrity.
+
 Each app has `appId` (positive safe integer), `steamTitle` (sanitized text or null),
 `outcome` (`candidates`, `unmatched`, `failed`, `unattempted`), `category` (null for
 successful search, an allowlisted search failure otherwise; candidate-bearing
