@@ -14,7 +14,14 @@ const exact = (obj, fields) => obj && typeof obj === 'object' && !Array.isArray(
 const title = (s) => s === null || (typeof s === 'string' && publicTitle(s) === s);
 export function parseReview(text) {
   let r; try { r = JSON.parse(text); } catch { fail('invalid-review'); }
-  if (!exact(r, ['reviewVersion', 'discoveryId', 'baselineHash', 'createdAt', 'scopeHash', 'libraries', 'requests', 'warning', 'apps']) ||
+  const fields = ['reviewVersion', 'discoveryId', 'baselineHash', 'createdAt', 'scopeHash', 'libraries', 'requests', 'warning', 'apps'];
+  if (r && Object.hasOwn(r, 'sessionFailure')) {
+    fields.push('sessionFailure');
+    const f = r.sessionFailure;
+    if (!exact(f, ['phase', 'category', 'status']) || !['session-init', 'endpoint-discovery'].includes(f.phase) ||
+      !SEARCH_FAILURES.has(f.category) || (f.status !== null && (!Number.isInteger(f.status) || f.status < 100 || f.status > 599))) fail('invalid-review');
+  }
+  if (!exact(r, fields) ||
     r.reviewVersion !== 1 || !/^[a-f0-9]{32}$/.test(r.discoveryId) || !digest(r.baselineHash) || !digest(r.scopeHash) ||
     !Number.isSafeInteger(r.createdAt) || r.createdAt <= 0 || r.warning !== PREVIEW_WARNING || !Array.isArray(r.apps)) fail('invalid-review');
   for (const [obj, fields] of [[r.libraries, ['requested', 'readable', 'unavailable', 'empty']], [r.requests, ['attempts', 'retries', 'elapsedMs']]]) {
@@ -52,6 +59,10 @@ export function reviewSummary(review, currentApps = review.apps) {
     candidatePairs: pairs.length, partialSearchFailures: review.apps.filter((a) => a.outcome === 'candidates' && a.category !== null).map((a) => ({ appId: a.appId, category: a.category })), unmatchedApps: review.apps.filter((a) => a.outcome === 'unmatched').map((a) => a.appId),
     failedApps: review.apps.filter((a) => a.outcome === 'failed').map((a) => ({ appId: a.appId, category: a.category })),
     unattemptedApps: review.apps.filter((a) => a.outcome === 'unattempted').map((a) => a.appId) };
+  if (review.sessionFailure) {
+    const { phase, category, status } = review.sessionFailure;
+    result.sessionFailure = { phase, category, status };
+  }
   for (const d of decisions) {
     result[`${d}Pairs`] = pairs.filter((p) => p.decision === d).map(({ appId, hltbId }) => ({ appId, hltbId }));
     result[`${d}PairCount`] = result[`${d}Pairs`].length;

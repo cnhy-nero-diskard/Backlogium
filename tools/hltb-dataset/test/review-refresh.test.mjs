@@ -94,6 +94,20 @@ test('review bytes bind resume, including withdrawal/title/rejected decision edi
   const stateFile = path.join(f.options.stateDir, 'runs', `${r.runId}.json`); const state = JSON.parse(await readFile(stateFile)); state.mappingKind = 'legacy'; await writeFile(stateFile, JSON.stringify(state));
   await assert.rejects(runRefresh(f.options, f.dependencies), /incompatible-resume/);
 });
+test('optional setup diagnostics preserve approved refresh input and full-byte resume binding', async t => {
+  const f = await fixture(t);
+  f.review.sessionFailure = { phase: 'session-init', category: 'access-denied', status: 403 };
+  const original = JSON.stringify(f.review); await writeFile(f.reviewFile, original);
+  const r = await runRefresh(f.options, f.dependencies);
+  assert.deepEqual(r.report.addedMappings, [[40, 100]]);
+  assert.deepEqual(r.report.review.sessionFailure, f.review.sessionFailure);
+  assert.equal(await readFile(f.reviewFile, 'utf8'), original);
+  f.options.resume = r.runId; f.calls.length = 0;
+  await runRefresh(f.options, f.dependencies); assert.equal(f.calls.length, 0);
+  f.review.sessionFailure.status = 401; await writeFile(f.reviewFile, JSON.stringify(f.review));
+  await assert.rejects(runRefresh(f.options, f.dependencies), /incompatible-resume/);
+  assert.equal(f.calls.length, 0);
+});
 test('approval withdrawal during fetch blocks finalization, preserves observations and resume identity', async t => {
   const f = await fixture(t); const original = await readFile(f.reviewFile, 'utf8'); let saved;
   f.dependencies.afterCheckpoint = async state => { saved = structuredClone(state); f.review.apps[0].candidates[0].decision = 'rejected'; await writeFile(f.reviewFile, JSON.stringify(f.review)); };

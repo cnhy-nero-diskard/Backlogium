@@ -82,6 +82,15 @@ rejected, pending, unmatched, failed and unattempted apps; report partial broade
 Private reviews describe owned app IDs and human choices; do not publish them. Public mappings
 and game-specific gaps disclose ownership even without account attribution.
 
+Shared session setup is not a game search: a `sessionFailure` before any search POST
+means blocked/exit 1 and otherwise searchable apps remain unattempted, not failed
+or unmatched. Renewal/setup failure after earlier POSTs is partial/exit 2 and keeps
+prior results. Use the saved review's optional allowlisted phase/category/status
+in offline inspection; legacy reviews without it remain supported. Never infer an
+upstream error value from a branch name, or claim challenge absence on an unread
+denied body. A successful initialization GET is not live search acceptance. Further
+searches require a fresh explicit bounded grant; denial still stops all later work.
+
 Pass an approved review as `refresh.mjs --review-candidates REVIEW`, mutually exclusive with
 `--reviewed-mappings`. Preview the plan first; authorized direct fetching is a separate stage
 from discovery and approval. Only approved pairs inside both artifact and current owned-library

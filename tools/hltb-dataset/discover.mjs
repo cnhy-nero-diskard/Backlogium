@@ -25,6 +25,8 @@ Default execution review/report: .local/discovery/<opaque-id>/{review,report}.js
 STEAM_WEB_API_KEY comes only from the environment. Inspection needs no credentials.
 Exit 0 complete/clean plan, 2 partial (unmatched/failed/unattempted or library gaps),
 1 invalid/blocked. Discovery never fetches direct game pages or writes dataset/history.
+Session setup failure before any search POST is blocked (1), not a failed game;
+after earlier POSTs it is partial (2). Reviews/inspection retain sessionFailure.
 Every pair starts pending. Owned app IDs and decisions are private; publishing game
 mappings/gaps reveals ownership. Fresh-run recovery uses a new output; no resume.
 `;
@@ -102,8 +104,9 @@ export async function runDiscovery(options, dependencies = {}) {
   for (const app of review.apps) {
     if (budget.stopped) { app.category = searchCategory(budget.stopped); continue; }
     if (!publicTitle(app.steamTitle, privateStrings)) { app.outcome = 'failed'; app.category = 'unsearchable-title'; continue; }
-    const attemptsBefore = budget.stats.requests; app.category = null;
+    const postsBefore = budget.postAttempts; app.category = null;
     try {
+      await session.ready();
       const primary = await session.search(app.steamTitle);
       let candidates = primary.map(c => ({ ...c, source: 'primary', query: app.steamTitle }));
       if (!primary.length && options.broader) {
@@ -117,19 +120,21 @@ export async function runDiscovery(options, dependencies = {}) {
       if (app.outcome === 'unmatched') app.category = null;
       if (budget.stopped && !app.candidates.length) { app.outcome = 'failed'; app.category = searchCategory(budget.stopped); }
     } catch (e) {
-      app.outcome = e.category === 'budget-exhausted' && attemptsBefore === budget.stats.requests ? 'unattempted' : 'failed';
+      app.outcome = postsBefore === budget.postAttempts ? 'unattempted' : 'failed';
       app.category = searchCategory(e.category);
     }
   }
+  if (session.failure) review.sessionFailure = session.failure;
   review.requests = { attempts: budget.stats.requests, retries: budget.stats.retries, elapsedMs: Math.round(budget.snapshot().elapsedMs) };
   // Validate exactly what is persisted; never write upstream responses/session state.
   parseReview(JSON.stringify(review));
   await guardPaths(options, source); await guardReview(options.output, { source, protectedFiles: [options.report], output: true });
   await createPrivateJson(options.output, review);
   const partial = scope.libraries.unavailable > 0 || review.apps.some(a => a.outcome !== 'candidates' || a.category !== null);
-  const report = reportFor(review, partial ? 'partial' : 'complete', budget, options);
+  const blocked = !!session.failure && budget.postAttempts === 0;
+  const report = reportFor(review, blocked ? 'blocked' : partial ? 'partial' : 'complete', budget, options);
   await writeJson(options.report, report);
-  return { report, review, exitCode: partial ? 2 : 0 };
+  return { report, review, exitCode: blocked ? 1 : partial ? 2 : 0 };
 }
 export async function main(args = process.argv.slice(2), dependencies = {}) {
   try {
