@@ -23,7 +23,7 @@ class EmulatorLauncherTest(unittest.TestCase):
         self.renderer.write_text("RE Vulkan (Ganesh)\n  Name: Goldfish GFXStream (Apple M5)\n")
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("BACKLOGIUM_")}
         self.env.update(ANDROID_HOME=str(self.root), TMPDIR=str(self.root),
-                        MOCK_ROOT=str(self.root), BACKLOGIUM_TEST_EMULATOR_BOOT_TIMEOUT="1")
+                        MOCK_ROOT=str(self.root), BACKLOGIUM_TEST_EMULATOR_BOOT_TIMEOUT="5")
         self.write_tool("platform-tools/adb", """
             import os, sys
             from pathlib import Path
@@ -42,6 +42,11 @@ class EmulatorLauncherTest(unittest.TestCase):
                 sys.exit('unexpected device target')
             cmd = args[2:]
             if cmd == ['get-state']:
+                if os.environ.get('MOCK_INITIAL_OFFLINE') == '1':
+                    marker = root / 'initial-offline-observed'
+                    if not marker.exists():
+                        marker.write_text('observed')
+                        sys.exit(1)
                 if state == 'device':
                     print('device')
                 else:
@@ -121,6 +126,16 @@ class EmulatorLauncherTest(unittest.TestCase):
         self.assertIn("-no-snapshot", calls)
         self.assertIn("-port 5554", calls)
 
+    def test_new_boot_retries_an_initial_offline_poll(self):
+        # Launch is asynchronous: a first poll before the mock emulator is ready
+        # must allow the launcher's two-second poll interval, including in CI.
+        self.state.write_text("")
+        result = self.run_launcher(MOCK_INITIAL_OFFLINE="1")
+        self.assertEqual(0, result.returncode, result.stderr)
+        calls = self.calls.read_text()
+        self.assertGreaterEqual(calls.count("adb -s emulator-5554 get-state"), 2)
+        self.assertIn("renderer=gpu", result.stdout)
+
     def test_rejects_unsafe_launch_args_without_starting(self):
         self.state.write_text("")
         for args in ["-feature GuestAngle", "-gpu auto", "-gpu swiftshader_indirect",
@@ -144,7 +159,7 @@ class EmulatorLauncherTest(unittest.TestCase):
         self.assertLess(calls.index("emu kill"), calls.index("emulator -avd"))
 
     def test_reused_guest_must_finish_booting(self):
-        result = self.run_launcher(MOCK_BOOT="0")
+        result = self.run_launcher(MOCK_BOOT="0", BACKLOGIUM_TEST_EMULATOR_BOOT_TIMEOUT="1")
         self.assertNotEqual(0, result.returncode)
         self.assertIn("timed out", result.stderr)
 

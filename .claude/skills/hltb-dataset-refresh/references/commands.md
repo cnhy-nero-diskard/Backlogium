@@ -65,3 +65,58 @@ gh pr create --base AGREED-BASE --head DATA-BRANCH --title "chore: refresh HLTB 
 No implicit `master` override: keep an explicitly chosen stacked base. Never merge,
 tag or release as part of creating the PR. Master's dataset workflow can release data
 automatically after merge, so disclose that consequence before a later merge decision.
+
+
+## Discovery → exact-pair review → direct fetching
+
+Each network stage needs its own scoped authorization unless already granted. Budgets here
+are examples. Default discovery is primary-only; add `--broader` only when explicitly allowed.
+
+```text
+node tools/hltb-dataset/discover.mjs --help
+node tools/hltb-dataset/discover.mjs --steam-id STEAMID64 --app-id APPID --dry-run
+node tools/hltb-dataset/discover.mjs --steam-id STEAMID64 --app-id APPID \
+  --max-requests 30 --max-run-seconds 90 \
+  --output tools/hltb-dataset/.local/discovery/UNIQUE-RUN/review.json \
+  --report tools/hltb-dataset/.local/discovery/UNIQUE-RUN/report.json
+
+node tools/hltb-dataset/discover.mjs \
+  --inspect tools/hltb-dataset/.local/discovery/UNIQUE-RUN/review.json
+```
+
+Inspection is offline, needs no key/account, and recomputes current decisions. It accepts
+only an optional separate `--report` alongside `--inspect`. Existing review outputs are
+never overwritten. Every result starts pending. Edit only exact-pair `decision` after human
+approval/rejection; no title match or preview automatically approves. Keep files private:
+owned app IDs and review decisions disclose ownership. No discovery resume is supported.
+
+```text
+node tools/hltb-dataset/refresh.mjs --steam-id STEAMID64 \
+  --review-candidates tools/hltb-dataset/.local/discovery/UNIQUE-RUN/review.json \
+  --max-requests 30 --max-run-seconds 90 --dry-run
+
+node tools/hltb-dataset/refresh.mjs --steam-id STEAMID64 \
+  --review-candidates tools/hltb-dataset/.local/discovery/UNIQUE-RUN/review.json \
+  --max-requests 30 --max-run-seconds 90 \
+  --state-dir tools/hltb-dataset/.local/fetch-UNIQUE-RUN \
+  --output tools/hltb-dataset/.local/fetch-UNIQUE-RUN/candidate.json \
+  --report tools/hltb-dataset/.local/fetch-UNIQUE-RUN/report.json
+
+node .claude/skills/hltb-dataset-refresh/scripts/verify-pair.mjs \
+  tools/hltb-dataset/dataset.json \
+  tools/hltb-dataset/.local/fetch-UNIQUE-RUN/candidate.json \
+  tools/hltb-dataset/.local/fetch-UNIQUE-RUN/report.json
+```
+
+Stop before apply/publication and present the verified candidate. Only approved in-scope pairs
+enter refresh; preview lengths never become final observations. Changed review bytes (including
+withdrawn approvals) or a stale baseline block the old plan. New runs/reconciliations need scoped
+authorization; never repair hashes. Shared IDs are read once, and actual canonical aliases are
+reported without admitting rejected pairs. Reported review app/pair counts remain separate from
+unique-HLTB fetch failures/no-lengths/unattempted and unmapped apps. Schema-v1 global age does not
+establish freshness of untouched rows. Verification establishes consistency, not live provenance.
+
+Alternatively use `--reviewed-mappings REVIEWED-CONTRIBUTION` (schema v1), including a reviewed
+Android Match Center export. Do not combine both input options; export format alone is not proof
+of exact human approval. Keep a custom review in `.local/reviews/` beside `.local/fetch-state/`
+and `.local/outputs/`; never in `runs/` or at `history.json`.

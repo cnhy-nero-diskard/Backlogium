@@ -5,9 +5,12 @@ export const TOOL_VERSION = 1;
 export const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const SOURCE = path.join(TOOL_DIR, "dataset.json");
 export class RefreshError extends Error {
-  constructor(category) { super(category); this.category = category; }
+  constructor(category, status = null) {
+    super(category); this.category = category;
+    this.status = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  }
 }
-export function fail(category) { throw new RefreshError(category); }
+export function fail(category, status = null) { throw new RefreshError(category, status); }
 export function positiveId(value) {
   if (!/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value))) fail("invalid-app-id");
   return Number(value);
@@ -24,6 +27,7 @@ export const HELP = `Usage: node tools/hltb-dataset/refresh.mjs --steam-id <Stea
   --mode <mode>            missing-only (default), stale, refresh-all
   --max-age-days <number>  Required positive threshold for stale only
   --reviewed-mappings <file>  Schema-v1 reviewed correspondences, not fetch evidence
+  --review-candidates <file> Private version-1 review; only exact approved pairs
   --dry-run               Resolve Steam scope; no HLTB/candidate/state/history writes
   --resume <run-id>        Resume a frozen compatible plan (repeat original options)
   --state-dir <directory>  Private state; default tools/hltb-dataset/.local
@@ -43,7 +47,7 @@ export function parseOptions(args) {
   const options = { steamIds: [], appIds: [], mode: "missing-only", dryRun: false,
     stateDir: path.join(TOOL_DIR, ".local"), maxRequests: 500, maxRunSeconds: 900 };
   const fields = new Map([["--mode", "mode"], ["--max-age-days", "maxAgeDays"],
-    ["--reviewed-mappings", "reviewedMappings"], ["--resume", "resume"], ["--state-dir", "stateDir"],
+    ["--reviewed-mappings", "reviewedMappings"], ["--review-candidates", "reviewCandidates"], ["--resume", "resume"], ["--state-dir", "stateDir"],
     ["--output", "output"], ["--report", "report"], ["--max-requests", "maxRequests"], ["--max-run-seconds", "maxRunSeconds"]]);
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
@@ -56,6 +60,7 @@ export function parseOptions(args) {
     else if (flag === "--app-id") options.appIds.push(positiveId(value));
     else { if (seen.has(flag)) fail("duplicate-option"); seen.add(flag); options[fields.get(flag)] = value; }
   }
+  if (options.reviewedMappings && options.reviewCandidates) fail("review-input-conflict");
   if (!options.steamIds.length) fail("missing-steam-ids");
   if (!["missing-only", "stale", "refresh-all"].includes(options.mode)) fail("invalid-mode");
   if (options.mode === "stale") {
@@ -76,5 +81,6 @@ export function parseOptions(args) {
   options.explicitReport = seen.has("--report");
   options.report = path.resolve(options.report ?? path.join(options.stateDir, "report.json"));
   if (options.reviewedMappings) options.reviewedMappings = path.resolve(options.reviewedMappings);
+  if (options.reviewCandidates) options.reviewCandidates = path.resolve(options.reviewCandidates);
   return options;
 }

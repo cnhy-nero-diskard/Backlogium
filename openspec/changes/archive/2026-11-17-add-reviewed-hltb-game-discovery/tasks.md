@@ -1,0 +1,33 @@
+# Tasks
+
+Planning only: all boxes remain unchecked until a later explicitly authorized apply workflow. No task authorizes a live search/fetch, canonical dataset application, commit, push, or PR. Every automated network interaction below uses fixtures.
+
+## 1. Private review contract and storage
+
+- [x] 1.1 Add the version-1 private review parser/validator with independent search outcomes and candidate decisions; fixture-test valid pending/approved/rejected records, duplicate IDs, unknown/absent statuses, invalid IDs/previews, and multiple approvals per app. Document exact fields, units, edit rules, and ownership disclosure in the private-format section of `FORMAT.md` without changing public schema v1.
+- [x] 1.2 Add atomic private review output and read-only input guards, including safe consumption under default `.local/` state; test tracked/outside paths, pre-existing review files, protected history/checkpoints, and symlink/hard-link aliases. Verify fixtures preserve source/input bytes and existing decisions; document default and custom directory layouts.
+
+## 2. Search behavior and budgeted transport
+
+- [x] 2.1 Add pure search-response, initialization, chunk-path, and endpoint parsers referencing the Android fixtures/test examples; test valid and empty results, malformed payloads, candidate-ID deduplication, minute conversion, unsafe paths, endpoint rotation, and same-origin limits. Verify no upstream JavaScript is executed and annotate behavior-source references in tests.
+- [x] 2.2 Port candidate-only primary scoring and explicit broader query generation/scoring; fixture-test exact matches remaining pending, edition/subtitle variants, the three-query bound, duplicate/empty variants, original-title scoring, and Arabic/Roman sequel penalties. Document parity boundaries and deterministic tie order beside the helpers.
+- [x] 2.3 Extend the existing budgeted request boundary for controlled search POSTs/session headers without altering GET callers; fixture-test session reuse, finite chunk/endpoint attempts, serial spacing, timeout/body caps, Retry-After, total attempt/runtime limits, and immediate denial/challenge stops at every search phase. Verify all existing refresh transport tests still pass and tokens/headers never enter reports or persisted state.
+
+## 3. Explicit discovery and offline review
+
+- [x] 3.1 Add the discovery CLI and uncovered-game planner using the existing readable-library union/app intersection; fixture-test overlapping/unavailable/empty libraries, covered/unowned exclusion, missing titles, primary-only default, and optional broader search only after a successful empty primary. Add README/help examples and verify discovery never calls direct game pages or changes the dataset/history.
+- [x] 3.2 Add private per-app discovery output and sanitized outcome reporting; fixture-test pending candidates, unmatched apps, partial search failures, budget stops, and unattempted apps with explicit app/pair units and no credential/account/raw-response leakage. Verify dry-run performs Steam reads only and writes nothing except an explicitly requested plan report; document exit/outcome meanings and fresh-run recovery without discovery resume.
+- [x] 3.3 Add read-only `--inspect` review validation and current decision summaries; fixture-test credential-free zero-network inspection after manual decisions, invalid-review refusal, and stale-original-report avoidance. Document exact-pair approval/rejection and confirm only an explicit separate report output can be written.
+
+## 4. Handoff to the existing refresh
+
+- [x] 4.1 Add `--review-candidates` with input-kind/content binding, mutually exclusive with legacy `--reviewed-mappings`; fixture-test exact-pair approved admission, pending/rejected exclusion, artifact/current-scope intersection, stale baselines, and global correspondence conflicts before candidate output. Keep legacy contribution tests passing and add README/help handoff examples.
+- [x] 4.2 Include newly admitted reviewed IDs in direct fetch selection independently of existing shared lengths; fixture-test missing-only/stale shared-entry additions, one observation per HLTB ID, rejected aliases not admitted, and all actual canonical aliases reported. Verify preview lengths never populate contributions/history and legacy reviewed additions remain supported.
+- [x] 4.3 Bind the review file to frozen plans and finalization; fixture-test changed approval/rejection/title bytes, approval withdrawal on resume or during fetching, baseline races, interrupted pair recovery, and no re-fetch/retimestamping of terminal observations. Preserve compatible legacy checkpoints and document new-run/reconciliation requirements for changed reviews.
+- [x] 4.4 Extend refresh reports with allowlisted review accounting while retaining tool/report version 1; fixture-test approvals/rejections/pending/exclusions separately from unmapped/no-lengths/failure/unattempted categories. Verify real candidate diffs and shared aliases pass the existing pair checker, failures preserve every baseline row, mapping-only additions are not called fetched successes, and the source file remains byte-identical. Document counts and global-age limits.
+
+## 5. Assistance and end-to-end acceptance
+
+- [x] 5.1 Update the refresh skill and command reference for discovery → private human review → refresh dry run → authorized direct fetching → offline verification → stop before apply. Add no-network workflow cases for exact matches awaiting approval, partial approvals, rejections sharing IDs, inspection-only requests, stale/withdrawn approvals, and ownership disclosure. Verify the documented examples and existing `--reviewed-mappings`/Android-export alternative remain valid without inferring automatic-match approval.
+- [x] 5.2 Add an end-to-end fixture test discovering mixed uncovered games, approving selected pairs, fetching distinct direct pages, and verifying the full candidate/report pair. Assert all original mappings survive, failed/empty tuples remain unchanged, validated direct values replace previews, conflicts block output, and no pending/rejected/unmatched pair authorizes a request or mapping. Fail the test on any unexpected network request.
+- [x] 5.3 Run Node 22 `node --test tools/hltb-dataset/test/*.test.mjs`, `node --test .claude/skills/hltb-dataset-refresh/test/*.test.mjs`, `node tools/hltb-dataset/merge.mjs --check tools/hltb-dataset/dataset.json`, `openspec validate add-reviewed-hltb-game-discovery --strict`, and `git diff --check`. Record exact commands/results and runtime, distinguish fixture coverage from live evidence, and verify the implementation diff excludes canonical dataset, main specs, and Android edits. Do not apply, commit, push, or open a PR.

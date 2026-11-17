@@ -53,7 +53,9 @@ export function selectTargets(base, reviewed, scope, options, history, now) {
   const allMappings = [...mappings].sort((a, b) => a[0] - b[0]);
   const lengths = new Map(base.lengths.map((r) => [r[0], r]));
   const unique = [...new Set(scope.apps.map((a) => mappings.get(a.appId)).filter(Boolean))].sort((a, b) => a - b);
+  const newIds = new Set(addedMappings.map(([, id]) => id));
   const selected = unique.filter((id) => {
+    if (newIds.has(id)) return true;
     if (!lengths.has(id) || options.mode === "refresh-all") return true;
     if (options.mode === "missing-only") return false;
     const evidence = history.historyVersion === 1 ? history.entries?.[id] : null;
