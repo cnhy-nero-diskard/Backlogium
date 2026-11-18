@@ -9,6 +9,8 @@ import { identityFor, resolveLibraries, selectTargets } from "./refresh-targets.
 import { parseGamePage } from "./refresh-parser.mjs";
 import { buildReport, safeCategory } from "./refresh-report.mjs";
 
+import { parseReview, approvedContribution, reviewSummary } from "./review.mjs";
+
 const STATE_VERSION = 1;
 export function optionFingerprint(options) {
   return fingerprint({ steamIds: options.steamIds, appIds: options.appIds, mode: options.mode,
@@ -30,13 +32,20 @@ export async function runRefresh(options, dependencies = {}) {
   const source = dependencies.source ?? SOURCE;
   await guardPaths(options, source);
   const baselineText = await readFile(source, "utf8");
-  let base, reviewed = null, mappingHash = null;
+  let base, reviewed = null, review = null, mappingHash = null;
+  if (options.reviewedMappings && options.reviewCandidates) fail("review-input-conflict");
+  const mappingInput = options.reviewCandidates ?? options.reviewedMappings;
+  const mappingKind = options.reviewCandidates ? "review" : options.reviewedMappings ? "legacy" : null;
   try {
     base = parseDataset(baselineText);
     if (serializeDataset(base) !== baselineText) fail("noncanonical-source");
-    if (options.reviewedMappings) {
-      const text = await readFile(options.reviewedMappings, "utf8");
-      reviewed = parseDataset(text); mappingHash = hash(text);
+    if (mappingInput) {
+      const text = await readFile(mappingInput, "utf8"); mappingHash = hash(text);
+      if (options.reviewCandidates) {
+        review = parseReview(text);
+        if (review.baselineHash !== hash(baselineText)) fail("stale-review-baseline");
+        reviewed = approvedContribution(review);
+      } else reviewed = parseDataset(text);
     }
   } catch (error) { if (error.category) throw error; fail("invalid-dataset-input"); }
   const key = (dependencies.env ?? process.env).STEAM_WEB_API_KEY;
@@ -52,14 +61,16 @@ export async function runRefresh(options, dependencies = {}) {
     state = await readJson(path.join(options.stateDir, "runs", `${options.resume}.json`));
     if (state.stateVersion !== STATE_VERSION || state.runId !== options.resume || state.baselineHash !== hash(baselineText) ||
       state.optionHash !== optionFingerprint(options) || state.mappingHash !== mappingHash ||
+      (state.mappingKind ?? (state.mappingHash ? "legacy" : null)) !== mappingKind ||
       state.planHash !== fingerprint(state.plan)) fail("incompatible-resume");
   }
   const budget = new RequestBudget(options, dependencies, state?.stats);
   if (!state) {
     const scope = await resolveLibraries(options, key, budget);
     const plan = selectTargets(base, reviewed, scope, options, history, budget.now());
+    if (review) plan.review = { ...reviewSummary(review, scope.apps), artifactHash: mappingHash };
     state = { stateVersion: STATE_VERSION, runId: randomBytes(16).toString("hex"), baselineHash: hash(baselineText),
-      optionHash: optionFingerprint(options), mappingHash, planHash: fingerprint(plan), plan, observations: {}, stats: budget.snapshot() };
+      optionHash: optionFingerprint(options), mappingHash, mappingKind, planHash: fingerprint(plan), plan, observations: {}, stats: budget.snapshot() };
   }
   const plan = state.plan;
   const makeReport = (candidate, candidateText) => buildReport({ options, base, baselineText, candidate, candidateText,
@@ -110,6 +121,8 @@ export async function runRefresh(options, dependencies = {}) {
   const candidateText = serializeDataset(candidate);
   if (dependencies.beforeFinalize) await dependencies.beforeFinalize();
   if (hash(await readFile(source, "utf8")) !== state.baselineHash) fail("source-changed");
+  if (mappingInput && hash(await readFile(mappingInput, "utf8")) !== state.mappingHash) fail("review-input-changed");
+  await guardPaths(options, source);
   const report = makeReport(candidate, candidateText);
   // Each replacement is atomic; the pair is accepted only with both matching hashes.
   // Removing the previous report prevents an interrupted write from looking complete.

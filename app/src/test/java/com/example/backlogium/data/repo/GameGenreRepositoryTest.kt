@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import android.app.Application
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
@@ -29,6 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import retrofit2.Response
 import java.time.LocalDate
 import java.time.ZoneId
@@ -45,6 +47,8 @@ import java.time.ZoneId
  * genre-less apps on every sync forever.
  */
 @RunWith(RobolectricTestRunner::class)
+// Only Room is under test: real app startup leaves background DataStore readers past teardown.
+@Config(application = Application::class)
 class GameGenreRepositoryTest {
 
     private lateinit var db: BacklogiumDatabase
