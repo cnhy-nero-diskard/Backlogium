@@ -62,6 +62,8 @@ import com.example.backlogium.BuildConfig
 import com.example.backlogium.ui.updates.AppUpdateSheet
 import com.example.backlogium.ui.updates.AppUpdateViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
@@ -120,6 +122,8 @@ private fun smartCollectionRoute(collectionId: SmartCollectionId) =
 fun BacklogiumAppRoot(
     initialOpenUpdate: Boolean = false,
     openUpdateRequests: Flow<Unit> = emptyFlow(),
+    initialOpenAchievement: Pair<String, Long>? = null,
+    openAchievementRequests: Flow<Pair<String, Long>> = emptyFlow(),
 ) {
     val updateViewModel: AppUpdateViewModel = hiltViewModel()
     val updateState by updateViewModel.uiState.collectAsStateWithLifecycle()
@@ -128,6 +132,20 @@ fun BacklogiumAppRoot(
         openUpdateRequests.collect { updateSheetVisible = true }
     }
     val navController = rememberNavController()
+    val unlockViewModel: AchievementUnlockViewModel = hiltViewModel()
+    val navigationScope = rememberCoroutineScope()
+    val openAchievementGame: (String, Long) -> Unit = { account, appId ->
+        navigationScope.launch {
+            if (unlockViewModel.canOpen(account, appId)) navController.navigate(gameDetailRoute(appId)) { launchSingleTop = true }
+        }
+    }
+    LaunchedEffect(initialOpenAchievement) {
+        initialOpenAchievement?.let { openAchievementGame(it.first, it.second) }
+    }
+    LaunchedEffect(openAchievementRequests) {
+        openAchievementRequests.collect { openAchievementGame(it.first, it.second) }
+    }
+    AchievementUnlockFeedback(openAchievementGame, unlockViewModel)
     val libraryVisitViewModel: LibraryVisitViewModel = hiltViewModel()
     LibraryVisitEffects(navController, libraryVisitViewModel.visit)
     val backStackEntry by navController.currentBackStackEntryAsState()

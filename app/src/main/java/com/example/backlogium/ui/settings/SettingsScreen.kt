@@ -49,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -182,6 +184,7 @@ internal fun SettingsGraphScreen(
                 onDownloadSteamAssets = viewModel::downloadSteamAssets,
                 onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
                 onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
+                onAchievementWatchChanged = viewModel::onAchievementWatchChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
                 onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
@@ -271,6 +274,7 @@ data class SettingsActions(
     val onDownloadSteamAssets: (SteamAssetDownloadMode) -> Unit = {},
     val onCancelSteamAssetDownload: () -> Unit = {},
     val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
+    val onAchievementWatchChanged: (com.example.backlogium.domain.AchievementWatchPreferences) -> Unit = {},
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
     val onAdvancedExpandedChanged: (Boolean) -> Unit,
@@ -424,6 +428,7 @@ internal fun GameplaySettingsContent(
         configured = state.configured,
         onEnabledChanged = actions.onLiveMonitorEnabledChanged,
     )
+    AchievementWatchSettings(state.achievementWatch, state.liveMonitorEnabled, actions.onAchievementWatchChanged)
     SectionHeader(stringResource(R.string.settings_section_family_sharing))
     ManualSharedGameCard(state, actions)
     if (state.removedSharedGames.isNotEmpty()) {
@@ -766,6 +771,7 @@ private fun SyncCard(
     onReconcileNow: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
+        Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -805,6 +811,44 @@ private fun SyncCard(
                     )
                 }
             }
+        }
+        Text("Full achievement refresh covers eligible played and family-shared games. Unplayed owned games load their achievement lists when opened.",
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+internal fun AchievementWatchSettings(
+    preferences: com.example.backlogium.domain.AchievementWatchPreferences,
+    liveMonitorEnabled: Boolean,
+    onChanged: (com.example.backlogium.domain.AchievementWatchPreferences) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Achievement watch", style = MaterialTheme.typography.titleMedium)
+            Text(if (liveMonitorEnabled) "Refresh the running game while Live monitor is active."
+                else "Requires Live monitor. Achievement browsing is always available.", style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Watch active-game achievements", Modifier.weight(1f))
+                Switch(checked = preferences.enabled, onCheckedChange = { onChanged(preferences.copy(enabled = it)) },
+                    modifier = Modifier.semantics { contentDescription = "Watch active-game achievements" })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(60, 30).forEach { seconds ->
+                    FilterChip(selected = preferences.intervalSeconds == seconds,
+                        onClick = { onChanged(preferences.copy(intervalSeconds = seconds)) },
+                        label = { Text("$seconds seconds") })
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Achievement unlock alerts", Modifier.weight(1f))
+                Switch(checked = preferences.alertsEnabled, onCheckedChange = { onChanged(preferences.copy(alertsEnabled = it)) },
+                    modifier = Modifier.semantics { contentDescription = "Achievement unlock alerts" })
+            }
+            Text("Best effort while monitoring can run. Offline pauses requests; failures may back off longer. Turning alerts off keeps achievement progress up to date.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

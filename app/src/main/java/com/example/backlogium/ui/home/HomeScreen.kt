@@ -256,6 +256,8 @@ internal fun HomeContent(
     }
     LaunchedEffect(state.pendingProgressEvent, playLevelUp) {
         val event = state.pendingProgressEvent ?: return@LaunchedEffect
+        // The shell owns the grouped unlock presentation and its single haptic.
+        if (event is ProgressEvent.UnlockGroup) return@LaunchedEffect
         if (event is ProgressEvent.LevelUp) {
             if (!playLevelUp) return@LaunchedEffect
             // The Lottie presentation is mounted only after playLevelUp becomes true; wait for

@@ -98,6 +98,8 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_40_41,
         BacklogiumDatabase.MIGRATION_41_42,
         BacklogiumDatabase.MIGRATION_42_43,
+        BacklogiumDatabase.MIGRATION_43_44,
+        BacklogiumDatabase.MIGRATION_44_45,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -116,6 +118,49 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_12_13,
         *allMigrationsFromV13,
     )
+
+    @Test
+    fun catalogueUpgrade_startsWithoutBackfillAndPreservesWatchWork() {
+        val name = "migration-catalogue-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 44).apply {
+            execSQL("INSERT INTO achievement_watch_work VALUES ('event', 'fixture', 1, 'epoch', 1, 1, NULL, 'pending', 0)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 45, true, BacklogiumDatabase.MIGRATION_44_45).use { db ->
+            for (table in listOf("achievement_catalogue", "achievement_catalogue_cache")) {
+                db.query("SELECT COUNT(*) FROM $table").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            }
+            db.query("SELECT recomputeSource FROM achievement_watch_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("SYNC", cursor.getString(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun watchUpgrade_startsEmptyAndPreservesPlayerSnapshot() {
+        val name = "migration-watch-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 43).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO achievements (appId, apiName, unlocked, snapshotPercent, hidden, retired, fetchedAt) VALUES (1, 'fixture', 1, 0.5, 0, 0, 1)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 44, true, BacklogiumDatabase.MIGRATION_43_44).use { db ->
+            db.query("SELECT snapshotPercent FROM achievements WHERE appId = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0.5, cursor.getDouble(0), 0.0)
+            }
+            db.query("SELECT COUNT(*) FROM achievement_watch_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
 
     @Test
     fun deepHistory_v1ToCurrent_preservesLegacyDataThroughTheCompleteRegisteredChain() {

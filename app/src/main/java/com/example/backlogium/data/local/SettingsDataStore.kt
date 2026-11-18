@@ -138,6 +138,9 @@ class SettingsDataStore @Inject constructor(
         val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
         val NOTIFICATION_PERMISSION_REQUESTED =
             booleanPreferencesKey("notification_permission_requested")
+        val ACHIEVEMENT_WATCH_ENABLED = booleanPreferencesKey("achievement_watch_enabled")
+        val ACHIEVEMENT_WATCH_INTERVAL = intPreferencesKey("achievement_watch_interval")
+        val ACHIEVEMENT_ALERTS_ENABLED = booleanPreferencesKey("achievement_alerts_enabled")
         val LIVE_MONITOR_ENABLED = booleanPreferencesKey("live_monitor_enabled")
         val LIVE_MONITORING_AVAILABILITY = stringPreferencesKey("live_monitoring_availability")
         val CLOUD_READ_POSITION = stringPreferencesKey("cloud_read_position")
@@ -1228,6 +1231,22 @@ class SettingsDataStore @Inject constructor(
      * Explicit opt-in for the foreground service to poll while no game is running. Off by default:
      * this mode has an ongoing notification and consumes network/battery while armed.
      */
+    val achievementWatchFlow = context.dataStore.data.map { prefs ->
+        com.example.backlogium.domain.AchievementWatchPreferences(
+            prefs[Keys.ACHIEVEMENT_WATCH_ENABLED] ?: true,
+            if (prefs[Keys.ACHIEVEMENT_WATCH_INTERVAL] == 30) 30 else 60,
+            prefs[Keys.ACHIEVEMENT_ALERTS_ENABLED] ?: true,
+        )
+    }
+
+    suspend fun setAchievementWatch(value: com.example.backlogium.domain.AchievementWatchPreferences) {
+        context.dataStore.edit {
+            it[Keys.ACHIEVEMENT_WATCH_ENABLED] = value.enabled
+            it[Keys.ACHIEVEMENT_WATCH_INTERVAL] = if (value.intervalSeconds == 30) 30 else 60
+            it[Keys.ACHIEVEMENT_ALERTS_ENABLED] = value.alertsEnabled
+        }
+    }
+
     val liveMonitorEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[Keys.LIVE_MONITOR_ENABLED] ?: false
     }

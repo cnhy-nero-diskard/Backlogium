@@ -118,6 +118,7 @@ class LiveStatusRepository @Inject constructor(
     @ApplicationScope private val scope: CoroutineScope,
     private val recoveryTiming: LocalPlaytimeEvidenceRecorder? = null,
     private val recoveryReadStatus: RecoveryReadStatusStore? = null,
+    private val achievementWatch: com.example.backlogium.data.achievement.AchievementWatchLifecycle? = null,
 ) {
     private val _liveStatus = MutableStateFlow(LiveStatus())
     val liveStatus: StateFlow<LiveStatus> = _liveStatus.asStateFlow()
@@ -125,6 +126,7 @@ class LiveStatusRepository @Inject constructor(
     val nowPlaying: Flow<NowPlaying> = liveStatus.map { it.nowPlaying }
 
     private var pollingJob: Job? = null
+    private val checkMutex = Mutex()
 
     private val visibilityMutex = Mutex()
     private val visibilityGeneration = java.util.concurrent.atomic.AtomicLong(0)
@@ -183,6 +185,7 @@ class LiveStatusRepository @Inject constructor(
     /** Start the poll loop. Idempotent: a call while already polling is a no-op. */
     fun startPolling() {
         if (isPolling) return
+        achievementWatch?.monitorStarted()
         pollingJob = scope.launch {
             while (isActive) {
                 checkNow("poll")
@@ -206,6 +209,7 @@ class LiveStatusRepository @Inject constructor(
      * minute ago beats resetting a live timer to zero.
      */
     fun stopPolling() {
+        achievementWatch?.stop()
         pollingJob?.cancel()
         pollingJob = null
         recoveryTiming?.invalidateContinuity()
@@ -219,7 +223,7 @@ class LiveStatusRepository @Inject constructor(
      * loop themselves. A failed fetch retains the last emitted presence rather than throwing, so a
      * transient error doesn't clear the Home card or Library dot abruptly.
      */
-    suspend fun checkNow(trigger: String = "foreground"): LiveStatus {
+    suspend fun checkNow(trigger: String = "foreground"): LiveStatus = checkMutex.withLock {
         // A failed fetch is not an observation. It says nothing about whether the game ended, so it
         // neither overwrites the last emitted state nor touches the persisted session — treating it
         // as "not playing" would clear a live session on any transient network blip, and on a cold
@@ -255,6 +259,8 @@ class LiveStatusRepository @Inject constructor(
             _liveStatus.value = projected
             projected
         }
+        val watchAppId = (committed.nowPlaying as? NowPlaying.InGame)?.gameId
+        achievementWatch?.beforePresence(fetched.steamId, watchAppId)
         sessionEnd?.let(sessionEnds::publish)
         diagnostics?.record(trigger, fetched.outcome, fetched.appId)
 
@@ -263,6 +269,10 @@ class LiveStatusRepository @Inject constructor(
         // is the caller's reason for being here, and it must not be held up — or lost — by a Room
         // write or an admission lookup. A game with no derivable session makes this a no-op.
         runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
+        try {
+            achievementWatch?.afterPresence(fetched.steamId, watchAppId)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { /* Achievement availability must not fail a presence observation. */ }
         val hasNewRecordedSession = nextSession.appId != null &&
             (nextSession.appId != previousSession.appId || nextSession.startedAt != previousSession.startedAt)
         if (hasNewRecordedSession && !fetched.steamId.isNullOrBlank()) {
@@ -449,6 +459,7 @@ suspend fun <T> mutateHiddenSetAndReconcile(mutate: suspend () -> T): T = visibi
             }
             else -> return
         }
+        if (updated.nowPlaying is NowPlaying.NotPlaying) achievementWatch?.beforePresence(null, null)
         _liveStatus.value = updated
     }
 

@@ -17,6 +17,9 @@ class AccountRoomReset @Inject constructor(
         database.withTransaction {
             database.sessionDao().deleteAll()
             database.achievementDao().deleteAll()
+            database.achievementWatchDao().deleteAll()
+            database.achievementCatalogueDao().clearEntries()
+            database.achievementCatalogueDao().clearCache()
             database.gameGenreCacheDao().deleteAll()
             database.gameAchievementSyncDao().deleteAll()
             database.collectionDao().deleteAllMembers()
