@@ -566,6 +566,21 @@ class AchievementRepositoryTest {
     }
 
     @Test
+    fun `refreshOne reports stale when a newer player observation already won`() = runTest {
+        val api = FakeSteamApi()
+        val achievementDao = FakeAchievementDao()
+        val syncDao = FakeGameAchievementSyncDao()
+        syncDao.upsert(syncRow(appId = 42L, playerStateFetchedAt = NOW + 1, schemaFetchedAt = NOW))
+        val repo = repository(api, achievementDao = achievementDao, syncDao = syncDao)
+
+        val result = repo.refreshOne(KEY, STEAM_ID, appId = 42L)
+
+        assertEquals(SingleGameRefresh.Stale, result)
+        assertTrue(achievementDao.getForGame(42L).isEmpty())
+        assertEquals(NOW + 1, syncDao.get(42L)?.playerStateFetchedAt)
+    }
+
+    @Test
     fun `refreshOne persists nothing when Steam returns no usable player data`() = runTest {
         val api = FakeSteamApi(noStatsFor = setOf(42L))
         val achievementDao = FakeAchievementDao()

@@ -8,7 +8,14 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.remote.SteamApi
+import com.example.backlogium.data.remote.dto.AchievementSchemaDto
+import com.example.backlogium.data.remote.dto.AvailableGameStatsDto
+import com.example.backlogium.data.remote.dto.GameSchemaResponse
+import com.example.backlogium.data.remote.dto.GameSchemaResult
+import com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse
 import com.example.backlogium.data.remote.dto.PlayerAchievementDto
+import com.example.backlogium.data.remote.dto.PlayerAchievementsResponse
+import com.example.backlogium.data.remote.dto.PlayerAchievementsResult
 import com.example.backlogium.domain.AchievementUnlockGroup
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.work.SteamSyncCoordinator
@@ -28,6 +35,7 @@ class AchievementWatchCommitTest {
     private lateinit var db: BacklogiumDatabase
     private lateinit var repo: AchievementRepository
     private var account = "fixture-account"
+    private var changeAccountDuringPlayerFetch = false
 
     @Before
     fun setUp() = runBlocking {
@@ -36,8 +44,21 @@ class AchievementWatchCommitTest {
         db.playerProfileDao().insertIfMissing()
         db.playerProfileDao().resetForAccountChange(account)
         db.gameDao().upsert(Game(1, "Fixture", "", 0, 0, 0))
-        val api = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) { _, _, _ ->
-            error("A prepared commit must not issue network requests")
+        val api = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getSchemaForGame" -> GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(
+                    listOf(AchievementSchemaDto("first", "First")),
+                )))
+                "getPlayerAchievements" -> {
+                    if (changeAccountDuringPlayerFetch) account = "other-account"
+                    PlayerAchievementsResponse(PlayerAchievementsResult(
+                        success = true,
+                        achievements = listOf(PlayerAchievementDto("first", 1, 5)),
+                    ))
+                }
+                "getGlobalAchievementPercentages" -> GlobalAchievementPercentagesResponse()
+                else -> error("Unexpected network request: ${method.name}")
+            }
         } as SteamApi
         val time = SystemTimeProvider()
         repo = AchievementRepository(api, db.achievementDao(), db.gameAchievementSyncDao(), db.gameDao(),
@@ -121,5 +142,15 @@ class AchievementWatchCommitTest {
         AccountRoomReset(db).resetForAccountChange("other-account")
         assertTrue(db.achievementWatchDao().getAll(account).isEmpty())
         assertEquals(AchievementRepository.WatchCommit.Stale, commit(reading(2, true, 2.0)))
+    }
+
+    @Test fun refreshOneDoesNotReportPlayerRowsWhenAccountChangesBeforeCommit() = runBlocking {
+        changeAccountDuringPlayerFetch = true
+
+        val result = repo.refreshOne("fixture", "fixture-account", 1)
+
+        assertEquals(SingleGameRefresh.Stale, result)
+        assertTrue(db.achievementDao().getForGame(1).isEmpty())
+        assertNull(db.gameAchievementSyncDao().get(1))
     }
 }

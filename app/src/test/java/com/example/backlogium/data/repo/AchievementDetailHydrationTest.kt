@@ -14,6 +14,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.async
 import java.io.IOException
 import java.lang.reflect.Proxy
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -28,9 +30,12 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class AchievementDetailHydrationTest {
+    private val schemaJson = Json { ignoreUnknownKeys = true }
+    private val noStatsSchemaJson = """{"game":{"gameName":"Fixture","gameVersion":"1"}}"""
+    private val statsWithoutAchievementsSchemaJson = """{"game":{"availableGameStats":{"stats":[]}}}"""
     private lateinit var db: BacklogiumDatabase
     private lateinit var repo: AchievementRepository
-    private var schema: List<AchievementSchemaDto>? = listOf(AchievementSchemaDto("first", "Objective", hidden = 1))
+    private var schemaShape = SchemaShape.POSITIVE
     private var player = PlayerAchievementsResult(success = false)
     private var failSchema = false
     private val requestedGames = mutableListOf<Long>()
@@ -50,7 +55,15 @@ class AchievementDetailHydrationTest {
                 "getSchemaForGame" -> {
                     requestedGames += args[1] as Long
                     if (failSchema) throw IOException("fixture failure")
-                    GameSchemaResponse(GameSchemaResult(schema?.let { AvailableGameStatsDto(it) }))
+                    when (schemaShape) {
+                        SchemaShape.POSITIVE -> GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(
+                            listOf(AchievementSchemaDto("first", "Objective", hidden = 1)),
+                        )))
+                        SchemaShape.EMPTY_ACHIEVEMENTS -> GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(emptyList())))
+                        SchemaShape.NO_AVAILABLE_STATS -> schemaJson.decodeFromString<GameSchemaResponse>(noStatsSchemaJson)
+                        SchemaShape.STATS_WITHOUT_ACHIEVEMENTS -> schemaJson.decodeFromString<GameSchemaResponse>(statsWithoutAchievementsSchemaJson)
+                        SchemaShape.MALFORMED_ENVELOPE -> Json.decodeFromString<GameSchemaResponse>("{}")
+                    }
                 }
                 "getPlayerAchievements" -> {
                     val block: suspend () -> Any = { playerCalls++; playerGate?.await(); PlayerAchievementsResponse(player) }
@@ -77,6 +90,7 @@ class AchievementDetailHydrationTest {
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Test fun detailCompletesCatalogueWhenJoiningAFreshSchemaPlayerOnlyWatchFetch() = kotlinx.coroutines.test.runTest {
+        schemaShape = SchemaShape.STATS_WITHOUT_ACHIEVEMENTS
         val now = System.currentTimeMillis()
         db.gameAchievementSyncDao().upsert(com.example.backlogium.data.local.entity.GameAchievementSync(1, now, now, null, now))
         playerGate = kotlinx.coroutines.CompletableDeferred()
@@ -88,6 +102,7 @@ class AchievementDetailHydrationTest {
         playerGate!!.complete(Unit)
         watch.await()
         assertEquals(AchievementHydrationState.Ready, detail.await().last())
+        assertTrue(repo.observeCatalogue(1).first().confirmedEmpty)
         assertEquals(1, playerCalls)
         assertEquals(listOf(1L), requestedGames)
     }
@@ -137,17 +152,38 @@ class AchievementDetailHydrationTest {
     }
 
     @Test fun confirmedEmptyIsCachedButMalformedAndTransportFailuresRemainUnknown() = runBlocking {
-        schema = emptyList()
+        schemaShape = SchemaShape.EMPTY_ACHIEVEMENTS
         repo.hydrateDetail(1).toList()
         assertTrue(repo.observeCatalogue(1).first().confirmedEmpty)
         repo.hydrateDetail(1).toList()
         assertEquals(listOf(1L), requestedGames)
-        schema = null
+        schemaShape = SchemaShape.MALFORMED_ENVELOPE
         assertTrue(repo.hydrateDetail(2).take(2).toList().last() is AchievementHydrationState.Unavailable)
         assertNull(db.achievementCatalogueDao().cache(2))
         failSchema = true
         repo.hydrateDetail(3).take(2).toList()
         assertNull(db.achievementCatalogueDao().cache(3))
+    }
+
+    @Test fun omittedOptionalSchemaFieldsAreAuthoritativeEmptyCatalogues() = runBlocking {
+        assertNull(schemaJson.decodeFromString<GameSchemaResponse>(
+            noStatsSchemaJson,
+        ).game.availableGameStats)
+        assertNull(schemaJson.decodeFromString<GameSchemaResponse>(
+            statsWithoutAchievementsSchemaJson,
+        ).game.availableGameStats?.achievements)
+        schemaShape = SchemaShape.NO_AVAILABLE_STATS
+        val noStatsState = repo.hydrateDetail(1).take(2).toList().last()
+        assertEquals(AchievementHydrationState.Ready, noStatsState)
+        assertTrue(repo.observeCatalogue(1).first().confirmedEmpty)
+        repo.hydrateDetail(1).take(2).toList()
+        assertEquals(listOf(1L), requestedGames)
+
+        schemaShape = SchemaShape.STATS_WITHOUT_ACHIEVEMENTS
+        assertEquals(AchievementHydrationState.Ready, repo.hydrateDetail(2).take(2).toList().last())
+        assertTrue(repo.observeCatalogue(2).first().confirmedEmpty)
+        repo.hydrateDetail(2).take(2).toList()
+        assertEquals(listOf(1L, 2L), requestedGames)
     }
 
     @Test fun contradictoryEmptyPlayerPreservesCatalogueThenAuthoritativePlayerMergesWithoutAlert() = runBlocking {
@@ -165,5 +201,13 @@ class AchievementDetailHydrationTest {
         assertNull(work.payload)
         assertTrue(work.recomputeNeeded)
         assertEquals("XP_INTEGRITY_CORRECTION", work.recomputeSource)
+    }
+
+    private enum class SchemaShape {
+        POSITIVE,
+        EMPTY_ACHIEVEMENTS,
+        NO_AVAILABLE_STATS,
+        STATS_WITHOUT_ACHIEVEMENTS,
+        MALFORMED_ENVELOPE,
     }
 }

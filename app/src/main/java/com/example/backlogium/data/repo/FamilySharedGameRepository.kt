@@ -356,6 +356,7 @@ class FamilySharedGameRepository @Inject constructor(
     private suspend fun probePlayerData(apiKey: String, steamId: String, appId: Long): PlayerDataProbe =
         when (val refresh = achievementRepository.refreshOne(apiKey, steamId, appId)) {
             is SingleGameRefresh.Persisted -> PlayerDataProbe.Returned(refresh.total, refresh.unlocked)
+            SingleGameRefresh.Stale -> PlayerDataProbe.Unavailable
             SingleGameRefresh.NoUsableData -> PlayerDataProbe.NoData
             SingleGameRefresh.Unavailable -> PlayerDataProbe.Unavailable
         }
