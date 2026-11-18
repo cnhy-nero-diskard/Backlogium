@@ -2,10 +2,11 @@ package com.example.backlogium.data.achievement
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.InetAddresses
+import android.os.Process
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.example.backlogium.BuildConfig
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.credentials.EncryptedCredentialStore
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import org.junit.Assert.*
 import org.junit.Before
@@ -47,6 +49,7 @@ class AchievementDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun game(appId: Long) = Game(appId, "Test game", "", 0, 0, 0)
     private fun open(name: String) = Room.databaseBuilder(context, BacklogiumDatabase::class.java, name).build()
+    private val restartName get() = InstrumentationRegistry.getArguments().getString("achievementRestartDatabase")
 
     private fun repository(db: BacklogiumDatabase, api: SteamApi, credentials: CredentialsProvider): AchievementRepository {
         val time = SystemTimeProvider()
@@ -56,37 +59,56 @@ class AchievementDeviceTest {
     }
 
     @Test fun reportedUnplayedGamesLoadOnlyTheirCataloguesAndCacheSurvivesReopen() = runBlocking {
-        // Opted-in local verification only: read the debug configuration, never log it.
-        assertTrue("Local debug Steam credentials are required for live catalogue verification",
-            BuildConfig.STEAM_API_KEY.isNotBlank() && BuildConfig.STEAM_ID.isNotBlank())
-        val credentials = object : CredentialsProvider {
-            override suspend fun currentCredentials() = CredentialsState.Configured(BuildConfig.STEAM_API_KEY, BuildConfig.STEAM_ID)
+        val requested = mutableListOf<Pair<String, Long>>()
+        val outcomes = mutableListOf<String>()
+        val clientBuilder = OkHttpClient.Builder().callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+        InstrumentationRegistry.getArguments().getString("achievementSteamIpv4")?.let { address ->
+            // Use a host-resolved address when the emulator DNS fails. HTTPS still validates Steam's hostname.
+            clientBuilder.dns(object : Dns {
+                override fun lookup(hostname: String) = if (hostname == "api.steampowered.com") {
+                    listOf(InetAddresses.parseNumericAddress(address))
+                } else {
+                    Dns.SYSTEM.lookup(hostname)
+                }
+            })
         }
-        val requested = mutableListOf<Long>()
-        val client = OkHttpClient.Builder().callTimeout(45, java.util.concurrent.TimeUnit.SECONDS).addInterceptor { chain ->
+        val client = clientBuilder.addInterceptor { chain ->
             val request = chain.request()
-            if (request.url.encodedPath.contains("GetSchemaForGame")) synchronized(requested) {
-                request.url.queryParameter("appid")?.toLongOrNull()?.let { requested += it }
+            val appId = (request.url.queryParameter("appid") ?: request.url.queryParameter("gameid"))?.toLongOrNull()
+            if (appId != null) synchronized(requested) {
+                requested += request.url.encodedPath to appId
             }
-            chain.proceed(request)
+            try {
+                chain.proceed(request).also { response ->
+                    synchronized(outcomes) { outcomes += "${request.url.encodedPath}: HTTP ${response.code}" }
+                }
+            } catch (error: java.io.IOException) {
+                synchronized(outcomes) { outcomes += "${request.url.encodedPath}: ${error.javaClass.simpleName}" }
+                throw error
+            }
         }.build()
         val api = NetworkModule.provideSteamApi(NetworkModule.provideRetrofit(NetworkModule.provideJson(), client))
+        val credentials = CredentialsRepository(EncryptedCredentialStore(context), api)
+        val account = checkNotNull(credentials.currentCredentials()) {
+            "Configure Steam in the emulator app or in git-ignored local.properties before the live catalogue check"
+        }.steamId
         val name = "achievement-live-${System.nanoTime()}"
         var db = open(name)
         try {
             db.playerProfileDao().insertIfMissing()
-            db.playerProfileDao().resetForAccountChange(BuildConfig.STEAM_ID)
+            db.playerProfileDao().resetForAccountChange(account)
             (1L..300).forEach { db.gameDao().upsert(game(it)) }
             val targets = listOf(1462040L, 2909400L, 552520L)
             targets.forEach { db.gameDao().upsert(game(it)) }
             var repo = repository(db, api, credentials)
             for (appId in targets) {
                 val result = withTimeout(60_000) { repo.hydrateDetail(appId).first { it !is AchievementHydrationState.Loading } }
-                assertEquals("Catalogue unavailable for app $appId", AchievementHydrationState.Ready, result)
+                assertEquals("Catalogue unavailable for app $appId. Requests: $outcomes", AchievementHydrationState.Ready, result)
                 assertTrue("Expected objectives for app $appId", repo.observeForGame(appId).first().isNotEmpty())
             }
-            assertEquals(targets.toSet(), requested.toSet())
-            assertEquals(targets.size, requested.size)
+            assertEquals(targets, requested.filter { (path, _) -> path.contains("GetSchemaForGame") }.map { it.second })
+            assertTrue("Every achievement request must target an opened game", requested.all { (_, appId) -> appId in targets })
+            val requestCount = requested.size
             db.close()
             db = open(name)
             repo = repository(db, api, credentials)
@@ -94,14 +116,94 @@ class AchievementDeviceTest {
                 assertEquals(AchievementHydrationState.Ready, repo.hydrateDetail(appId).first())
                 assertTrue(repo.observeForGame(appId).first().isNotEmpty())
             }
-            assertEquals("Reopening fresh catalogues must not repeat schema work", targets.size, requested.size)
+            assertEquals("Reopening fresh catalogues must not repeat achievement requests", requestCount, requested.size)
             assertTrue("Browsing must not create playtime sessions", db.sessionDao().getAll().isEmpty())
         } finally { db.close(); context.deleteDatabase(name) }
     }
 
+    @Test fun syntheticCatalogueCacheAndLaterProgressAcrossProcessRestart() = runBlocking {
+        val name = restartName
+        assumeTrue("Set achievementRestartDatabase for this two-phase check", name != null)
+        checkNotNull(name)
+        val marker = context.cacheDir.resolve("$name-catalogue")
+        val restarted = marker.isFile
+        val account = "catalogue-fixture"
+        val positive = 1462040L
+        val empty = 301L
+        val requestedSchemas = mutableListOf<Long>()
+        val requestedPlayers = mutableListOf<Long>()
+        val credentials = object : CredentialsProvider {
+            override suspend fun currentCredentials() = CredentialsState.Configured("fixture", account)
+        }
+        val api = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) { _, method, args ->
+            when (method.name) {
+                "getSchemaForGame" -> {
+                    val appId = args[1] as Long
+                    requestedSchemas += appId
+                    val entries = if (appId == empty) emptyList() else listOf(AchievementSchemaDto("fixture", "Fixture objective"))
+                    GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(entries)))
+                }
+                "getPlayerAchievements" -> {
+                    requestedPlayers += args[2] as Long
+                    PlayerAchievementsResponse(PlayerAchievementsResult(success = restarted,
+                        achievements = if (restarted) listOf(PlayerAchievementDto("fixture", achieved = 1)) else emptyList()))
+                }
+                "getGlobalAchievementPercentages" -> GlobalAchievementPercentagesResponse(
+                    GlobalAchievementPercentagesResult(listOf(GlobalAchievementPercentageDto("fixture", 12.0))),
+                )
+                else -> error("Unexpected request: ${method.name}")
+            }
+        } as SteamApi
+        val db = open(name)
+        var preserveForRestart = false
+        try {
+            if (restarted) {
+                assertNotEquals("Run phase two in a fresh Android process", marker.readText().toInt(), Process.myPid())
+            } else {
+                db.playerProfileDao().insertIfMissing()
+                db.playerProfileDao().resetForAccountChange(account)
+                (1L..300L).forEach { db.gameDao().upsert(game(it)) }
+                db.gameDao().upsert(game(positive))
+                db.gameDao().upsert(game(empty))
+            }
+            val repo = repository(db, api, credentials)
+            for (appId in listOf(positive, empty)) {
+                assertEquals(AchievementHydrationState.Ready, withTimeout(10_000) {
+                    repo.hydrateDetail(appId).first { it != AchievementHydrationState.Loading }
+                })
+            }
+            assertFalse(repo.observeForGame(positive).first().single().progressKnown)
+            assertTrue(repo.observeCatalogue(empty).first().confirmedEmpty)
+            if (restarted) {
+                assertTrue(requestedSchemas.isEmpty())
+                assertTrue(requestedPlayers.isEmpty())
+                assertEquals(SingleGameRefresh.Persisted(total = 1, unlocked = 1), repo.refreshOne("fixture", account, positive))
+                val achievement = repo.observeForGame(positive).first().single()
+                assertTrue(achievement.progressKnown && achievement.unlocked)
+                assertEquals(12.0, achievement.rarityPercent!!, 0.0)
+                assertTrue(requestedSchemas.isEmpty())
+                assertEquals(listOf(positive), requestedPlayers)
+                assertTrue(db.achievementWatchDao().getAll(account).none { it.payload != null })
+            } else {
+                assertEquals(listOf(positive, empty), requestedSchemas)
+                assertEquals(listOf(positive, empty), requestedPlayers)
+                marker.writeText(Process.myPid().toString())
+                preserveForRestart = true
+            }
+        } finally {
+            db.close()
+            if (!preserveForRestart) {
+                context.deleteDatabase(name)
+                marker.delete()
+            }
+        }
+        Unit
+    }
+
     @Test fun selectedCadenceSwitchExitRestartAndAlertOptOutWorkOnDevice() = runBlocking {
-        val name = "achievement-watch-${System.nanoTime()}"
-        var db = open(name)
+        val name = restartName ?: "achievement-watch-${System.nanoTime()}"
+        val db = open(name)
+        var preserveForRestart = false
         val settings = DataStoreSettingsRepository(SettingsDataStore(context))
         val previousWatch = settings.achievementWatch.first()
         val previousMonitor = settings.liveMonitorEnabled.first()
@@ -161,20 +263,54 @@ class AchievementDeviceTest {
             dispatcher.dispatch(second, false)
             assertEquals(0, posts)
             assertEquals(AchievementWatchWork.SUPPRESSED, db.achievementWatchDao().get(second.eventId)!!.deliveryState)
+            watcher.beforePresence("device-fixture", null)
+            watcher.afterPresence("device-fixture", null)
+            withTimeout(10_000) {
+                db.achievementWatchDao().observePending().first { rows -> rows.any { it.eventId == first.eventId && it.epochClosed } }
+                while (db.achievementWatchDao().get(second.eventId)?.epochClosed != true) delay(20)
+            }
             watcher.stop()
             scope.coroutineContext[Job]!!.cancelAndJoin()
             assertTrue(db.sessionDao().getAll().isEmpty())
             assertEquals(2, calls[1]!!.get())
-            db.close()
-            db = open(name)
+            assertEquals(2, calls[2]!!.get())
             assertEquals(AchievementWatchWork.PENDING, db.achievementWatchDao().get(first.eventId)!!.deliveryState)
             assertEquals(AchievementWatchWork.SUPPRESSED, db.achievementWatchDao().get(second.eventId)!!.deliveryState)
+            if (restartName != null) {
+                context.cacheDir.resolve(name).writeText(Process.myPid().toString())
+                preserveForRestart = true
+            }
         } finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
             settings.setAchievementWatch(previousWatch)
             settings.setLiveMonitorEnabled(previousMonitor)
-            db.close(); context.deleteDatabase(name)
+            db.close()
+            if (!preserveForRestart) context.deleteDatabase(name)
         }
+        Unit
+    }
+
+    @Test fun pendingAndSuppressedGroupsSurviveProcessRestart() = runBlocking {
+        val name = restartName
+        val processMarker = name?.let { context.cacheDir.resolve(it) }
+        assumeTrue("Run the cadence phase before the restart phase", processMarker?.isFile == true)
+        checkNotNull(name)
+        checkNotNull(processMarker)
+        val db = open(name)
+        try {
+            assertNotEquals("Restart phase must run in a new app process", processMarker.readText().toInt(), Process.myPid())
+            val work = db.achievementWatchDao().getAll("device-fixture").associateBy { it.appId }
+            assertEquals(setOf(1L, 2L), work.keys)
+            assertEquals(AchievementWatchWork.PENDING, work.getValue(1).deliveryState)
+            assertEquals(AchievementWatchWork.SUPPRESSED, work.getValue(2).deliveryState)
+            assertTrue(work.values.all { it.epochClosed && it.recomputeNeeded })
+            assertEquals(listOf(work.getValue(1).eventId), db.achievementWatchDao().observePending().first().map { it.eventId })
+        } finally {
+            db.close()
+            context.deleteDatabase(name)
+            processMarker.delete()
+        }
+        Unit
     }
 
     @Test fun deniedNotificationPermissionSuppressesPostingOnDevice() {

@@ -210,7 +210,8 @@ The system SHALL represent player-facing progress transitions as a closed set of
 carrying enough detail to be presented without re-reading state: a level-up carrying the level
 departed from and the level reached; a quest-met event carrying the date; a streak-milestone event
 carrying the streak length reached; and a streak-broken event carrying the length of the streak
-that ended.
+that ended; and an unlock group carrying a stable event identity, account/game identity,
+observation time, and the exact achievement identities and presentation payload.
 
 #### Scenario: Level-up carries both ends of the transition
 - **WHEN** a level-up event is produced
@@ -230,6 +231,10 @@ that ended.
   milestone interval
 - **THEN** no streak-milestone event is produced
 
+#### Scenario: Unlock payload remains stable
+- **WHEN** game metadata changes after an unlock group is committed
+- **THEN** the group still identifies the exact achievements observed in that commit
+
 ### Requirement: Threshold crossings collapse into a single event
 Where an earned recompute crosses several thresholds of the same kind at once, the system SHALL
 produce one event describing the whole transition rather than one event per threshold.
@@ -243,11 +248,15 @@ produce one event describing the whole transition rather than one event per thre
   and 14-day milestones
 - **THEN** exactly one streak-milestone event is produced, carrying the highest milestone reached
 
+#### Scenario: Several unlocks observed together
+- **WHEN** one successful post-baseline watch observation discovers several newly unlocked achievements
+- **THEN** one group carries all of them rather than creating one alert per achievement
+
 ### Requirement: An event is delivered once
-Each progress event SHALL be delivered to a consumer at most once. Delivery SHALL survive process
+Each level-up, quest-met, streak-milestone, and streak-broken event SHALL be delivered to a consumer at most once. Delivery SHALL survive process
 death: an event acknowledged before the app was closed SHALL NOT be presented again on relaunch,
 and an event produced while the app was closed SHALL remain available until presented. This
-guarantee SHALL hold for every event kind, including one whose detection depends on comparing the
+guarantee SHALL hold for these event kinds, including one whose detection depends on comparing the
 values immediately before and after the transition rather than comparing a monotonic value to its
 baseline — the system SHALL retain enough information from before such a transition to survive a
 process death occurring after the transition's derived values are written but before its delivery
@@ -309,6 +318,25 @@ acknowledge, remove, or reorder any other pending date, whichever order they are
 - **THEN** the older one is still available to be presented, and acknowledging the more recent one
   again changes nothing
 
+Unlock groups SHALL have distinct durable pending records and one durable choice of delivery surface.
+Unclaimed groups SHALL survive restart. A foreground delivery claim SHALL count as terminal
+acknowledgement before rendering, so it cannot replay; process death between that claim and rendering
+MAY suppress that presentation. Background delivery SHALL use an event-derived stable notification
+identity and idempotent replacement before acknowledgement. The system SHALL promise at-most-once
+logical event consumption, not universally exactly-once physical notification sound or vibration.
+
+#### Scenario: Two pending unlock groups
+- **WHEN** two games' unlock groups are pending and one is acknowledged
+- **THEN** the other remains individually available and acknowledging the first again changes nothing
+
+#### Scenario: Background posting result is uncertain
+- **WHEN** the process stops after posting a notification but before acknowledging its group
+- **THEN** retry uses the same notification identity with repeat-alert suppression
+
+#### Scenario: Foreground claim survives a crash
+- **WHEN** a foreground claim commits and the process stops before the group renders
+- **THEN** that group is not replayed and this documented crash window may suppress its presentation
+
 ### Requirement: A player's first recorded progress is not celebrated
 Where no derived values have previously been persisted, the system SHALL establish the delivery
 baseline from the computed values and produce no events, regardless of provenance. Establishing that
@@ -330,8 +358,8 @@ initialized SHALL NOT become deliverable quest-met events.
 - **THEN** a level-up event is produced from the established baseline
 
 ### Requirement: Simultaneous events carry a presentation priority
-Where one earned recompute produces several events, the system SHALL make all of them available
-and SHALL define a stable priority order — level-up, then streak milestone, then quest met, then
+Where earned recomputes and watch commits leave several events pending, the system SHALL make all of them available
+and SHALL define a stable priority order — level-up, then streak milestone, then unlock group, then quest met, then
 streak broken — so that a surface able to present only one presents the most significant.
 
 #### Scenario: A sync produces several events
@@ -466,3 +494,22 @@ When periodic or targeted observations overlap recovery finalization, a correcti
 #### Scenario: An older owed event coexists with correction
 - **WHEN** recovery finalization overlaps fresh play while a prior earned delivery remains unacknowledged
 - **THEN** the prior delivery remains owed, correction creates no delivery, and fresh eligible progress is not suppressed
+
+### Requirement: Unlock groups originate only from successful post-baseline watch commits
+The system SHALL create unlock groups only from successful post-baseline watch observations. Historic setup/import/restore, detail catalogue hydration, full refresh, reconciliation, snapshot repair alone, and the first watch baseline SHALL NOT create unlock groups. Achievement rows and new pending groups SHALL commit atomically, with recoverable recompute work.
+
+#### Scenario: Historic full refresh
+- **WHEN** full-library refresh imports old unlocks
+- **THEN** no unlock group is generated by that path
+
+#### Scenario: Browsing before play
+- **WHEN** detail hydration loads a catalogue or imports existing personal unlocks
+- **THEN** that hydration creates no unlock group
+
+#### Scenario: Atomic failure
+- **WHEN** the achievement/outbox transaction rolls back
+- **THEN** neither achievements nor an alert group are partially committed
+
+#### Scenario: Restore or account replacement
+- **WHEN** backup restore or account replacement occurs
+- **THEN** pending groups are not imported/replayed or delivered to a different account

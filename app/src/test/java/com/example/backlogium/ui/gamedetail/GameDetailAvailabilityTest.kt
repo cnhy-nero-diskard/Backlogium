@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.gamedetail
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -37,6 +38,36 @@ class GameDetailAvailabilityTest {
         } }
         compose.onNodeWithText("This game has no achievements.").assertIsDisplayed()
         compose.onNodeWithText("Retry achievements").assertDoesNotExist()
+    }
+
+    @Test fun bothDetailPresentationsExposeCatalogueAvailabilityAndRetry() {
+        val presentation = mutableStateOf(GameDetailPresentation.FULL_DESTINATION)
+        val state = mutableStateOf(GameDetailUiState(loading = false,
+            hydration = AchievementHydrationState.Unavailable(offline = true)))
+        var retries = 0
+        compose.setContent {
+            MaterialTheme {
+                GameDetailPresentationLayout(presentation.value, null, false, {}) {
+                    AchievementAvailability(state.value) { retries++ }
+                }
+            }
+        }
+        for (mode in GameDetailPresentation.entries) {
+            compose.runOnIdle { presentation.value = mode }
+            compose.onNodeWithText("Achievements unavailable while offline.").assertIsDisplayed()
+            compose.onNodeWithText("Retry achievements").performClick()
+        }
+        assertEquals(2, retries)
+        compose.runOnIdle {
+            state.value = GameDetailUiState(loading = false,
+                catalogue = AchievementCatalogueState(fetchedAt = 1, confirmedEmpty = true),
+                hydration = AchievementHydrationState.Ready)
+        }
+        for (mode in GameDetailPresentation.entries) {
+            compose.runOnIdle { presentation.value = mode }
+            compose.onNodeWithText("This game has no achievements.").assertIsDisplayed()
+            compose.onNodeWithText("Retry achievements").assertDoesNotExist()
+        }
     }
 
     @Test fun loadingIsUnderstandableWithoutAnimation() {

@@ -172,44 +172,43 @@ fun GameDetailScreen(
         if (!overlay) onAccentColorChanged(accentColor)
     }
 
+    GameDetailPresentationLayout(
+        presentation = presentation,
+        accentColor = accentColor,
+        isRefreshing = state.isRefreshingPlayerCount,
+        onRefresh = viewModel::refreshPlayerCount,
+    ) {
+        GameDetailList(state, detailAppId, artworkFallbackUrls, viewModel)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GameDetailPresentationLayout(
+    presentation: GameDetailPresentation,
+    accentColor: Color?,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .then(
-                if (overlay) {
-                    Modifier.background(MaterialTheme.colorScheme.background)
-                } else {
-                    Modifier
-                },
-            )
-            .then(
-                if (overlay) {
-                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier
-                } else {
-                    Modifier
-                },
-            ),
+        modifier = Modifier.fillMaxSize().then(
+            if (overlay) {
+                Modifier.background(MaterialTheme.colorScheme.background).then(
+                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier,
+                )
+            } else Modifier,
+        ),
     ) {
         if (overlay) {
-            GameDetailList(
-                state = state,
-                appId = detailAppId,
-                artworkFallbackUrls = artworkFallbackUrls,
-                viewModel = viewModel,
-            )
+            content()
         } else {
             PullToRefreshBox(
-                isRefreshing = state.isRefreshingPlayerCount,
-                onRefresh = viewModel::refreshPlayerCount,
+                isRefreshing = isRefreshing,
+                onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
-            ) {
-                GameDetailList(
-                    state = state,
-                    appId = detailAppId,
-                    artworkFallbackUrls = artworkFallbackUrls,
-                    viewModel = viewModel,
-                )
-            }
+            ) { content() }
         }
     }
 }
