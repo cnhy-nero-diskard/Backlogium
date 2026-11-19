@@ -30,7 +30,7 @@ merely because the text now matches the specs.
 - [x] 1.6 Verify by test that placement never produces a session in a period no interval covers.
 - [x] 1.7 Verify duplicate, overlapping, wrong-account and stale-generation candidates cannot
       multiply timing capacity; clip to the contribution window and exclude already-consumed spans.
-- [ ] 1.8 Verify unknown and legacy transition coverage is rejected for ordinary placement, and
+- [x] 1.8 Verify unknown and legacy transition coverage is rejected for ordinary placement, and
       sub-tolerance interior cuts do not become continuous timing or receive timed placement.
 
 ## 2. Wiring into the commit path

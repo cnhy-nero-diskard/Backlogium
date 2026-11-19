@@ -134,6 +134,14 @@ class CloudTimingContributionCommitTest {
         assertEquals("1970-01-01", allocations.single().date)
     }
 
+    @Test fun legacyTransitionCoverageOnlyCreditsUnknownTimeInOrdinaryCommit() = runTest {
+        seed()
+        commit(interval(20 * minute, 40 * minute).copy(coverage = CloudCoverageState.LEGACY_TRANSITIONS), playtime = 120)
+
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(20L, db.playtimeRecoveryDao().sumActiveDatedMinutes(account, 440))
+    }
+
     @Test fun absentReaderCreditsTheRecoveryDateInsteadOfSynthesizingASession() = runTest {
         seed()
         commit(null, playtime = 120)
