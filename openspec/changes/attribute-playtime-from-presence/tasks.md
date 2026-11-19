@@ -80,7 +80,7 @@ merely because the text now matches the specs.
 
 ## 4. Historical sweep
 
-- [ ] 4.1 Audit the existing one-time historical action rather than adding a parallel sweep.
+- [x] 4.1 Audit the existing one-time historical action rather than adding a parallel sweep.
       Verify selected/effective start, fixed end and complete acquisition before apply; paused,
       capped, cancelled or failed batches must not apply partial history or set the applied marker.
 - [x] 4.2 Record that it has run and make repeated invocation a no-op. Verify by test.
