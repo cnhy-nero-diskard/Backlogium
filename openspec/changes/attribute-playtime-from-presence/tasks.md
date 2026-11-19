@@ -93,13 +93,13 @@ merely because the text now matches the specs.
       recompute of affected dates and remove empty rows created solely by the re-file.
 - [x] 4.5 Verify by test that the sweep produces no progress event and that an unacknowledged event
       owed by an earlier sync survives it.
-- [ ] 4.6 Verify optional pre-data transfer requires an earlier independent Steam-history import
+- [x] 4.6 Verify optional pre-data transfer requires an earlier independent Steam-history import
       and separately confirmed cutoff; bound quantity by both the imported balance and eligible
       non-overlapping whole minutes. Test the disclosed closed-v1 estimate exception only here,
       not in ordinary placement, and conserve combined credited totals, XP and levels.
-- [ ] 4.7 Verify interrupted apply resumes the same saved range/cutoff and original deltas after
+- [x] 4.7 Verify interrupted apply resumes the same saved range/cutoff and original deltas after
       ledger commit but before the applied marker, without recalculating against changed balances.
-- [ ] 4.8 Verify historical acquisition has its own resumable position and bounded user-started
+- [x] 4.8 Verify historical acquisition has its own resumable position and bounded user-started
       batches; ordinary reads neither steal its progress nor double-credit overlapping pages.
       Fence stale account/reader responses and keep staged evidence isolated.
 
