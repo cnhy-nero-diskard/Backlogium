@@ -440,6 +440,24 @@ class PlaytimeAttributionPlanTest {
     }
 
     @Test
+    fun `timing spanning both window edges is clipped before allocation`() {
+        val previous = ts("2024-01-08T00:00:00")
+        val recovery = ts("2024-01-08T01:00:00")
+        val plan = plan(
+            authorizedDeltaMinutes = 105,
+            previousObservationAt = previous,
+            recoveryObservedAt = recovery,
+            evidence = listOf(evidence("wide", previous - 60_000L, recovery + 60_000L)),
+        )
+        val timed = plan.timedPlacements.single()
+        assertEquals(previous, timed.startAt)
+        assertEquals(recovery, timed.endAt)
+        assertEquals(60, timed.minutes)
+        assertEquals(45, plan.residualMinutes)
+        assertEquals(105, plan.creditedMinutes)
+    }
+
+    @Test
     fun `consumed spans are subtracted before placement`() {
         val plan = plan(
             authorizedDeltaMinutes = 200,
