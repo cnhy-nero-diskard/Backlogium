@@ -413,14 +413,15 @@ object PlaytimeAttributionPlanner {
         // observation (no known instant) may take the same-date short-gap session path.
         val withinShortGap = request.knownPlayInstantAt == null && elapsed in 0..SHORT_GAP_MILLIS
         val guardOk = elapsed >= 0L && total.toLong() <= ceilMinutes(elapsed) + 1L
-        val continuity = coveredBy(usableSpans, previous, playEnd)
+        val sessionMinutes = when {
+            request.unplacedPendingMinutes > 0 || request.publicationDelayConflict || !guardOk -> 0
+            sameDate && withinShortGap -> total
+            // Continuity can preserve a session but cannot fund more than whole confirmed minutes.
+            coveredBy(usableSpans, previous, playEnd) -> minOf(total.toLong(), elapsed / 60_000L).toInt()
+            else -> 0
+        }
 
-        val sessionEligible = request.unplacedPendingMinutes == 0 &&
-            !request.publicationDelayConflict &&
-            guardOk &&
-            ((sameDate && withinShortGap) || continuity)
-
-        if (sessionEligible) {
+        if (sessionMinutes > 0) {
             val priorOpen = request.priorOpenSession
             // A prior row starting a different calendar date may only be extended when validated
             // timing really continues it from its last increase; otherwise close it and open a
@@ -435,7 +436,7 @@ object PlaytimeAttributionPlanner {
                 appId = request.appId,
                 previous = previous,
                 playEnd = playEnd,
-                total = total,
+                total = sessionMinutes,
                 priorOpen = priorOpen,
                 extendable = extendable,
             )
@@ -443,6 +444,7 @@ object PlaytimeAttributionPlanner {
             // including across midnight with trusted continuity.
             val sessionStartDate = if (extendable) localDate(priorOpen!!.startAt, request.zone)
             else localDate(previous, request.zone)
+            val residual = recoveryResidual(request, previous, usableSpans, total - sessionMinutes, effectiveKnown, diagnostics)
             return PlaytimeAttributionPlan(
                 contributionId = contributionId,
                 account = request.account,
@@ -451,10 +453,11 @@ object PlaytimeAttributionPlanner {
                 authorizedMinutes = total,
                 zone = request.zone,
                 provenance = if (sessionStartDate.isBefore(evaluationDate))
-                    PlaytimePlacementProvenance.RETROACTIVE_PLAY else PlaytimePlacementProvenance.SYNC,
+                    PlaytimePlacementProvenance.RETROACTIVE_PLAY
+                else provenanceFor(request, evaluationDate, emptyList(), residual),
                 sessionActions = actions,
                 timedPlacements = emptyList(),
-                residual = null,
+                residual = residual,
                 pending = null,
                 diagnostics = diagnostics,
             )
@@ -473,25 +476,7 @@ object PlaytimeAttributionPlanner {
         )
 
         val (timed, residualMinutes) = placeEvidence(request, usableSpans, total)
-        val residual = if (residualMinutes > 0) {
-            if (effectiveKnown != null) {
-                val date = localDate(effectiveKnown, request.zone)
-                ResidualDateRecipe(
-                    method = PlaytimeAllocationMethod.KNOWN_TARGETED_DATE,
-                    firstDate = date,
-                    lastDate = date,
-                    eligibleDateCount = 1,
-                    baseMinutes = residualMinutes,
-                    remainderCount = 0,
-                    totalMinutes = residualMinutes,
-                    excludedRanges = emptyList(),
-                )
-            } else {
-                residualRecipe(request, previous, usableSpans, residualMinutes, diagnostics)
-            }
-        } else {
-            null
-        }
+        val residual = recoveryResidual(request, previous, usableSpans, residualMinutes, effectiveKnown, diagnostics)
 
         val provenance = provenanceFor(request, evaluationDate, timed, residual)
 
@@ -508,6 +493,31 @@ object PlaytimeAttributionPlanner {
             residual = residual,
             pending = null,
             diagnostics = diagnostics,
+        )
+    }
+
+    private fun recoveryResidual(
+        request: PlaytimeRecoveryRequest,
+        previous: Long,
+        usableSpans: List<Span>,
+        residualMinutes: Int,
+        effectiveKnown: Long?,
+        diagnostics: MutableList<PlaytimeDiagnostic>,
+    ): ResidualDateRecipe? {
+        if (residualMinutes == 0) return null
+        if (effectiveKnown == null) {
+            return residualRecipe(request, previous, usableSpans, residualMinutes, diagnostics)
+        }
+        val date = localDate(effectiveKnown, request.zone)
+        return ResidualDateRecipe(
+            method = PlaytimeAllocationMethod.KNOWN_TARGETED_DATE,
+            firstDate = date,
+            lastDate = date,
+            eligibleDateCount = 1,
+            baseMinutes = residualMinutes,
+            remainderCount = 0,
+            totalMinutes = residualMinutes,
+            excludedRanges = emptyList(),
         )
     }
 

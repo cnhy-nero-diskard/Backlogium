@@ -8,7 +8,7 @@ merely because the text now matches the specs.
 - [x] 1.1 Audit the existing pure recovery planner rather than adding a second allocator. Verify
       it consumes Steam-authorized quantity and timing/context inputs with no Room, Android,
       network or clock dependency, and produces timed, unknown-time or pending credit as appropriate.
-- [ ] 1.2 Verify bounded deterministic largest-remainder placement: 105 authorized minutes with
+- [x] 1.2 Verify bounded deterministic largest-remainder placement: 105 authorized minutes with
       35 whole usable minutes yield 35 timed and 70 fallback. Cover spans above, below and equal to
       the delta; verify timed plus residual/pending minutes equal the authorized total exactly.
       Fix the continuity path so 36 authorized minutes across 35 fully confirmed minutes yield

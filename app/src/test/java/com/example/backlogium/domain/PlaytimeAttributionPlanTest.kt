@@ -167,6 +167,29 @@ class PlaytimeAttributionPlanTest {
     }
 
     @Test
+    fun `continuous evidence caps session credit and leaves the remaining minute unknown`() {
+        val previous = ts("2024-01-08T23:45:00")
+        val recovery = ts("2024-01-09T00:20:00")
+        val plan = plan(
+            authorizedDeltaMinutes = 36,
+            previousObservationAt = previous,
+            recoveryObservedAt = recovery,
+            evidence = listOf(evidence("continuous", previous, recovery)),
+        )
+
+        val open = plan.sessionActions.single() as SessionAction.Open
+        assertEquals(previous, open.startAt)
+        assertEquals(recovery, open.endAt)
+        assertEquals(35, open.addedMinutes)
+        assertEquals(emptyList<TimedPlacement>(), plan.timedPlacements)
+        assertEquals(
+            listOf(DatedAllocation(date("2024-01-09"), 1, PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE)),
+            plan.residualAllocations(),
+        )
+        assertEquals(36, plan.creditedMinutes)
+    }
+
+    @Test
     fun `a gapped interval cannot establish midnight continuity`() {
         val previous = ts("2024-01-08T23:50:00")
         val recovery = ts("2024-01-09T00:10:00")
@@ -460,6 +483,8 @@ class PlaytimeAttributionPlanTest {
             ),
         )
         assertEquals(listOf(5, 5), plan.timedPlacements.map { it.minutes })
+        assertEquals(0, plan.residualMinutes)
+        assertEquals(10, plan.creditedMinutes)
     }
 
     @Test
