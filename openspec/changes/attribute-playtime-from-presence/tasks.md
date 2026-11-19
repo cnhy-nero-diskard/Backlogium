@@ -107,13 +107,13 @@ merely because the text now matches the specs.
 
 - [x] 5.1 Offer the action in the cloud section while configured and unrun, and its reversal once
       complete. Verify it is absent when no endpoint is configured.
-- [ ] 5.2 Verify confirmation shows the available beginning, valid selected/effective range,
+- [x] 5.2 Verify confirmation shows the available beginning, valid selected/effective range,
       fixed end and separate optional cutoff with timezone/instant. Disclose uncertainty, optional
       imported-to-tracked transfer and unchanged combined credit, XP, levels and Steam totals.
-- [ ] 5.3 Verify acquisition progress, explicit batch continuation and completion summaries show
+- [x] 5.3 Verify acquisition progress, explicit batch continuation and completion summaries show
       selected/covered ranges, cutoff, session/date counts, transferred and remaining imported
       minutes. Include a zero-change completion and an interrupted acquisition/apply fixture.
-- [ ] 5.4 Verify invalid/stale bounds are rejected or refreshed before acquisition, and a completed
+- [x] 5.4 Verify invalid/stale bounds are rejected or refreshed before acquisition, and a completed
       action requires reversal before another range/cutoff or reset of transferred Steam history.
 
 ## 6. Regression and boundaries
