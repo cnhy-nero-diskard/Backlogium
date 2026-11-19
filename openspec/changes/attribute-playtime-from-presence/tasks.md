@@ -5,7 +5,7 @@ only; do not check off an audit or real-data task merely because the text now ma
 
 ## 1. Placement rule
 
-- [ ] 1.1 Audit the existing pure recovery planner rather than adding a second allocator. Verify
+- [x] 1.1 Audit the existing pure recovery planner rather than adding a second allocator. Verify
       it consumes Steam-authorized quantity and timing/context inputs with no Room, Android,
       network or clock dependency, and produces timed, unknown-time or pending credit as appropriate.
 - [ ] 1.2 Verify bounded deterministic largest-remainder placement: 105 authorized minutes with
