@@ -52,7 +52,10 @@ merely because the text now matches the specs.
       uncertainty labels and no fabricated timestamped session or placement on rejected evidence.
 - [ ] 2.7 Verify the existing 30-minute consultation gate and ordinary short-gap guards, including
       plausible delta, same-date eligibility and continuity evidence across midnight. A stale open
-      row must not make a missed interval usable.
+      row must not make a missed interval usable. Fix periodic consultation at exactly 30 minutes
+      to skip the read if every positive owned-game delta independently qualifies using its own
+      retained observation boundary. Test both the skip and a mixed batch where a delta still
+      needs timing. Keep the threshold and targeted fetch behavior unchanged.
 - [ ] 2.8 Verify cursor-advancing reads retain account/generation-bound timing evidence before
       position advancement; combine retained evidence with unread pages, preserve it after failed
       Steam commits and prune it only after the applicable successful baseline commit.
@@ -144,7 +147,7 @@ merely because the text now matches the specs.
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
-  change authorizes the targeted planner fix in task 1.2 only. Surface any other implementation
+  change authorizes the targeted fixes in tasks 1.2 and 2.7 only. Surface any other implementation
   gaps before changing code, and mark checks complete only once verified.
 - Archive only after the implementation audit and outstanding real-data checks are satisfied;
   retain the current recovery and historical-range safeguards when syncing the delta specs.

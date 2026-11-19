@@ -129,6 +129,12 @@ Unavailable, unconfigured, unknown, rejected or insufficient cloud evidence SHAL
   already as precise as the record
 - **THEN** the record is not consulted for that period
 
+#### Scenario: A periodic read at the consultation threshold
+
+- **WHEN** a periodic sync reaches the 30-minute consultation threshold and every positive owned-game increase independently qualifies for ordinary same-date short-gap estimation
+- **THEN** it does not consult cloud for placement
+- **AND** if any such increase does not qualify, the optional placement read remains eligible under the existing threshold
+
 #### Scenario: Minutes are never lost
 
 - **WHEN** placement is attempted and cannot be completed for any reason

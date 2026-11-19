@@ -30,7 +30,7 @@ change neither adds another sweep nor removes its acquisition and crash-recovery
 - Changing XP, the taper, or any game's total. Placement is a date question.
 - Replacing ordinary usable short-gap monitoring or changing its eligibility rules.
 - Adding a quantity detector, parallel writer, historical operation or schema migration.
-- Changing implementation beyond the continuous-evidence cap fix identified in the audit.
+- Changing implementation beyond the continuity cap and consultation-boundary fixes identified in the audit.
 
 ## Decisions
 
@@ -102,6 +102,12 @@ Ordinary same-date short-gap monitoring requires usable timing, a plausible delt
 anomaly or publication-delay conflict. Across midnight, a stale open row alone is not continuity
 evidence. The consultation threshold is not permission to bypass those guards.
 
+At exactly 30 minutes, both the consultation gate and the ordinary same-date estimate can be
+eligible. For periodic sync, skip the optional placement read only when all positive owned-game
+deltas independently qualify for the ordinary estimate using their retained per-game boundaries,
+without cloud evidence. Keep the read eligible if any delta needs timing; do not change targeted
+fetch behavior or the ordinary estimate's eligibility rules.
+
 *Why:* the correction is worthless when the estimate is already good, and the sync runs every
 fifteen minutes. A cloud call on every run would add work without making cloud configuration
 necessary for quantity recovery. Retain pending evidence before advancing any read position,
@@ -159,7 +165,7 @@ session/date counts, transferred minutes and remaining imported minutes, even fo
 
 ## Migration Plan
 
-The targeted planner fix introduces no schema or data migration.
+The targeted planner and periodic consultation fixes introduce no schema or data migration.
 All delta requirements are modifications of existing blocks and retain their complete scenarios;
 archive must not overwrite later recovery or range safeguards with the original phase-4 wording.
 

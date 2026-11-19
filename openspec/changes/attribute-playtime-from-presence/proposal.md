@@ -56,8 +56,9 @@ None.
 - **Historical operations and Settings** — re-use the existing range acquisition, apply receipt,
   imported-balance accounting and reversal machinery.
 - **Scope of this reconciliation** — audit the existing implementation and fix the planner's
-  continuous-evidence path so it cannot bypass the whole-minute cap. Preserve ordinary usable
-  same-day short-gap monitoring. No schema migration, new cloud endpoint or new user operation is
+  continuous-evidence path so it cannot bypass the whole-minute cap. Avoid a periodic placement
+  read at the 30-minute boundary when every positive owned-game delta has an independently usable
+  ordinary estimate. No schema migration, new cloud endpoint or new user operation is
   needed. Revised acceptance checks remain open until verified.
 
 ## Non-goals
