@@ -118,7 +118,7 @@ merely because the text now matches the specs.
 
 ## 6. Regression and boundaries
 
-- [ ] 6.1 Verify an unconfigured app follows the normative local recovery behavior on periodic
+- [x] 6.1 Verify an unconfigured app follows the normative local recovery behavior on periodic
       and targeted paths with no cloud request; usable short-gap monitoring remains unchanged.
 - [x] 6.2 Verify by test that no family-shared game is affected by placement, since it has no diffed
       increase to place.
