@@ -1,11 +1,16 @@
+Prior checkmarks below record completion under unchanged original criteria, not a fresh test run.
+Materially revised criteria are reopened for an implementation/test audit against the normative
+`playtime-recovery` and historical-range contracts. This reconciliation edits planning artifacts
+only; do not check off an audit or real-data task merely because the text now matches the specs.
+
 ## 1. Placement rule
 
-- [x] 1.1 Add the pure placement rule in `app/domain/`, taking a diffed increase and the intervals
-      covering its period and returning `SessionAction` values. Verify it has no Room, Android,
-      network or clock dependency.
-- [x] 1.2 Distribute minutes proportionally to confirmed span with largest-remainder rounding.
-      Verify by test that the written minutes sum to the diffed increase exactly, across spans that
-      total more than, less than, and equal to it.
+- [ ] 1.1 Audit the existing pure recovery planner rather than adding a second allocator. Verify
+      it consumes Steam-authorized quantity and timing/context inputs with no Room, Android,
+      network or clock dependency, and produces timed, unknown-time or pending credit as appropriate.
+- [ ] 1.2 Verify bounded deterministic largest-remainder placement: 105 authorized minutes with
+      35 whole usable minutes yield 35 timed and 70 fallback. Cover spans above, below and equal to
+      the delta; verify timed plus residual/pending minutes equal the authorized total exactly.
 - [x] 1.3 Place minutes only against confirmed portions of an interval, contributing no
       confirmed span for an interval whose raw interior-gap pair exceeds the placement
       tolerance. Verify by test that a partially covered interval receives minutes for its
@@ -14,17 +19,22 @@
       two-interior-outage fixture (`A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 →
       B@t19`, both outages above tolerance) contributes no confirmed span, so placement
       allocates nothing from it.
-- [x] 1.4 Return no placement when no interval covers the period, when spans total zero, or when the
-      increase is zero. Verify by test for each, and that each falls back rather than erroring.
+- [ ] 1.4 Verify no/unknown/rejected timing and zero usable span yield unknown-time recovery,
+      not a timestamped fallback session; zero delta authorizes no new quantity. Verify an inverted
+      date window retains pending date-unknown minutes without invented dates or quantity loss.
 - [x] 1.5 Keep the final session open when its interval is still ongoing. Verify by test that a
       later observation extends it rather than opening a second session.
 - [x] 1.6 Verify by test that placement never produces a session in a period no interval covers.
+- [ ] 1.7 Verify duplicate, overlapping, wrong-account and stale-generation candidates cannot
+      multiply timing capacity; clip to the contribution window and exclude already-consumed spans.
+- [ ] 1.8 Verify unknown and legacy transition coverage is rejected for ordinary placement, and
+      sub-tolerance interior cuts do not become continuous timing or receive timed placement.
 
 ## 2. Wiring into the commit path
 
-- [x] 2.1 Add placement as an optional input to `PlaytimeObservationCommitter`, leaving
-      `SessionDiffer` untouched. Verify by test that a commit with no placement produces byte-identical
-      results to today.
+- [ ] 2.1 Audit optional timing input through the existing shared committer/recovery planner.
+      Verify omitting cloud input uses the normative local recovery path, not the former all-delta
+      single-session fallback, with no second quantity detector or session writer.
 - [x] 2.2 Consult the presence record only when the period since the previous observation is long
       enough for the estimate to be meaningfully wrong. Verify by test that a short period performs
       no read.
@@ -34,11 +44,15 @@
       exactly-once crediting property is unchanged by threading placement through.
 - [x] 2.5 Verify by test that a full sync completes normally, crediting every minute, while the
       reader fails on every call.
-- [x] 2.6 Verify by test that when every covering interval is rejected by the gap tolerance,
-      the commit still credits the full diffed increase through the unaided single-session
-      attribution — byte-identical to the no-record path — rather than crediting zero or
-      placing minutes on rejected evidence. Verify both the total minutes and the resulting
-      session's date attribution.
+- [ ] 2.6 Verify every covering interval rejected by gap tolerance credits the full delta through
+      unknown-time recovery, equivalent to the no-usable-timing path. Assert frozen dates,
+      uncertainty labels and no fabricated timestamped session or placement on rejected evidence.
+- [ ] 2.7 Verify the existing 30-minute consultation gate and ordinary short-gap guards, including
+      plausible delta, same-date eligibility and continuity evidence across midnight. A stale open
+      row must not make a missed interval usable.
+- [ ] 2.8 Verify cursor-advancing reads retain account/generation-bound timing evidence before
+      position advancement; combine retained evidence with unread pages, preserve it after failed
+      Steam commits and prune it only after the applicable successful baseline commit.
 
 ## 3. Attribution and recompute
 
@@ -50,40 +64,64 @@
 - [x] 3.3 Recompute under the retroactive provenance from phase 3. Verify by test that no progress
       event is produced and the delivery baseline matches the values written.
 - [x] 3.4 Verify by test that the longest streak is not lowered by a placement recompute.
-- [x] 3.5 Verify by test that no game's total recorded minutes change as a result of placement.
+- [ ] 3.5 Verify canonical per-game credited totals include timed, unknown-time and pending shares
+      once and remain unchanged by placement-only corrections, with unchanged XP and levels.
+- [ ] 3.6 Verify corrective recompute includes both losing and receiving dates from sessions and
+      allocations, persists met-to-unmet as well as unmet-to-met changes, emits no new progress
+      event and preserves previously owed unacknowledged events.
+- [ ] 3.7 Verify delayed evidence upgrades only provably mapped unlocked contributions, conserves
+      quantity on replay and leaves legacy sessions without reliable contribution/window records intact.
 
 ## 4. Historical sweep
 
-- [x] 4.1 Add the one-time re-filing action, re-placing already-recorded sessions covered by the
-      presence record. Verify by test that each game's total recorded minutes are unchanged.
+- [ ] 4.1 Audit the existing one-time historical action rather than adding a parallel sweep.
+      Verify selected/effective start, fixed end and complete acquisition before apply; paused,
+      capped, cancelled or failed batches must not apply partial history or set the applied marker.
 - [x] 4.2 Record that it has run and make repeated invocation a no-op. Verify by test.
 - [x] 4.3 Leave sessions outside the record's coverage, and sessions covered only by
       intervals the placement tolerance rejects, exactly as they are. Verify by test that they
       are not rewritten on an assumption or on rejected evidence.
-- [x] 4.4 Implement the reversal, returning attribution to its prior state and re-offering the
-      action. Verify by test that a sweep followed by its reversal restores the prior daily progress
-      exactly.
+- [ ] 4.4 Verify receipt-aware reversal restores this operation's original rows, provenance and
+      imported-balance deltas while preserving later ordinary play and independent recovery upgrades.
+      Without independent changes, verify the original daily progress is restored exactly.
 - [x] 4.5 Verify by test that the sweep produces no progress event and that an unacknowledged event
       owed by an earlier sync survives it.
+- [ ] 4.6 Verify optional pre-data transfer requires an earlier independent Steam-history import
+      and separately confirmed cutoff; bound quantity by both the imported balance and eligible
+      non-overlapping whole minutes. Test the disclosed closed-v1 estimate exception only here,
+      not in ordinary placement, and conserve combined credited totals, XP and levels.
+- [ ] 4.7 Verify interrupted apply resumes the same saved range/cutoff and original deltas after
+      ledger commit but before the applied marker, without recalculating against changed balances.
+- [ ] 4.8 Verify historical acquisition has its own resumable position and bounded user-started
+      batches; ordinary reads neither steal its progress nor double-credit overlapping pages.
+      Fence stale account/reader responses and keep staged evidence isolated.
 
 ## 5. Settings surface
 
 - [x] 5.1 Offer the action in the cloud section while configured and unrun, and its reversal once
       complete. Verify it is absent when no endpoint is configured.
-- [x] 5.2 State before it runs that dates, quests and streaks may change and that experience, levels
-      and totals will not. Verify the stated limit matches what task 3.5 asserts.
-- [x] 5.3 Report the outcome — sessions re-filed and dates affected — rather than only completion.
-      Verify by test over a fixture with a known number of both.
+- [ ] 5.2 Verify confirmation shows the available beginning, valid selected/effective range,
+      fixed end and separate optional cutoff with timezone/instant. Disclose uncertainty, optional
+      imported-to-tracked transfer and unchanged combined credit, XP, levels and Steam totals.
+- [ ] 5.3 Verify acquisition progress, explicit batch continuation and completion summaries show
+      selected/covered ranges, cutoff, session/date counts, transferred and remaining imported
+      minutes. Include a zero-change completion and an interrupted acquisition/apply fixture.
+- [ ] 5.4 Verify invalid/stale bounds are rejected or refreshed before acquisition, and a completed
+      action requires reversal before another range/cutoff or reset of transferred Steam history.
 
 ## 6. Regression and boundaries
 
-- [x] 6.1 Verify by test that an unconfigured app synthesizes sessions identically to before this
-      change, on every path including the targeted fetch.
+- [ ] 6.1 Verify an unconfigured app follows the normative local recovery behavior on periodic
+      and targeted paths with no cloud request; usable short-gap monitoring remains unchanged.
 - [x] 6.2 Verify by test that no family-shared game is affected by placement, since it has no diffed
       increase to place.
-- [x] 6.3 Run `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
+- [ ] 6.3 After auditing revised criteria, run
+      `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
 - [x] 6.4 Verify the boundary grep in `CLAUDE.md` reports no new `data.local.entity` or DAO import
       under `ui/`.
+- [x] 6.5 Validate with `openspec validate attribute-playtime-from-presence --strict` and inspect
+      every MODIFIED block against its existing normative counterpart to ensure no later scenarios
+      or safeguards are lost. Verify only this change's existing planning artifacts were edited.
 
 ## 7. Verify on real data
 
@@ -96,3 +134,13 @@
       unchanged by both, and that daily progress after the reversal matches what it was before.
 - [ ] 7.4 Compare the result against phase 2's diagnostics surface and confirm the placement matches
       the disagreement that surface predicted.
+- [ ] 7.5 Re-verify real-history apply/reversal against the reconciled bounded-range and partial-
+      evidence criteria, including residual unknown-time minutes and preservation of subsequent play.
+      Task 7.3 records the earlier run only and does not close this revised verification.
+
+## Workflow follow-up
+
+- Use the apply workflow to audit implementation and tests against the reopened criteria; this
+  planning reconciliation does not authorize code edits or mark those checks complete.
+- Archive only after the implementation audit and outstanding real-data checks are satisfied;
+  retain the current recovery and historical-range safeguards when syncing the delta specs.

@@ -1,21 +1,14 @@
 ## MODIFIED Requirements
 
 ### Requirement: Session synthesis by playtime diffing
-The system SHALL synthesize play sessions by comparing each game's `playtime_forever`
-against the previously stored value, since the Steam Web API does not expose session
-or "currently playing" data. This mechanism SHALL apply only to games for which Steam reports
-playtime — those in the player's own library — so that a game whose sessions are derived from
-observed presence is never also diffed.
+The system SHALL derive owned-game credited play by comparing each game's cumulative Steam minutes with its previously committed quantity baseline. This SHALL remain the only quantity detector for games with Steam-reported playtime; games without those totals SHALL retain their presence-derived mechanism.
 
-The diffed increase SHALL be the sole authority on how many minutes were played. Where a record of
-observed presence covers the period the increase was earned in, that record MAY determine the
-boundaries of the sessions the increase is written into — including producing more than one session
-from a single increase. The record SHALL NOT change the number of minutes synthesized, and its
-absence SHALL leave this mechanism behaving exactly as specified without it.
+The positive diff SHALL authorize exactly that many minutes, represented as timestamped sessions when usable timing exists and as unknown-time allocations when it does not. Validated timing evidence SHALL place a bounded share through the playtime-recovery rules without changing quantity; unmatched minutes SHALL use local fallback. Ordinary short-gap monitoring with a usable estimate SHALL retain its open/extend/close session behavior. A stale open row alone SHALL NOT establish usable timing across a missed interval.
 
 #### Scenario: Playtime increases
-- **WHEN** a game's `playtime_forever` is greater than its stored value
-- **THEN** an open session for that game is created if none exists, extended by the delta minutes, and its last-increase timestamp updated
+- **WHEN** a game's cumulative total exceeds its committed quantity baseline
+- **THEN** the increase is credited exactly once through sessions, unknown-time allocations, or their combination
+- **AND** ordinary usable short-gap timing still opens or extends the game's session
 
 #### Scenario: Playtime unchanged
 - **WHEN** a game with an open session shows no increase on the next poll
@@ -26,27 +19,28 @@ absence SHALL leave this mechanism behaving exactly as specified without it.
 - **THEN** no session is emitted and the decrease does not produce negative playtime
 
 #### Scenario: An increase placed against observed presence
-- **WHEN** a playtime increase is observed and a record of observed presence covers the period
-- **THEN** the increase may be written as one or more sessions bounded by the observed intervals
-- **AND** the minutes across them sum to the observed increase
+- **WHEN** a playtime increase has validated timing evidence for part or all of its observation window
+- **THEN** evidence-informed placement receives only its authorized bounded share and unmatched minutes use recovery fallback
+- **AND** their combined credited minutes equal the observed increase
 
 #### Scenario: No presence record available
-- **WHEN** a playtime increase is observed and no record of observed presence covers the period
-- **THEN** the increase is written as a single session exactly as it is without the record
+- **WHEN** an increase has no usable timing evidence
+- **THEN** the playtime-recovery fallback credits unknown-time activity without fabricated session boundaries
+- **AND** cloud configuration is not required
 
 #### Scenario: The record cannot change the total
-- **WHEN** the observed intervals span more or less time than the diffed increase
-- **THEN** the minutes written still equal the diffed increase
+- **WHEN** usable intervals span more or less time than the diffed increase
+- **THEN** timestamped and unknown-time credited minutes together equal the diffed increase exactly
+
+#### Scenario: Partial presence cannot absorb a whole increase
+- **WHEN** a 105-minute increase has only 35 whole confirmed minutes of non-overlapping usable timing and no previously funded share
+- **THEN** timed placement receives 35 minutes and unknown-time recovery receives 70
+- **AND** no synthetic session is created to hold the residual
 
 ### Requirement: Playtime is attributed to a session's start date
-Observed playtime SHALL be credited to the local calendar date on which its session began,
-not to the date of the poll that observed it. A single poll SHALL be able to credit more
-than one date when the sessions it observed began on different dates. A session's minutes
-SHALL NOT be divided across dates.
+Timestamped session minutes SHALL be credited to the local date on which that session began, rather than the poll date, and a timestamped session SHALL remain atomic across midnight. Multiple timestamped sessions SHALL be attributed independently by start date.
 
-Where several sessions are synthesized from one observed increase, each SHALL be attributed
-independently by its own start date. This rule is unchanged by that: more sessions means more start
-dates, not divided minutes.
+Unknown-time play SHALL instead be credited to its explicit frozen allocation dates under playtime-recovery. An unknown-time allocation SHALL NOT acquire a synthetic session-start timestamp to satisfy this rule. One increase SHALL be able to credit multiple dates through independent sessions and/or day allocations. Crediting or moving minutes on a previously evaluated date SHALL re-evaluate that date's quest, including a change from met to unmet after placement correction.
 
 #### Scenario: Session crossing midnight
 - **WHEN** a session begins before local midnight and continues after it
@@ -74,5 +68,14 @@ dates, not divided minutes.
   persisted
 
 #### Scenario: Attribution does not depend on poll timing
-- **WHEN** the same play activity is observed by polls at different times
-- **THEN** the date credited is the same in every case
+- **WHEN** the same credited activity has the same usable timing evidence or frozen allocation dates
+- **THEN** every surface uses those dates independently of when a later poll or render occurs
+
+#### Scenario: Unknown-time allocation date
+- **WHEN** recovered play is allocated to Wednesday without session timing
+- **THEN** Wednesday receives that credit without creating a session start
+
+#### Scenario: Correction re-evaluates the date losing minutes
+- **WHEN** a placement-only correction moves qualifying minutes away from a previously met date
+- **THEN** that date's daily total and quest are re-evaluated, including persisting a met-to-unmet change
+- **AND** the same correction re-evaluates the receiving dates without changing the game's credited quantity

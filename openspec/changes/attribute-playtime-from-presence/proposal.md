@@ -1,39 +1,34 @@
 # Place playtime from recorded presence
 
-*Phase 4 of the cloud poller integration. Phases 1–3 are `record-presence-coverage`,
-`add-cloud-presence-reader` and `backfill-shared-game-presence`.*
+*Originally phase 4 of the cloud poller integration. This in-flight change is reconciled with
+the subsequent agreed recovery and historical-range requirements; it is not a second detector
+or a replacement for those capabilities.*
 
 ## Why
 
-A session synthesized by playtime diffing starts at `previousPollAt` — the last time the app
-managed to sync. That is a good estimate when the app syncs every fifteen minutes and a bad one
-when it does not, and `steam-sync` credits every minute of a session to the date it began.
-
-So: phone dies Friday night, play Saturday and Sunday, sync Monday. Six hours arrive as one session
-dated Friday. Saturday and Sunday record zero qualifying minutes, both quests go unmet, and the
-streak breaks — for two days that were actually played. The XP is right. Everything indexed by date
-is wrong.
-
-This is a correctness defect in the progression system, not a precision shortfall. The cloud has
-recorded when that play actually happened, to the minute, the whole time.
+The original defect was crediting several days of Steam play to the last successful sync's date.
+The agreed specs now address that through bounded timing evidence and honest unknown-time recovery;
+this change must retain those guarantees while closing its remaining validation work.
 
 ## What Changes
 
-- **Observed intervals place the minutes the differ counted.** Steam's `playtime_forever` remains
-  the sole authority on *how much* was played; the cloud record decides *where those minutes go*.
-  The cloud can never add, remove, or invent a minute.
-- **One delta can become several sessions**, on the days they happened, instead of one session on
-  the day the app last looked.
-- **Unchanged when it cannot help.** No cloud record for the window, no coverage, or a gap small
-  enough that the existing estimate is already good — the sync behaves exactly as it does today.
-- **A one-time historical sweep** re-files the sessions already recorded, opt-in and reversible,
-  modelled on `playtime-backfill`.
-- **Corrections are silent**, under the retroactive provenance phase 3 introduced. Past quests are
-  re-evaluated and streaks recomputed without a cascade of celebrations.
+- **Steam authorizes quantity; validated evidence informs timing.** New timed placement is bounded
+  by the remaining authorized minutes and whole confirmed minutes of non-overlapping usable span.
+  Deterministic proportional rounding applies only to that bounded share.
+- **Residual minutes use `playtime-recovery`.** Missing, rejected or insufficient cloud evidence
+  does not create a timestamped fallback session or lose a minute. Ordinary usable short-gap
+  monitoring keeps its existing behavior without requiring cloud reads.
+- **One increase can credit several dates** through timestamped sessions and/or frozen unknown-time
+  allocations. Session minutes remain atomic by their start date; allocations have no invented start.
+- **Re-use the existing historical re-file workflow**, including a selected bounded range, fixed
+  end, complete acquisition before application, explicit confirmation, optional separately confirmed
+  pre-data transfer from already-imported Steam minutes, and resumable application and reversal.
+- **Corrections remain silent and quantity-conserving**, re-evaluating affected old and new dates,
+  protecting longest-streak records and retaining previously owed progress events.
 
-**This does not change XP or levels.** Those derive from cumulative minutes per game, which are
-already correct. What changes is which day each minute belongs to — and therefore quests, streaks,
-History, Analytics, Personal Pace and gap-plan inputs.
+The delta specs modify existing requirements and retain their later safeguards. They do not
+re-introduce requirements already present in the normative specs as additions. Placement-only
+corrections do not change per-game credited totals, XP or levels under unchanged rules and inputs.
 
 ## Capabilities
 
@@ -43,29 +38,31 @@ None.
 
 ### Modified Capabilities
 
-- `steam-sync`: session synthesis by playtime diffing may take its boundaries from an external
-  record of observed presence where one covers the window. The diffed total remains authoritative
-  and the attribution rule is unchanged — more sessions simply means more start dates.
-- `cloud-presence-reader`: the rule that a read writes nothing derived narrows again to permit
-  placement of diffed minutes, and gains the placement rules and the historical sweep.
-- `app-settings`: the cloud section gains the one-time sweep, its reversal, and what each does.
+- `steam-sync`: align the placement and date-attribution scenarios with bounded evidence plus
+  unknown-time recovery, preserving the current quantity and concurrency contracts.
+- `cloud-presence-reader`: reconcile the existing read/placement/re-file requirements with partial
+  evidence, safe fallback, complete historical acquisition and independent subsequent corrections.
+- `app-settings`: retain the existing range/cutoff, disclosure, progress and reversal contract when
+  presenting re-filing, including interruption and zero-change outcomes.
 
 ## Impact
 
-- **`app/domain/`** — a pure placement rule consuming phase 2's intervals and `SessionDiffer`'s
-  deltas, emitting the same `SessionAction` vocabulary. `SessionDiffer` itself is untouched.
-- **`PlaytimeObservationCommitter`** — the one path from an observed reading to stored sessions
-  gains an optional placement input. Both existing observers commit through it, so both benefit
-  without either learning about the cloud.
-- **Daily progress** — corrected through the existing `dailyProgressCorrections` path, which already
-  recomputes dates from the session ledger.
-- **No schema change.** A placed session is an ordinary session.
+- **Existing on-device recovery path** — use `PlaytimeAttributionPlanner` and
+  `PlaytimeObservationCommitter`; no second quantity detector or parallel session writer.
+- **Timing acquisition** — retain the existing account/reader-generation fences, durable pending
+  evidence and serialized readers. Network work stays outside the baseline/session transaction.
+- **Daily progress** — correct sessions and allocations through the existing corrective recompute,
+  rather than assuming the session ledger alone contains all credited activity.
+- **Historical operations and Settings** — re-use the existing range acquisition, apply receipt,
+  imported-balance accounting and reversal machinery.
+- **Scope of this reconciliation** — planning artifacts only. It introduces no schema migration,
+  code change, new cloud endpoint or new user operation. Revised acceptance checks remain open
+  until verified; previous checkmarks are not evidence for changed criteria.
 
 ## Non-goals
 
-- **Changing XP, levels, or the taper.** Placement moves minutes between dates; it does not change
-  any game's total.
-- **Requiring the cloud.** Every behaviour here degrades to today's when no record is available.
-- **Splitting a session's minutes across dates.** The attribution rule stands: a session's minutes
-  belong to the date it began.
-- **Family-shared games.** Phase 3 owns those, and they have no diffed total to place.
+- Changing Steam-authorized totals, XP rules, levels or the taper.
+- Requiring cloud configuration or connectivity for local recovery.
+- Splitting an existing timestamped session's minutes across dates.
+- Changing family-shared quantity derivation or the separately disclosed legacy pre-data transfer.
+- Automatically rewriting legacy sessions whose funded contribution/window cannot be proved.

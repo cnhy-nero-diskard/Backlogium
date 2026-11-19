@@ -6,14 +6,16 @@ The system SHALL NOT write a session, daily progress record, derived gamificatio
 progress event as a result of a cloud read, except:
 
 - through the presence session mechanism acting on games whose sessions that mechanism already
-  owns; and
-- by placing, in time, minutes that playtime diffing has already counted.
+  owns;
+- by placing, in time, minutes that playtime diffing has already counted; and
+- after a separate, explicit user confirmation and **complete historical acquisition**, by
+  reclassifying already-imported Steam minutes for owned games into safely dated History sessions,
+  with an equal imported-balance reduction and silent derived-state recompute.
 
 A read is an acquisition of recorded fact. Deriving from it is a separate decision with its own
-provenance and its own author, and must be introduced deliberately rather than arriving as a side
-effect of fetching. Neither permitted path makes the cloud an author: the first supplies
-observations to a mechanism that already exists, and the second supplies only *when* to a total
-that Steam alone determines.
+provenance and its own author, and SHALL NOT occur solely because a page was fetched. None of these
+paths makes the cloud the author of owned-game minutes: Steam's diff or the previously imported
+Steam total authorizes every credited minute, while the cloud may inform only its timing.
 
 #### Scenario: A read of shared-game play
 
@@ -22,15 +24,19 @@ that Steam alone determines.
 
 #### Scenario: A read of owned-game play
 
-- **WHEN** a cloud read returns intervals naming games whose sessions come from playtime diffing
+- **WHEN** a routine, manual, verification, or accuracy-driven read returns intervals naming games whose sessions come from playtime diffing
 - **THEN** they may inform where already-counted minutes are placed
-- **AND** they SHALL NOT cause any minute to be added, removed, or created
+- **AND** that read alone SHALL NOT cause any owned-game minute to be added, removed, or created
 
 #### Scenario: A read with no diffed playtime to place
 
-- **WHEN** a cloud read returns intervals for an owned game and no playtime increase has been
-  observed for it
+- **WHEN** an ordinary cloud read returns intervals for an owned game and no playtime increase has been observed for it
 - **THEN** no session is written for that game
+
+#### Scenario: Complete, explicitly confirmed historical transfer
+- **WHEN** every page of a chosen range has been acquired and the player explicitly confirms pre-data dating of already-imported owned-game minutes
+- **THEN** only a separate historical application may transfer eligible minutes from the imported balance into dated sessions
+- **AND** the session/offset change is all-or-nothing and the total credited minutes do not change
 
 #### Scenario: The reconstruction remains inert
 
@@ -38,35 +44,21 @@ that Steam alone determines.
 - **THEN** the reconstruction itself writes nothing, and any write is performed by the path that
   consumes it
 
-## ADDED Requirements
-
 ### Requirement: Observed intervals place diffed minutes without changing their total
+For an owned-game Steam increase, validated presence intervals SHALL inform only placement, never quantity. Already funded contributions SHALL be preserved. New interval placement SHALL be bounded by remaining Steam-authorized minutes and whole confirmed minutes of non-overlapping usable span, with deterministic proportional rounding. Unmatched minutes SHALL use playtime-recovery. Evidence-informed placements plus fallback allocations SHALL sum to the authoritative increase exactly.
 
-Where a playtime increase is observed for a game and a record of observed presence covers the
-period it was earned in, the system SHALL distribute those minutes across the observed intervals
-rather than attributing them all to a single estimated start. The sum of the minutes placed SHALL
-equal the observed increase exactly.
-
-The system SHALL NOT place minutes into a period no interval covers, and SHALL NOT place more
-minutes than were observed as played.
-
-Steam's cumulative total is the only authority on how much was played; the presence record is the
-only authority on when. Keeping those roles separate is what makes this safe — a wrong or
-incomplete presence record can misplace minutes but can never invent them, because the total it is
-distributing was not derived from it.
+Unknown or rejected coverage SHALL NOT supply timing. A raw interior-gap pair above the existing gap tolerance SHALL reject the entire interval, including a fresh tail: retained largest-gap evidence does not prove that other outages are absent. Fallback SHALL be explicitly unknown-time and SHALL NOT be described as validated timing or as avoiding proven outage portions.
 
 #### Scenario: One increase across several observed intervals
 
-- **WHEN** a playtime increase is observed and the presence record shows several separate intervals
-  of that game within the period
-- **THEN** a session is written for each interval
-- **AND** the minutes across them sum to the observed increase
+- **WHEN** an increase has several validated observed intervals
+- **THEN** its bounded evidence-informed share is distributed proportionally over their non-overlapping confirmed spans
+- **AND** any residual is credited as unknown-time play and the combined quantity equals the increase
 
 #### Scenario: The total is never changed
 
-- **WHEN** minutes are placed across intervals whose spans total more or less than the observed
-  increase
-- **THEN** the minutes written still sum to the observed increase
+- **WHEN** confirmed spans total more than, less than, or equal to the observed increase
+- **THEN** evidence-informed and fallback allocations together sum to that increase exactly
 
 #### Scenario: Placement respects the attribution rule
 
@@ -87,47 +79,33 @@ distributing was not derived from it.
 #### Scenario: Unconfirmed time receives no minutes
 
 - **WHEN** an interval was confirmed only until a time before it ended
-- **THEN** minutes are placed only against the confirmed portion
+- **THEN** evidence-informed minutes are placed only against the confirmed portion
+- **AND** any remaining authoritative minutes use separately labeled unknown-time fallback
 
 #### Scenario: An interior gap exceeding tolerance removes the interval from placement
 
-- **WHEN** an interval carries an interior-gap pair alongside a fresh tail (for example a v3
-  transition carrying `prevLastObservedAt=t10` with `prevCoverageLapseFrom=t1` /
-  `prevCoverageLapseRecoveredAt=t10`) and the span between that pair exceeds the placement
-  rule's own tolerance
-- **THEN** the interval contributes no confirmed span, rather than contributing its portions
-  outside the `t1..t10` span
-- **AND** placement allocates nothing from that interval, including from its fresh tail,
-  because phase 1 retains only the largest step and a second outage above the same tolerance
-  may have been discarded
-- **AND** where that leaves no confirmed span to distribute across, no placement is returned
-  and the increase is credited by the unaided attribution instead; that fallback retains the
-  old estimate and is not claimed to avoid the unobserved span
+- **WHEN** an interval has an interior-gap pair above the placement tolerance even with a fresh tail
+- **THEN** the entire interval contributes no usable timing span
+- **AND** if no other timing remains, the increase uses unknown-time recovery rather than a timestamped fallback session
 
 #### Scenario: Two interior outages make the interval unusable for placement
 
-- **WHEN** one state observed `A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 → B@t19`
-  and the retained pair records only the largest step, with both interior outages above the
-  placement tolerance
-- **THEN** the interval contributes no confirmed span, so placement allocates nothing from it,
-  including nothing located by the retained pair
-- **AND** where it is the only covering interval, no placement is returned and the increase is
-  still credited in full by the unaided attribution; that fallback is not claimed to avoid
-  either outage span
+- **WHEN** an interval contains two outages above tolerance but retains only the largest pair
+- **THEN** it contributes no usable timing span, including no tail placement
+- **AND** Steam-authorized minutes remain eligible for unknown-time recovery
+
+#### Scenario: Partial evidence leaves a residual
+- **WHEN** an increase is 105 minutes and validated non-overlapping span supplies 35 whole minutes of placement
+- **THEN** evidence-informed placement receives 35 and fallback receives 70
+
+#### Scenario: Duplicate evidence cannot multiply timing capacity
+- **WHEN** local and cloud candidates overlap or the same cloud interval is replayed
+- **THEN** overlapping usable span contributes timing capacity only once
+- **AND** timed placement plus residual recovery still conserves the authoritative increase
 
 ### Requirement: Placement never degrades the estimate it replaces
 
-The system SHALL fall back to attributing minutes as it would without any presence record whenever
-the record cannot improve on it — including when no record covers the period, when the record
-is unavailable, when coverage is unknown, when every covering interval is rejected by the gap
-tolerance and therefore contributes no confirmed span, and when the period is short enough that
-the existing estimate is already within the record's own resolution.
-
-A rejected or gapped presence interval makes the record unusable for placement: the old estimate
-is retained rather than placing minutes on evidence deliberately rejected. That fallback preserves
-Steam's total but is not claimed to avoid the unobserved spans.
-
-No configuration of the presence record SHALL cause a game's minutes to go uncredited.
+Unavailable, unconfigured, unknown, rejected or insufficient cloud evidence SHALL leave all Steam-authorized owned-game minutes eligible for local playtime-recovery. No cloud configuration or read failure SHALL prevent fallback or require another network call before crediting a trustworthy Steam increase. Rejected intervals SHALL NOT be reused as valid timing by fallback. Ordinary short-gap monitoring with usable timing SHALL preserve its existing session behavior and shall not consult cloud merely for snapshot creation.
 
 #### Scenario: Record unavailable
 
@@ -137,7 +115,7 @@ No configuration of the presence record SHALL cause a game's minutes to go uncre
 #### Scenario: Feature not configured
 
 - **WHEN** no cloud endpoint is configured
-- **THEN** session synthesis behaves exactly as it did before this capability existed
+- **THEN** owned-game recovery operates through normal successful Steam reads without cloud requests
 
 #### Scenario: A short period needs no correction
 
@@ -152,38 +130,45 @@ No configuration of the presence record SHALL cause a game's minutes to go uncre
 
 #### Scenario: Every covering interval rejected retains the old estimate
 
-- **WHEN** a playtime increase is observed and every presence interval covering its period is
-  rejected by the gap tolerance, so the confirmed span totals zero
-- **THEN** no placement is returned and the increase is credited in full as a single session
-  exactly as it would be without any presence record
-- **AND** no claim is made that the resulting session avoids the unobserved spans; the record
-  was unusable for placement, so the old estimate is retained with its total intact
+- **WHEN** every covering interval is rejected and no other usable timing exists
+- **THEN** the full authoritative increase receives unknown-time recovery attribution
+- **AND** no timing claim is made from the rejected evidence
+
+#### Scenario: Unknown coverage is not continuous timing
+- **WHEN** all available cloud intervals have unknown coverage or only legacy transition estimates during ordinary placement
+- **THEN** none supplies usable timing and unmatched minutes use local recovery
+- **AND** the separately confirmed pre-data transfer exception is not applied to ordinary placement
 
 ### Requirement: History can be re-filed once, and reversed
 
-The system SHALL provide a user-initiated action that re-files already-recorded sessions against
-the presence record, SHALL treat it as a one-time event that repeated invocation does not
-compound, and SHALL let the user reverse it, returning attribution to what it was.
+The system SHALL provide a user-initiated action that re-files already-recorded sessions against the completely acquired, explicitly confirmed range of the presence record and, when the player separately confirms a pre-data cutoff and has already imported historical Steam playtime, transfers safely observed pre-data minutes out of that imported balance into dated sessions. It SHALL treat both parts as one one-time event that repeated invocation does not compound, and SHALL let the user reverse both parts, returning attribution and per-game imported balances to what they were except for independent subsequent changes. A different range or cutoff SHALL require reversing the completed re-file first. An interrupted apply SHALL retain the effective range, cutoff and original imported-minute deltas needed to resume the same operation exactly, including its crash-recovery evidence, rather than recomputing replacements from a different range or balance.
 
-The action SHALL disclose that it changes which dates play is credited to — and therefore quests
-and streaks — and that it does not change experience, levels, or any game's total playtime.
+The action SHALL disclose that it changes which dates play is credited to — and therefore quests and streaks — and that it does not change experience, levels, or any game's total playtime. If pre-data minutes are transferred, it SHALL disclose that previously imported minutes become tracked/datable sessions without changing the combined credited amount. It SHALL report the selected and effective range, the confirmed cutoff, what was actually covered, and how many minutes were transferred and remain imported, even when no sessions changed.
 
 #### Scenario: Re-filing history
 
-- **WHEN** the user invokes the action
-- **THEN** already-recorded sessions covered by the presence record are re-filed onto the dates
-  they were played
+- **WHEN** the user confirms a valid range and every page through its fixed end has been acquired
+- **THEN** already-recorded owned-game sessions safely placeable from that range are re-filed onto the dates they were played
 - **AND** each game's total recorded minutes are unchanged
+
+#### Scenario: Pre-data History is populated without double-counting
+- **WHEN** the independent Steam-history import is present and the player confirms a pre-data cutoff containing eligible cloud-observed owned-game play
+- **THEN** safe imported minutes are moved into new dated sessions in History, with equal imported-minutes deductions
+- **AND** unaffected imported minutes stay imported and the per-game combined credited minutes do not change
 
 #### Scenario: Repeated invocation does nothing
 
 - **WHEN** the action is invoked again after completing
-- **THEN** no further change results
+- **THEN** no further change results and the applied range remains the one reported
 
 #### Scenario: Reversing it
 
 - **WHEN** the user reverses a completed re-filing
-- **THEN** attribution returns to what it was beforehand, and the action is offered again
+- **THEN** original session attribution and transferred imported balances return to their prior classification without removing later ordinary play, and the action is offered again with a new range and cutoff choice
+
+#### Scenario: Changing the range after apply
+- **WHEN** a different start date or pre-data cutoff is selected while a prior range remains applied
+- **THEN** the different range or cutoff is not applied until the prior re-file is reversed
 
 #### Scenario: Sessions the record cannot speak to
 
@@ -202,9 +187,23 @@ and streaks — and that it does not change experience, levels, or any game's to
 - **WHEN** the action is presented
 - **THEN** it states that dates, quests and streaks may change and that experience, levels and
   totals will not
+- **AND** it shows the chosen start, fixed end, confirmed pre-data cutoff if selected, imported-minute limit and effective evidence boundary before confirmation
+
+#### Scenario: Incomplete range changes no historical attribution
+- **WHEN** historical acquisition is paused, capped, cancelled, or fails before the fixed end
+- **THEN** no one-time re-file is marked applied and no historical session attribution is changed by that re-file
+
+#### Scenario: An interrupted application resumes the same range
+- **WHEN** a session/offset ledger commit succeeds but the applied marker is not yet durable
+- **THEN** a retry uses the recorded range, cutoff, imported-minute deltas and retained evidence to finish or reverses safely, without re-computing against a different range or current Steam/import state
 
 #### Scenario: Corrections are silent
 
 - **WHEN** re-filing changes a past date's quest outcome or a streak
 - **THEN** the change is reflected without a progress event, under the provenance for play observed
   retroactively
+
+#### Scenario: Reversal preserves an independent recovery upgrade
+- **WHEN** historical re-filing is reversed after a separate recovery correction upgraded a funded contribution
+- **THEN** reversal preserves that independent change and the game's credited total rather than restoring a superseded estimate
+- **AND** an operation without a provable mapping leaves that contribution intact
