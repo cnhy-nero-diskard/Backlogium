@@ -87,9 +87,10 @@ merely because the text now matches the specs.
 - [x] 4.3 Leave sessions outside the record's coverage, and sessions covered only by
       intervals the placement tolerance rejects, exactly as they are. Verify by test that they
       are not rewritten on an assumption or on rejected evidence.
-- [ ] 4.4 Verify receipt-aware reversal restores this operation's original rows, provenance and
+- [x] 4.4 Verify receipt-aware reversal restores this operation's original rows, provenance and
       imported-balance deltas while preserving later ordinary play and independent recovery upgrades.
-      Without independent changes, verify the original daily progress is restored exactly.
+      Without independent changes, verify the original daily progress is restored exactly. Fix
+      recompute of affected dates and remove empty rows created solely by the re-file.
 - [x] 4.5 Verify by test that the sweep produces no progress event and that an unacknowledged event
       owed by an earlier sync survives it.
 - [ ] 4.6 Verify optional pre-data transfer requires an earlier independent Steam-history import
@@ -147,7 +148,7 @@ merely because the text now matches the specs.
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
-  change authorizes the targeted fixes in tasks 1.2 and 2.7 only. Surface any other implementation
+  change authorizes the targeted fixes in tasks 1.2, 2.7 and 4.4 only. Surface any other implementation
   gaps before changing code, and mark checks complete only once verified.
 - Archive only after the implementation audit and outstanding real-data checks are satisfied;
   retain the current recovery and historical-range safeguards when syncing the delta specs.

@@ -156,6 +156,46 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
     }
 
     @Test
+    fun receiptReversalRestoresDailyRowsExactlyWhenThereWasNoIndependentPlay() = runTest {
+        val oldDay = "2026-07-24"
+        val newDay = "2026-07-25"
+        val midnight = utc("${newDay}T00:00:00Z")
+        database.sessionDao().insert(
+            Session(appId = GAME, startAt = midnight - 30 * 60_000L,
+                endAt = midnight + 30 * 60_000L, minutes = 30, open = false),
+        )
+        database.dailyProgressDao().upsert(
+            com.example.backlogium.data.local.entity.DailyProgress(oldDay, minutesPlayed = 30, questMet = true),
+        )
+        val sessionsBefore = database.sessionDao().getAll()
+        val dailyBefore = database.dailyProgressDao().getAllOrdered()
+        val operation = CloudHistoricalOperation(
+            operationId = "exact-daily-reversal", account = ACCOUNT, readerGeneration = 5L,
+            endpointIdentity = "https://presence.example.test/readPresence",
+            startChoice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE.name, zoneId = "UTC",
+            selectedStartAt = midnight - 86_400_000L, fromAt = midnight - 86_400_000L,
+            throughAt = midnight + 3_600_000L, acquisitionComplete = true,
+            state = CloudHistoricalStates.COMPLETE, createdAt = 1L, updatedAt = 1L,
+        )
+        check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
+        database.cloudHistoricalDao().insertInterval(
+            CloudHistoricalInterval(
+                operationId = operation.operationId, account = ACCOUNT, readerGeneration = 5L,
+                endpointIdentity = operation.endpointIdentity, appId = GAME, startAt = midnight,
+                endAt = midnight + 30 * 60_000L, ongoing = false, coverage = "CONTINUOUS",
+                observedUntil = null, coverageLapseFrom = null, coverageLapseRecoveredAt = null,
+                mayHaveStartedBefore = false, gameName = "Portal", windowStart = operation.fromAt,
+            ),
+        )
+        assertEquals(1, useCase.applyHistorical(operation).sessionsRefiled)
+        assertEquals(0, database.dailyProgressDao().getByDate(oldDay)?.minutesPlayed)
+        assertEquals(30, database.dailyProgressDao().getByDate(newDay)?.minutesPlayed)
+        assertEquals(CloudPresenceRefilingOperation.REVERSED, useCase.reverse().operation)
+        assertEquals(sessionsBefore, database.sessionDao().getAll())
+        assertEquals(dailyBefore, database.dailyProgressDao().getAllOrdered())
+    }
+
+    @Test
     fun reversalPreservesAFundedShareAcquiredOnACreatedRowAfterApply() = runTest {
         database.gameDao().upsert(game().copy(isGoal = true))
         database.playerProfileDao().upsert(

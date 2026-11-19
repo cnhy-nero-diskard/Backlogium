@@ -30,7 +30,8 @@ change neither adds another sweep nor removes its acquisition and crash-recovery
 - Changing XP, the taper, or any game's total. Placement is a date question.
 - Replacing ordinary usable short-gap monitoring or changing its eligibility rules.
 - Adding a quantity detector, parallel writer, historical operation or schema migration.
-- Changing implementation beyond the continuity cap and consultation-boundary fixes identified in the audit.
+- Changing implementation beyond the continuity cap, consultation boundary, and exact receipt
+  reversal fixes identified in the audit.
 
 ## Decisions
 
@@ -130,6 +131,8 @@ interrupted apply resumes the same operation rather than recalculating against n
 Reversal restores only this operation's changes, preserves later ordinary play and independent
 recovery upgrades, and is required before selecting another range or resetting a transferred import.
 Unprovable legacy contribution/window mappings remain untouched by automatic recovery.
+Recompute receipt-affected dates even when the remaining ledger starts later, and remove only
+apply-created daily rows that no longer carry credit after reversal.
 
 *Why reuse rather than simplify:* complete acquisition, balance accounting and replay-safe reversal
 are already agreed behavior. A second sweep would lose those safeguards and duplicate state.
