@@ -107,10 +107,26 @@ class RecoveryPlacementReconcileUseCaseTest {
             timed = emptyList(),
             allocations = allocations,
         )
+        val pendingContribution = contribution(from = 605L, to = 625L).copy(windowStartAt = null)
+        val pending = allocations.first().copy(
+            placementId = PlaytimeRecoveryIdentity.allocationPlacementId(
+                pendingContribution.contributionId, 1L, null,
+            ),
+            contributionId = pendingContribution.contributionId,
+            date = null,
+            minutes = 20L,
+            method = RecoveryAllocationMethods.PENDING_DATE_UNKNOWN,
+            pendingDate = true,
+            windowStartAt = null,
+        )
+        database.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = pendingContribution, timed = emptyList(), allocations = listOf(pending),
+        )
         seedDaily(allocations)
         updater.recompute(FixedTime.today(), RecomputeSource.SYNC)
-        val xpBefore = database.playerProfileDao().get()!!.totalXp
+        val profileBefore = database.playerProfileDao().get()!!
         val creditedBefore = database.sessionDao().creditedMinutesByGame().single().minutes
+        assertEquals(125, creditedBefore)
 
         val outcome = useCase.reconcileContribution(contribution, listOf(evidenceWeds35))
 
@@ -144,11 +160,12 @@ class RecoveryPlacementReconcileUseCaseTest {
         assertEquals(17, daily("2026-09-03"))
         assertEquals(17, daily("2026-09-04"))
 
-        // Steam quantity and XP are conserved: canonical credited minutes stay 105 and the level
-        // transition baseline is untouched by the normalization of daily totals.
-        assertEquals(105, database.sessionDao().creditedMinutesByGame().single().minutes)
+        // Canonical credit includes 35 timed, 70 dated estimates and 20 pending minutes once each.
+        assertEquals(pending, dao.activeAllocations(pendingContribution.contributionId).single())
         assertEquals(creditedBefore, database.sessionDao().creditedMinutesByGame().single().minutes)
-        assertEquals(xpBefore, database.playerProfileDao().get()!!.totalXp)
+        val profileAfter = database.playerProfileDao().get()!!
+        assertEquals(profileBefore.totalXp, profileAfter.totalXp)
+        assertEquals(profileBefore.level, profileAfter.level)
 
         val journal = dao.journalsForContribution(id).single()
         assertEquals(RecoveryJournalStatus.FINALIZED, journal.derivedStatus)

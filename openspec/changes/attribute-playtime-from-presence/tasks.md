@@ -70,7 +70,7 @@ merely because the text now matches the specs.
 - [x] 3.3 Recompute under the retroactive provenance from phase 3. Verify by test that no progress
       event is produced and the delivery baseline matches the values written.
 - [x] 3.4 Verify by test that the longest streak is not lowered by a placement recompute.
-- [ ] 3.5 Verify canonical per-game credited totals include timed, unknown-time and pending shares
+- [x] 3.5 Verify canonical per-game credited totals include timed, unknown-time and pending shares
       once and remain unchanged by placement-only corrections, with unchanged XP and levels.
 - [ ] 3.6 Verify corrective recompute includes both losing and receiving dates from sessions and
       allocations, persists met-to-unmet as well as unmet-to-met changes, emits no new progress
