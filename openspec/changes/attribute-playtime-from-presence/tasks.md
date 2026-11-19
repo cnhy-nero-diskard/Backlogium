@@ -56,7 +56,7 @@ merely because the text now matches the specs.
       to skip the read if every positive owned-game delta independently qualifies using its own
       retained observation boundary. Test both the skip and a mixed batch where a delta still
       needs timing. Keep the threshold and targeted fetch behavior unchanged.
-- [ ] 2.8 Verify cursor-advancing reads retain account/generation-bound timing evidence before
+- [x] 2.8 Verify cursor-advancing reads retain account/generation-bound timing evidence before
       position advancement; combine retained evidence with unread pages, preserve it after failed
       Steam commits and prune it only after the applicable successful baseline commit.
 
