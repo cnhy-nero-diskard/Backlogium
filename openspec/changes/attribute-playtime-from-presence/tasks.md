@@ -75,7 +75,7 @@ merely because the text now matches the specs.
 - [x] 3.6 Verify corrective recompute includes both losing and receiving dates from sessions and
       allocations, persists met-to-unmet as well as unmet-to-met changes, emits no new progress
       event and preserves previously owed unacknowledged events.
-- [ ] 3.7 Verify delayed evidence upgrades only provably mapped unlocked contributions, conserves
+- [x] 3.7 Verify delayed evidence upgrades only provably mapped unlocked contributions, conserves
       quantity on replay and leaves legacy sessions without reliable contribution/window records intact.
 
 ## 4. Historical sweep
