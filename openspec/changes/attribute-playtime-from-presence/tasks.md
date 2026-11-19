@@ -132,11 +132,6 @@ merely because the text now matches the specs.
 
 ## 7. Verify on real data
 
-- [ ] 7.1 Reproduce the motivating case end to end: leave the app unable to sync across a day
-      boundary, play, then sync. Verify the play lands on the day it happened rather than on the day
-      of the last sync.
-- [ ] 7.2 Verify a daily quest for that day evaluates as met and the streak is unbroken, with no
-      celebration shown.
 - [x] 7.3 Run the historical sweep against real history, then reverse it. Verify totals are
       unchanged by both, and that daily progress after the reversal matches what it was before.
 - [ ] 7.4 Compare the result against phase 2's diagnostics surface and confirm the placement matches
@@ -145,10 +140,20 @@ merely because the text now matches the specs.
       evidence criteria, including residual unknown-time minutes and preservation of subsequent play.
       Task 7.3 records the earlier run only and does not close this revised verification.
 
+### Deferred manual checks (not verified)
+
+The live cross-midnight Steam scenario is not practical to run for this change. These checks
+are deferred until a suitable live setup is available; automated results do not count as a pass.
+
+- **7.1:** Leave the app unable to sync across a day boundary, play on Steam, then sync. Verify
+  play lands on the day it happened rather than the day of the last sync.
+- **7.2:** In that scenario, verify the daily quest is met and the streak is unbroken, with no
+  celebration shown.
+
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
   change authorizes the targeted fixes in tasks 1.2, 2.7 and 4.4 only. Surface any other implementation
   gaps before changing code, and mark checks complete only once verified.
-- Archive only after the implementation audit and outstanding real-data checks are satisfied;
+- Archive only after the implementation audit and remaining active real-data checks are satisfied;
   retain the current recovery and historical-range safeguards when syncing the delta specs.

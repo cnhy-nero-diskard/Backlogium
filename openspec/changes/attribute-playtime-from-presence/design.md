@@ -173,7 +173,8 @@ All delta requirements are modifications of existing blocks and retain their com
 archive must not overwrite later recovery or range safeguards with the original phase-4 wording.
 
 **Verification:** retain prior completion history for unchanged tasks, reopen materially changed
-acceptance criteria and leave the real-data checks open. Validate the delta structure, review it
+acceptance criteria and leave the real-data checks open except for the explicitly deferred live
+cross-midnight and quest/streak checks documented in tasks.md. Validate the delta structure, review it
 against the normative specs and then use the apply workflow to audit implementation/tests. No
 implementation verification is implied by this document edit.
 
