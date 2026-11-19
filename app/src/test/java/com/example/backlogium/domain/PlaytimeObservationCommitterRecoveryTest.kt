@@ -534,6 +534,12 @@ class PlaytimeObservationCommitterRecoveryTest {
         assertTrue(db.sessionDao().getAll().isEmpty())
         assertEquals(105, result.playedDeltaByAppId[appId])
         assertEquals(105, allocatedMinutes(appId))
+        val contribution = db.playtimeRecoveryDao().contributionsForGame(account, appId).single()
+        val allocations = db.playtimeRecoveryDao().activeAllocations(contribution.contributionId).sortedBy { it.date }
+        assertEquals(listOf("2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24"), allocations.map { it.date })
+        assertEquals(listOf(27L, 26L, 26L, 26L), allocations.map { it.minutes })
+        assertEquals(setOf("MULTI_DAY_ESTIMATE"), allocations.map { it.method }.toSet())
+        assertEquals(setOf(ZoneOffset.UTC.id), allocations.map { it.zone }.toSet())
     }
 
     @Test

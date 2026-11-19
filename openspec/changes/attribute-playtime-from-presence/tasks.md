@@ -47,7 +47,7 @@ merely because the text now matches the specs.
       exactly-once crediting property is unchanged by threading placement through.
 - [x] 2.5 Verify by test that a full sync completes normally, crediting every minute, while the
       reader fails on every call.
-- [ ] 2.6 Verify every covering interval rejected by gap tolerance credits the full delta through
+- [x] 2.6 Verify every covering interval rejected by gap tolerance credits the full delta through
       unknown-time recovery, equivalent to the no-usable-timing path. Assert frozen dates,
       uncertainty labels and no fabricated timestamped session or placement on rejected evidence.
 - [ ] 2.7 Verify the existing 30-minute consultation gate and ordinary short-gap guards, including
