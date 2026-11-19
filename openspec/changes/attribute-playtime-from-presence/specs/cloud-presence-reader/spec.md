@@ -98,6 +98,12 @@ Unknown or rejected coverage SHALL NOT supply timing. A raw interior-gap pair ab
 - **WHEN** an increase is 105 minutes and validated non-overlapping span supplies 35 whole minutes of placement
 - **THEN** evidence-informed placement receives 35 and fallback receives 70
 
+#### Scenario: Continuous evidence cannot bypass the cap
+- **WHEN** a 36-minute Steam increase is observed across a 35-minute window fully covered by validated timing evidence
+- **THEN** no more than 35 minutes are credited as timed, even when the evidence establishes continuity for an open or new session
+- **AND** the remaining minute is credited through unknown-time recovery
+- **AND** the existing rounding guard for independently usable ordinary same-date short-gap estimates is unchanged
+
 #### Scenario: Duplicate evidence cannot multiply timing capacity
 - **WHEN** local and cloud candidates overlap or the same cloud interval is replayed
 - **THEN** overlapping usable span contributes timing capacity only once

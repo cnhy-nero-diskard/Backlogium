@@ -1,7 +1,7 @@
 Prior checkmarks below record completion under unchanged original criteria, not a fresh test run.
 Materially revised criteria are reopened for an implementation/test audit against the normative
-`playtime-recovery` and historical-range contracts. This reconciliation edits planning artifacts
-only; do not check off an audit or real-data task merely because the text now matches the specs.
+`playtime-recovery` and historical-range contracts. Do not check off an audit or real-data task
+merely because the text now matches the specs.
 
 ## 1. Placement rule
 
@@ -11,6 +11,9 @@ only; do not check off an audit or real-data task merely because the text now ma
 - [ ] 1.2 Verify bounded deterministic largest-remainder placement: 105 authorized minutes with
       35 whole usable minutes yield 35 timed and 70 fallback. Cover spans above, below and equal to
       the delta; verify timed plus residual/pending minutes equal the authorized total exactly.
+      Fix the continuity path so 36 authorized minutes across 35 fully confirmed minutes yield
+      35 timed and one unknown-time minute. Add a regression test and verify independently usable
+      ordinary same-date short-gap estimates keep their existing rounding guard.
 - [x] 1.3 Place minutes only against confirmed portions of an interval, contributing no
       confirmed span for an interval whose raw interior-gap pair exceeds the placement
       tolerance. Verify by test that a partially covered interval receives minutes for its
@@ -141,6 +144,7 @@ only; do not check off an audit or real-data task merely because the text now ma
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
-  planning reconciliation does not authorize code edits or mark those checks complete.
+  change authorizes the targeted planner fix in task 1.2 only. Surface any other implementation
+  gaps before changing code, and mark checks complete only once verified.
 - Archive only after the implementation audit and outstanding real-data checks are satisfied;
   retain the current recovery and historical-range safeguards when syncing the delta specs.

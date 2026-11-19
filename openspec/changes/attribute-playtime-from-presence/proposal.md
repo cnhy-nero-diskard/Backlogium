@@ -55,9 +55,10 @@ None.
   rather than assuming the session ledger alone contains all credited activity.
 - **Historical operations and Settings** — re-use the existing range acquisition, apply receipt,
   imported-balance accounting and reversal machinery.
-- **Scope of this reconciliation** — planning artifacts only. It introduces no schema migration,
-  code change, new cloud endpoint or new user operation. Revised acceptance checks remain open
-  until verified; previous checkmarks are not evidence for changed criteria.
+- **Scope of this reconciliation** — audit the existing implementation and fix the planner's
+  continuous-evidence path so it cannot bypass the whole-minute cap. Preserve ordinary usable
+  same-day short-gap monitoring. No schema migration, new cloud endpoint or new user operation is
+  needed. Revised acceptance checks remain open until verified.
 
 ## Non-goals
 

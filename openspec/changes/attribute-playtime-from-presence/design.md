@@ -30,7 +30,7 @@ change neither adds another sweep nor removes its acquisition and crash-recovery
 - Changing XP, the taper, or any game's total. Placement is a date question.
 - Replacing ordinary usable short-gap monitoring or changing its eligibility rules.
 - Adding a quantity detector, parallel writer, historical operation or schema migration.
-- Changing implementation as part of this planning-only reconciliation.
+- Changing implementation beyond the continuous-evidence cap fix identified in the audit.
 
 ## Decisions
 
@@ -63,6 +63,12 @@ For remaining authorized quantity R and total usable span S, timed placement rec
 rounding; place the residual through the existing unknown-time recovery rules. For example,
 105 authorized minutes with 35 usable minutes produce 35 timed and 70 unknown-time minutes,
 not 105 minutes squeezed into the observed interval.
+
+Apply the same cap when validated continuity would otherwise open or extend a session. For
+example, a 36-minute Steam increase across a fully confirmed 35-minute observation window may
+credit only 35 minutes as timed; recover the remaining minute as unknown-time. Retain the
+ordinary same-date short-gap estimate and its existing rounding guard when that estimate is
+independently eligible without timing evidence.
 
 Fallback retains the existing frozen recovery dates, allocation zone and uncertainty label. A
 clock anomaly with no valid date window retains pending date-unknown quantity. It never invents
@@ -153,7 +159,7 @@ session/date counts, transferred minutes and remaining imported minutes, even fo
 
 ## Migration Plan
 
-This reconciliation changes planning artifacts only and introduces no schema or data migration.
+The targeted planner fix introduces no schema or data migration.
 All delta requirements are modifications of existing blocks and retain their complete scenarios;
 archive must not overwrite later recovery or range safeguards with the original phase-4 wording.
 
