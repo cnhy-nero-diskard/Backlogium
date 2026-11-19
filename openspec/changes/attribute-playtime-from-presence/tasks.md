@@ -22,7 +22,7 @@ merely because the text now matches the specs.
       two-interior-outage fixture (`A@t0 → A@t1 → outage → A@t10 → A@t11 → outage → A@t18 →
       B@t19`, both outages above tolerance) contributes no confirmed span, so placement
       allocates nothing from it.
-- [ ] 1.4 Verify no/unknown/rejected timing and zero usable span yield unknown-time recovery,
+- [x] 1.4 Verify no/unknown/rejected timing and zero usable span yield unknown-time recovery,
       not a timestamped fallback session; zero delta authorizes no new quantity. Verify an inverted
       date window retains pending date-unknown minutes without invented dates or quantity loss.
 - [x] 1.5 Keep the final session open when its interval is still ongoing. Verify by test that a

@@ -598,6 +598,22 @@ class PlaytimeAttributionPlanTest {
     }
 
     @Test
+    fun `less than one confirmed minute leaves the whole increase unknown`() {
+        val plan = plan(
+            authorizedDeltaMinutes = 20,
+            previousObservationAt = ts("2024-01-08T00:00:00"),
+            recoveryObservedAt = ts("2024-01-08T01:00:00"),
+            evidence = listOf(evidence("brief", ts("2024-01-08T00:10:00"), ts("2024-01-08T00:10:59"))),
+        )
+        assertTrue(plan.sessionActions.isEmpty())
+        assertTrue(plan.timedPlacements.isEmpty())
+        assertEquals(
+            listOf(DatedAllocation(date("2024-01-08"), 20, PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE)),
+            plan.residualAllocations(),
+        )
+    }
+
+    @Test
     fun `estimates never count as validated timing evidence`() {
         val plan = plan(
             authorizedDeltaMinutes = 20,
@@ -763,6 +779,8 @@ class PlaytimeAttributionPlanTest {
             recoveryObservedAt = ts("2024-01-09T12:00:00"),
         )
         assertNull(plan.residual)
+        assertTrue(plan.changedDates().isEmpty())
+        assertTrue(plan.sessionActions.isEmpty())
         assertEquals(70, plan.pending!!.minutes)
         assertEquals(PlaytimePendingReason.INVERTED_WINDOW, plan.pending!!.reason)
         assertEquals(70, plan.creditedMinutes)
