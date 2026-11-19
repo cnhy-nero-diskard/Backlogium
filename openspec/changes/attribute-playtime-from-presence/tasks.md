@@ -50,7 +50,7 @@ merely because the text now matches the specs.
 - [x] 2.6 Verify every covering interval rejected by gap tolerance credits the full delta through
       unknown-time recovery, equivalent to the no-usable-timing path. Assert frozen dates,
       uncertainty labels and no fabricated timestamped session or placement on rejected evidence.
-- [ ] 2.7 Verify the existing 30-minute consultation gate and ordinary short-gap guards, including
+- [x] 2.7 Verify the existing 30-minute consultation gate and ordinary short-gap guards, including
       plausible delta, same-date eligibility and continuity evidence across midnight. A stale open
       row must not make a missed interval usable. Fix periodic consultation at exactly 30 minutes
       to skip the read if every positive owned-game delta independently qualifies using its own

@@ -5,7 +5,9 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.LocalTimingEvidence
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.CloudPendingEvidencePruner
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter.SessionKey
@@ -73,6 +75,70 @@ class PlaytimeObservationCommitter @Inject constructor(
         val iconUrl: String,
         val playtimeForever: Int,
         val playtime2Weeks: Int,
+    )
+
+    /** Advisory only: the raw commit still re-reads its baselines inside the transaction. */
+    internal suspend fun shouldConsultPeriodicPlacement(
+        polls: List<SessionDiffer.PollGame>,
+        lastSyncAt: Long,
+        now: Long,
+        previewHasIncrease: Boolean,
+    ): Boolean {
+        if (!CloudPresencePlaytimePlacement.shouldConsult(lastSyncAt, now)) return false
+        if (now - lastSyncAt != CloudPresencePlaytimePlacement.MINIMUM_PLACEMENT_PERIOD_MILLIS) {
+            return previewHasIncrease
+        }
+
+        // At the boundary only, compare against the same retained per-game baselines as the
+        // commit. The achievement preview is not authoritative after targeted reads or restores.
+        val account = profileDao.get()?.steamId?.trim().orEmpty()
+        if (account.isEmpty()) return false
+        val states = recoveryAdapter.recoveryStates(account)
+        val games = gameDao.ownedGamesForDiffing().filter {
+            hasBaseline(it, it.appId in states, lastSyncAt)
+        }.associateBy { it.appId }
+        val open = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        val diff = diffObservations(
+            polls = polls,
+            priorStates = games.mapValues { (appId, game) ->
+                diffState(states[appId]?.highWaterMinutes?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
+                    ?: game.lastPlaytime, open[appId])
+            },
+            observedPlayAt = now,
+            lastSyncAt = lastSyncAt,
+        )
+        val zone = time.zone()
+        return diff.playedDeltaByAppId.any { (appId, minutes) ->
+            val state = states[appId]
+            val previous = if (state != null) state.lastObservationAt
+                else games.getValue(appId).lastSyncedAt.takeIf { it > 0 }
+            !PlaytimeAttributionPlanner.qualifiesForOrdinaryEstimate(
+                previous, now, zone, minutes, diff.clockRollbacks.any { it.appId == appId },
+            )
+        }
+    }
+
+    private fun hasBaseline(game: Game, hasRecoveryState: Boolean, lastSyncAt: Long): Boolean =
+        hasRecoveryState || (lastSyncAt != 0L && (game.lastSyncedAt > 0L || game.lastPlaytime > 0))
+
+    private fun diffState(minutes: Int, open: Session?) = SessionDiffer.GameDiffState(
+        lastPlaytime = minutes,
+        openSession = open?.let { SessionDiffer.OpenSession(it.startAt, it.minutes, it.endAt ?: it.startAt) },
+    )
+
+    private fun diffObservations(
+        polls: List<SessionDiffer.PollGame>,
+        priorStates: Map<Long, SessionDiffer.GameDiffState>,
+        observedPlayAt: Long,
+        lastSyncAt: Long,
+    ): SessionDiffer.DiffResult = differ.diff(
+        polls = polls,
+        priorStates = priorStates,
+        now = observedPlayAt,
+        // This boundary is a candidate only. The planner places the delta against the saved
+        // per-game window, not epoch zero or a poll later than a targeted play instant.
+        previousPollAt = (lastSyncAt.takeIf { it != 0L } ?: observedPlayAt)
+            .coerceAtMost(observedPlayAt),
     )
 
     /** What the commit did, for the caller's diagnostics and for tests. */
@@ -219,8 +285,7 @@ class PlaytimeObservationCommitter @Inject constructor(
         // Restore creates game skeletons without a live detector baseline. An account-wide sync
         // of other games does not make their zero defaults a trustworthy prior observation.
         val gamesWithBaseline = existingGames.filter { (appId, game) ->
-            appId in recoveryStates ||
-                (lastSyncAt != 0L && (game.lastSyncedAt > 0L || game.lastPlaytime > 0))
+            hasBaseline(game, appId in recoveryStates, lastSyncAt)
         }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
         // One bulk session scan for the whole commit: consumed-span reconstruction must never
@@ -229,31 +294,13 @@ class PlaytimeObservationCommitter @Inject constructor(
 
         // A restored per-game observation remains authoritative before the first account-wide
         // poll. Games without one still baseline through the differ's missing-prior-state path.
-        val diff = differ.diff(
+        val diff = diffObservations(
             polls = polls,
             priorStates = gamesWithBaseline.mapValues { (appId, game) ->
-                val open = openSessionsByAppId[appId]
-                SessionDiffer.GameDiffState(
-                    lastPlaytime = game.lastPlaytime,
-                    openSession = open?.let {
-                        SessionDiffer.OpenSession(
-                            startAt = it.startAt,
-                            minutes = it.minutes,
-                            lastIncreaseAt = it.endAt ?: it.startAt,
-                        )
-                    },
-                )
+                diffState(game.lastPlaytime, openSessionsByAppId[appId])
             },
-            now = observedPlayAt,
-            // A session cannot start after it ended. The two agree by construction for the
-            // periodic poll, whose observation time is its own clock; a targeted fetch reports
-            // an earlier session end, and this keeps a stored session's bounds sane if a poll
-            // has landed in between.
-            // Before an account-wide poll exists, this is only a candidate action boundary.
-            // The planner below places every authorized delta using its saved per-game
-            // observation window; never pass epoch zero as a synthetic session start.
-            previousPollAt = (lastSyncAt.takeIf { it != 0L } ?: observedPlayAt)
-                .coerceAtMost(observedPlayAt),
+            observedPlayAt = observedPlayAt,
+            lastSyncAt = lastSyncAt,
         )
 
         // A game Steam reports for the first time is owned by definition (only the owned-games

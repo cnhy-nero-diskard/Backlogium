@@ -271,10 +271,24 @@ data class PlaytimeRecoveryRequest(
 
 object PlaytimeAttributionPlanner {
 
-    /** The cloud-consultation threshold: below it a same-date diff estimate is kept as a session. */
+    /** Maximum window for an ordinary same-date estimate, including the boundary. */
     const val SHORT_GAP_MILLIS: Long = 30L * 60 * 1000
 
     val DEFAULT_GAP_TOLERANCE_MILLIS: Long = CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS
+
+    internal fun qualifiesForOrdinaryEstimate(
+        previous: Long?,
+        observedAt: Long,
+        zone: ZoneId,
+        minutes: Int,
+        clockAnomalous: Boolean,
+    ): Boolean {
+        if (previous == null || clockAnomalous || observedAt < previous) return false
+        val elapsed = observedAt - previous
+        return elapsed in 0..SHORT_GAP_MILLIS &&
+            minutes.toLong() <= ceilMinutes(elapsed) + 1L &&
+            localDate(observedAt, zone) == localDate(previous, zone)
+    }
 
     fun plan(request: PlaytimeRecoveryRequest): PlaytimeAttributionPlan {
         val total = checkedTotalMinutes(
@@ -407,15 +421,15 @@ object PlaytimeAttributionPlanner {
 
         val playEnd = effectiveKnown ?: request.recoveryObservedAt
         val elapsed = playEnd - previous
-        val sameDate = localDate(playEnd, request.zone) == localDate(previous, request.zone)
         // A supplied end-only target never invents a start from the previous snapshot: without
         // continuity evidence it stays date-known/clock-unknown. Only an ordinary periodic
         // observation (no known instant) may take the same-date short-gap session path.
-        val withinShortGap = request.knownPlayInstantAt == null && elapsed in 0..SHORT_GAP_MILLIS
         val guardOk = elapsed >= 0L && total.toLong() <= ceilMinutes(elapsed) + 1L
         val sessionMinutes = when {
             request.unplacedPendingMinutes > 0 || request.publicationDelayConflict || !guardOk -> 0
-            sameDate && withinShortGap -> total
+            request.knownPlayInstantAt == null && qualifiesForOrdinaryEstimate(
+                previous, playEnd, request.zone, total, request.clockAnomalous,
+            ) -> total
             // Continuity can preserve a session but cannot fund more than whole confirmed minutes.
             coveredBy(usableSpans, previous, playEnd) -> minOf(total.toLong(), elapsed / 60_000L).toInt()
             else -> 0
