@@ -35,7 +35,7 @@ merely because the text now matches the specs.
 
 ## 2. Wiring into the commit path
 
-- [ ] 2.1 Audit optional timing input through the existing shared committer/recovery planner.
+- [x] 2.1 Audit optional timing input through the existing shared committer/recovery planner.
       Verify omitting cloud input uses the normative local recovery path, not the former all-delta
       single-session fallback, with no second quantity detector or session writer.
 - [x] 2.2 Consult the presence record only when the period since the previous observation is long
