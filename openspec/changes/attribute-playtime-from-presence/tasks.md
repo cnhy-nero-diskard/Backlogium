@@ -122,7 +122,7 @@ merely because the text now matches the specs.
       and targeted paths with no cloud request; usable short-gap monitoring remains unchanged.
 - [x] 6.2 Verify by test that no family-shared game is affected by placement, since it has no diffed
       increase to place.
-- [ ] 6.3 After auditing revised criteria, run
+- [x] 6.3 After auditing revised criteria, run
       `./gradlew :gamification:test :app:testDebugUnitTest` and confirm the suite passes.
 - [x] 6.4 Verify the boundary grep in `CLAUDE.md` reports no new `data.local.entity` or DAO import
       under `ui/`.
