@@ -102,6 +102,9 @@ merely because the text now matches the specs.
 - [x] 4.8 Verify historical acquisition has its own resumable position and bounded user-started
       batches; ordinary reads neither steal its progress nor double-credit overlapping pages.
       Fence stale account/reader responses and keep staged evidence isolated.
+- [x] 4.9 Route legacy historical re-filing through bounded confirmed placement. Leave the whole
+      original row unchanged if there is insufficient evidence to place all its minutes. Test
+      overlap, duplicate evidence, an interior gap, and exact conservation when placement fits.
 
 ## 5. Settings surface
 
@@ -137,7 +140,8 @@ merely because the text now matches the specs.
 - [ ] 7.4 Compare the result against phase 2's diagnostics surface and confirm the placement matches
       the disagreement that surface predicted.
 - [ ] 7.5 Re-verify real-history apply/reversal against the reconciled bounded-range and partial-
-      evidence criteria, including residual unknown-time minutes and preservation of subsequent play.
+      evidence criteria, including unchanged legacy rows that cannot be fully supported, retained
+      funded unknown-time minutes, and preservation of subsequent play.
       Task 7.3 records the earlier run only and does not close this revised verification.
 
 ### Deferred manual checks (not verified)
@@ -153,7 +157,7 @@ are deferred until a suitable live setup is available; automated results do not 
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
-  change authorizes the targeted fixes in tasks 1.2, 2.7 and 4.4 only. Surface any other implementation
+  change authorizes the targeted fixes in tasks 1.2, 2.7, 4.4 and 4.9 only. Surface any other implementation
   gaps before changing code, and mark checks complete only once verified.
 - Archive only after the implementation audit and remaining active real-data checks are satisfied;
   retain the current recovery and historical-range safeguards when syncing the delta specs.

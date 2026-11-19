@@ -59,7 +59,9 @@ None.
   continuous-evidence path so it cannot bypass the whole-minute cap. Avoid a periodic placement
   read at the 30-minute boundary when every positive owned-game delta has an independently usable
   ordinary estimate. Fix receipt-based reversal so dates created solely by the re-file do not
-  leave empty daily-progress rows and affected dates are recomputed. No schema migration, new cloud endpoint or new user operation is
+  leave empty daily-progress rows and affected dates are recomputed. Keep legacy sessions
+  unchanged when the historical range cannot confirm enough whole minutes to re-date them. No
+  schema migration, new cloud endpoint or new user operation is
   needed. Revised acceptance checks remain open until verified.
 
 ## Non-goals

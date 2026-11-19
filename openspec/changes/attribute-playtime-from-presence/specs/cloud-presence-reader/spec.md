@@ -194,6 +194,13 @@ The action SHALL disclose that it changes which dates play is credited to — an
 - **THEN** it is left exactly as it is rather than re-filed on rejected evidence
 - **AND** each game's total recorded minutes are unchanged by leaving it
 
+#### Scenario: Partial evidence cannot re-date an unfunded legacy session
+
+- **WHEN** confirmed non-overlapping spans inside the selected range and the session's recorded bounds cannot support all of an unfunded legacy session's minutes
+- **THEN** the original session and provenance SHALL remain unchanged rather than creating a partially funded replacement or inferring an observation window
+- **AND** when the full quantity is supported, each replacement SHALL fit within the whole confirmed minutes of its own span
+- **AND** previously funded unknown-time allocations remain subject to the ordinary recovery rules
+
 #### Scenario: The disclosure is accurate
 
 - **WHEN** the action is presented

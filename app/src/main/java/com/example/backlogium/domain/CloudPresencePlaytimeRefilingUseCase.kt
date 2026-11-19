@@ -62,47 +62,54 @@ internal fun cloudPresenceSessionRefiles(
     intervals: List<CloudPresenceInterval>,
     range: CloudPresenceHistoricalSelection? = null,
     fundedSessionIds: Set<Long> = emptySet(),
-): List<CloudPresenceSessionRefile> = sessions
-    .asSequence()
-    .filter {
-        it.appId in ownedAppIds && !it.open && it.endAt != null && it.minutes > 0 &&
-            it.id !in fundedSessionIds
-    }
-    .mapNotNull { original ->
+): List<CloudPresenceSessionRefile> {
+    val intervalsByGame = intervals.groupBy { it.appId }
+    // The historical apply admits its stage before invoking this pure rule. This identity is
+    // local to the calculation; no baseline, evidence or contribution is persisted from it.
+    val scope = CloudReaderIdentity("historical-refile", 0L)
+    val zone = ZoneId.of(range?.zoneId ?: "UTC")
+    return sessions.mapNotNull { original ->
         val originalEndAt = original.endAt ?: return@mapNotNull null
+        if (original.appId !in ownedAppIds || original.open || original.minutes <= 0 ||
+            original.id in fundedSessionIds
+        ) return@mapNotNull null
         val periodStartAt = maxOf(original.startAt, range?.effectiveStartAt ?: Long.MIN_VALUE)
         val periodEndAt = minOf(originalEndAt, range?.throughAt ?: Long.MAX_VALUE)
         if (periodEndAt <= periodStartAt) return@mapNotNull null
-        val replacement = CloudPresencePlaytimePlacement.place(
-            CloudPresencePlaytimePlacement.Request(
+        val replacement = PlaytimeAttributionPlanner.placeHistoricalSession(
+            PlaytimeRecoveryRequest(
+                account = scope.account,
                 appId = original.appId,
-                diffedMinutes = original.minutes,
-                periodStartAt = periodStartAt,
-                periodEndAt = periodEndAt,
-                intervals = intervals,
+                baselineEpoch = 1L,
+                authorizedDeltaMinutes = original.minutes,
+                previousObservationAt = periodStartAt,
+                recoveryObservedAt = periodEndAt,
+                zone = zone,
+                activeReaderIdentity = scope,
+                evidence = intervalsByGame[original.appId].orEmpty().mapNotNull {
+                    it.toRecoveryEvidence(scope.account, scope, periodEndAt)
+                },
             ),
         )
-            ?.filterIsInstance<SessionDiffer.SessionAction.Open>()
-            ?.map { action ->
-                original.copy(
-                    id = 0L,
-                    startAt = action.startAt,
-                    endAt = action.endAt,
-                    minutes = action.minutes,
-                    open = false,
-                    openAppId = null,
-                    timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
-                )
-            }
-            ?.takeIf { it.isNotEmpty() && it.sumOf(Session::minutes) == original.minutes }
-            ?: return@mapNotNull null
-        if (replacement.isSameLedgerRowAs(original)) {
+        if (replacement.isEmpty()) return@mapNotNull null
+        val rows = replacement.map { placement ->
+            original.copy(
+                id = 0L,
+                startAt = placement.startAt,
+                endAt = placement.endAt,
+                minutes = placement.minutes,
+                open = false,
+                openAppId = null,
+                timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
+            )
+        }
+        if (rows.isSameLedgerRowAs(original)) {
             null
         } else {
-            CloudPresenceSessionRefile(original, replacement)
+            CloudPresenceSessionRefile(original, rows)
         }
     }
-    .toList()
+}
 
 /**
  * Re-files already-recorded owned-game sessions against a complete cloud-presence snapshot.

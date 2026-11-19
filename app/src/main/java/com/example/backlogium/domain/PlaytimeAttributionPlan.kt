@@ -269,6 +269,34 @@ data class PlaytimeRecoveryRequest(
     }
 }
 
+/** Translate cloud coverage without claiming unknown tails or transition-only estimates. */
+internal fun CloudPresenceInterval.toRecoveryEvidence(
+    account: String,
+    activeIdentity: CloudReaderIdentity?,
+    windowEnd: Long,
+): PlaytimeTimingEvidence? {
+    if (appId <= 0L) return null
+    val rawEnd = endAt ?: windowEnd.takeIf { ongoing } ?: return null
+    val confirmedEnd = when (coverage) {
+        CloudCoverageState.CONTINUOUS -> rawEnd
+        CloudCoverageState.OBSERVED_UNTIL -> observedUntil ?: return null
+        CloudCoverageState.UNKNOWN, CloudCoverageState.LEGACY_TRANSITIONS -> return null
+    }.coerceAtMost(rawEnd)
+    if ((coverageLapseFrom == null) != (coverageLapseRecoveredAt == null)) return null
+    if (confirmedEnd <= startAt) return null
+    return PlaytimeTimingEvidence(
+        evidenceId = "cloud:$appId:$startAt:$confirmedEnd:${coverageLapseFrom ?: 0}:${coverageLapseRecoveredAt ?: 0}",
+        appId = appId,
+        account = account,
+        readerIdentity = activeIdentity,
+        source = PlaytimeEvidenceSource.CLOUD,
+        startAt = startAt,
+        endAt = confirmedEnd,
+        gapFromAt = coverageLapseFrom,
+        gapRecoveredAt = coverageLapseRecoveredAt,
+    )
+}
+
 object PlaytimeAttributionPlanner {
 
     /** Maximum window for an ordinary same-date estimate, including the boundary. */
@@ -612,16 +640,19 @@ object PlaytimeAttributionPlanner {
         request: PlaytimeRecoveryRequest,
         usableSpans: List<Span>,
         total: Int,
+        wholeMinutesPerSpan: Boolean = false,
     ): Pair<List<TimedPlacement>, Int> {
         if (usableSpans.isEmpty()) return emptyList<TimedPlacement>() to total
 
+        val minuteMillis = BigInteger.valueOf(60_000L)
         val spanMillis = usableSpans.map {
-            BigInteger.valueOf(it.endAt).subtract(BigInteger.valueOf(it.startAt))
+            val duration = BigInteger.valueOf(it.endAt).subtract(BigInteger.valueOf(it.startAt))
+            if (wholeMinutesPerSpan) (duration / minuteMillis) * minuteMillis else duration
         }
         val totalSpanMillis = spanMillis.fold(BigInteger.ZERO, BigInteger::add)
         if (totalSpanMillis.signum() <= 0) return emptyList<TimedPlacement>() to total
 
-        val confirmedMinutes = (totalSpanMillis / BigInteger.valueOf(60_000L)).toLong()
+        val confirmedMinutes = (totalSpanMillis / minuteMillis).toLong()
         val evidenceMinutes = minOf(total.toLong(), confirmedMinutes).toInt()
         if (evidenceMinutes <= 0) return emptyList<TimedPlacement>() to total
 
@@ -639,6 +670,17 @@ object PlaytimeAttributionPlanner {
                 )
             }
         return timed to (total - timed.sumOf { it.minutes })
+    }
+
+    /** A legacy row has no funded window for residual recovery; re-date it only in full. */
+    internal fun placeHistoricalSession(request: PlaytimeRecoveryRequest): List<TimedPlacement> {
+        val previous = request.previousObservationAt ?: return emptyList()
+        if (request.recoveryObservedAt <= previous) return emptyList()
+        val (timed, remaining) = placeEvidence(
+            request, usableSpans(request, previous, mutableListOf()), request.authorizedDeltaMinutes,
+            wholeMinutesPerSpan = true,
+        )
+        return if (remaining == 0) timed else emptyList()
     }
 
     private fun residualRecipe(

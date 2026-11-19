@@ -205,7 +205,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:25:00Z"),
                 minutes = 30,
                 open = false,
             ),
@@ -213,7 +213,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val unrelatedOriginal = Session(
             appId = GAME,
             startAt = utc("2026-07-26T00:30:00Z"),
-            endAt = utc("2026-07-26T00:50:00Z"),
+            endAt = utc("2026-07-26T01:00:00Z"),
             minutes = 20,
             open = false,
         )
@@ -240,9 +240,9 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
         listOf(
             interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
-            interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+            interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:25:00Z")),
             interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
-            interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+            interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T01:00:00Z")),
         ).forEach { row ->
             database.cloudHistoricalDao().insertInterval(
                 CloudHistoricalInterval(
@@ -327,7 +327,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         // The funded split group remains as a unit, while the unrelated unfunded split from the
         // same app restores fully. Recovery revision state on an app must not shrink that group.
         val sessions = database.sessionDao().getAll()
-        assertTrue("funded created row must survive", sessions.any { it.id == created.id && it.minutes == 20 })
+        assertTrue("funded created row must survive unchanged", created in sessions)
         val fundedFamilyIds = fundedFamilyBefore.map { it.id }.toSet()
         assertEquals(fundedFamilyBefore, sessions.filter { it.id in fundedFamilyIds })
         assertEquals(unrelatedOriginal.copy(id = unrelatedOriginalId), sessions.single { it.id == unrelatedOriginalId })
@@ -347,7 +347,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:25:00Z"),
                 minutes = 30,
                 open = false,
             ),
@@ -355,7 +355,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val unrelatedOriginal = Session(
             appId = GAME,
             startAt = utc("2026-07-26T00:30:00Z"),
-            endAt = utc("2026-07-26T00:50:00Z"),
+            endAt = utc("2026-07-26T01:00:00Z"),
             minutes = 20,
             open = false,
         )
@@ -363,9 +363,9 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val applied = useCase.apply(
             listOf(
                 interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
-                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:25:00Z")),
                 interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
-                interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+                interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T01:00:00Z")),
             ),
         )
         assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
@@ -434,13 +434,13 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:30:00Z"),
                 minutes = 30,
                 open = false,
             ),
         )
         val applied = useCase.apply(
-            listOf(interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z"))),
+            listOf(interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:30:00Z"))),
         )
         assertEquals(1, applied.sessionsRefiled)
 

@@ -662,42 +662,6 @@ class PlaytimeObservationCommitter @Inject constructor(
         }
 
     /**
-     * Convert one validated cloud interval into candidate timing evidence for the planner. The
-     * planner re-validates the identity fence, the account, the gap tolerance and the window clip,
-     * so nothing here is authority — it only refuses to *claim* timing the interval itself cannot
-     * confirm (UNKNOWN/LEGACY coverage, absent observed-until, one-sided lapses).
-     */
-    private fun CloudPresenceInterval.toRecoveryEvidence(
-        account: String,
-        activeIdentity: CloudReaderIdentity?,
-        windowEnd: Long,
-    ): PlaytimeTimingEvidence? {
-        if (appId <= 0L) return null
-        if (coverage == CloudCoverageState.UNKNOWN || coverage == CloudCoverageState.LEGACY_TRANSITIONS) {
-            return null
-        }
-        val rawEnd = endAt ?: windowEnd.takeIf { ongoing } ?: return null
-        val confirmedEnd = when (coverage) {
-            CloudCoverageState.CONTINUOUS -> rawEnd
-            CloudCoverageState.OBSERVED_UNTIL -> observedUntil ?: return null
-            CloudCoverageState.UNKNOWN, CloudCoverageState.LEGACY_TRANSITIONS -> return null
-        }.coerceAtMost(rawEnd)
-        if ((coverageLapseFrom == null) != (coverageLapseRecoveredAt == null)) return null
-        if (confirmedEnd <= startAt) return null
-        return PlaytimeTimingEvidence(
-            evidenceId = "cloud:$appId:$startAt:$confirmedEnd:${coverageLapseFrom ?: 0}:${coverageLapseRecoveredAt ?: 0}",
-            appId = appId,
-            account = account,
-            readerIdentity = activeIdentity,
-            source = PlaytimeEvidenceSource.CLOUD,
-            startAt = startAt,
-            endAt = confirmedEnd,
-            gapFromAt = coverageLapseFrom,
-            gapRecoveredAt = coverageLapseRecoveredAt,
-        )
-    }
-
-    /**
      * Convert one retained local timing fact (task 4.3 output) into candidate evidence. Only the
      * validated prefix `firstSampleAt..observedUntil` is claimed; a coverage loss is mapped only
      * when it overlaps that prefix (clipped to it), so a loss outside the proven prefix never

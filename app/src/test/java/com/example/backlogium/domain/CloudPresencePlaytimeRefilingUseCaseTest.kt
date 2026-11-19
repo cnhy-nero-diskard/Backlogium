@@ -470,7 +470,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             transaction = RoomDatabaseTransactionScope(database),
         )
         val originalStart = utc("2026-07-25T23:50:00Z")
-        val originalEnd = utc("2026-07-26T00:10:00Z")
+        val originalEnd = utc("2026-07-26T00:30:00Z")
         val presenceStart = utc("2026-07-26T00:00:00Z")
         val presenceEnd = originalEnd
 
@@ -627,7 +627,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
         )
         val originalStart = utc("2026-07-25T23:50:00Z")
         val midnight = utc("2026-07-26T00:00:00Z")
-        val originalEnd = utc("2026-07-26T00:10:00Z")
+        val originalEnd = utc("2026-07-26T00:20:00Z")
 
         try {
             realSettings.clearCloudPresenceRefiling()
@@ -773,7 +773,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             transaction = RoomDatabaseTransactionScope(database),
         )
         val originalStart = utc("2026-07-25T23:50:00Z")
-        val originalEnd = utc("2026-07-26T00:10:00Z")
+        val originalEnd = utc("2026-07-26T00:30:00Z")
         val presenceStart = utc("2026-07-26T00:00:00Z")
         val presenceEnd = originalEnd
 
