@@ -634,10 +634,12 @@ When the player opts to date pre-Backlogium imported play, Settings SHALL ask th
 Stating the limit is load-bearing rather than polite. The natural expectation of an action that recovers a month of more accurate history is that progression improves, and it will not — only its placement in time and its tracked/imported classification do. An action that lets that expectation stand would read as broken when it worked correctly.
 
 #### Scenario: Offered while configured
+
 - **WHEN** the cloud section is shown while configured and the action has not been run
 - **THEN** the action is offered, with its effect, limit, available beginning, selected range and optional imported-play transfer explained
 
 #### Scenario: Not offered while unconfigured
+
 - **WHEN** no cloud endpoint is configured
 - **THEN** the action is not offered
 
@@ -661,14 +663,17 @@ Stating the limit is load-bearing rather than polite. The natural expectation of
 - **THEN** the selected range may still re-date existing sessions without creating new owned-game minutes from the poller
 
 #### Scenario: Completed state
+
 - **WHEN** the action has completed
 - **THEN** the section reflects that it has run, shows its effective applied range and optional pre-data cutoff, and offers its reversal instead
 
 #### Scenario: The limit is stated before it runs
+
 - **WHEN** the action is presented
 - **THEN** it states that experience, levels and total playtime are unchanged by it
 
 #### Scenario: Outcome reported
+
 - **WHEN** the action completes, even if no session changed
 - **THEN** the section reports the selected and actually covered range, how many existing sessions were re-filed, how many imported minutes became dated tracked sessions, how many remain imported, and how many dates were affected
 
@@ -677,12 +682,19 @@ Stating the limit is load-bearing rather than polite. The natural expectation of
 - **THEN** Settings shows progress and offers an explicit retry or continue action without claiming that the re-file was applied
 
 #### Scenario: Reversal returns the previous attribution
+
 - **WHEN** the user reverses a completed re-filing
 - **THEN** original session attribution and transferred imported balances return to their pre-action classification without erasing later ordinary play, and the action is offered again with a new start-date/cutoff choice
 
 #### Scenario: Resetting the Steam-history import while a transfer is applied
 - **WHEN** the player requests the separate Steam-history import reset before reversing a cloud pre-data transfer
 - **THEN** Settings explains that they must undo the cloud re-file first instead of silently losing or double-counting transferred minutes
+
+#### Scenario: Resuming does not silently select another operation
+- **WHEN** an interrupted historical acquisition or apply is resumed
+- **THEN** Settings presents the retained range and optional cutoff rather than silently starting a new range or changing the imported-play choice
+
+
 
 ### Requirement: Disclose original transition-only timing estimates
 
