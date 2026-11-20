@@ -137,27 +137,27 @@ merely because the text now matches the specs.
 
 - [x] 7.3 Run the historical sweep against real history, then reverse it. Verify totals are
       unchanged by both, and that daily progress after the reversal matches what it was before.
-- [ ] 7.4 Compare the result against phase 2's diagnostics surface and confirm the placement matches
-      the disagreement that surface predicted.
-- [ ] 7.5 Re-verify real-history apply/reversal against the reconciled bounded-range and partial-
-      evidence criteria, including unchanged legacy rows that cannot be fully supported, retained
-      funded unknown-time minutes, and preservation of subsequent play.
-      Task 7.3 records the earlier run only and does not close this revised verification.
 
 ### Deferred manual checks (not verified)
 
-The live cross-midnight Steam scenario is not practical to run for this change. These checks
-are deferred until a suitable live setup is available; automated results do not count as a pass.
+These checks are deferred until suitable real-data examples are available; automated results
+do not count as a pass.
 
 - **7.1:** Leave the app unable to sync across a day boundary, play on Steam, then sync. Verify
   play lands on the day it happened rather than the day of the last sync.
 - **7.2:** In that scenario, verify the daily quest is met and the streak is unbroken, with no
   celebration shown.
+- **7.4:** Compare a placement result with the date disagreement shown in Diagnostics. The
+  emulator run did not produce a matching case.
+- **7.5:** Verify a nonzero real-history re-file and reversal, including leaving unsupported
+  legacy rows unchanged, retaining funded unknown-time credit, and preserving subsequent play.
+  The fixed build acquired 819 transitions over four pages and left the ledger unchanged on
+  apply and undo. Neither that zero-change run nor the earlier 7.3 run verifies the full case.
 
 ## Workflow follow-up
 
 - Use the apply workflow to audit implementation and tests against the reopened criteria; this
   change authorizes the targeted fixes in tasks 1.2, 2.7, 4.4 and 4.9 only. Surface any other implementation
   gaps before changing code, and mark checks complete only once verified.
-- Archive only after the implementation audit and remaining active real-data checks are satisfied;
-  retain the current recovery and historical-range safeguards when syncing the delta specs.
+- When archiving, retain the deferred checks as follow-up and preserve the recovery and
+  historical-range safeguards when syncing the delta specs.
