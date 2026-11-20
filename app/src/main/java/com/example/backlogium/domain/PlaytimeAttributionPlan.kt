@@ -778,8 +778,8 @@ object PlaytimeAttributionPlanner {
 
     /**
      * Recover only the fractional whole-minute capacity needed by this historical placement.
-     * Merges stay within contiguous fragments that start on the same local date, so neither a
-     * genuine gap nor an independently supported date attribution is collapsed.
+     * Merges never bridge a real gap. Across local dates, only sub-minute fragments may merge, so
+     * independently supported whole-minute placements keep their date attribution.
      */
     private fun normalizeWholeMinuteCapacity(
         spans: List<Span>,
@@ -804,37 +804,44 @@ object PlaytimeAttributionPlanner {
             var bestLength = Int.MAX_VALUE
             var runStart = 0
             while (runStart < normalized.size) {
-                val date = localDate(normalized[runStart].startAt, zone)
                 var runEnd = runStart + 1
                 while (runEnd < normalized.size &&
-                    localDate(normalized[runEnd].startAt, zone) == date &&
                     normalized[runEnd].startAt <= normalized[runEnd - 1].endAt
                 ) {
                     runEnd++
                 }
 
-                // A shortest adjacent window whose remainders total one minute gains exactly one
-                // minute of capacity. Merge one such window at a time, stopping as soon as the
-                // requested historical quantity is fundable.
+                // A shortest adjacent window whose remainders total one minute gains capacity.
+                // Cross-date windows may combine fractional fragments, but cannot absorb a span
+                // that independently funds a whole minute on its own start date.
                 var windowEnd = runStart
                 var fractionalMillis = BigInteger.ZERO
+                var wholeMinuteFragments = 0
                 for (windowStart in runStart until runEnd) {
                     while (windowEnd < runEnd && fractionalMillis < minuteMillis) {
-                        fractionalMillis += duration(normalized[windowEnd]).remainder(minuteMillis)
+                        val spanDuration = duration(normalized[windowEnd])
+                        fractionalMillis += spanDuration.remainder(minuteMillis)
+                        if (spanDuration >= minuteMillis) wholeMinuteFragments++
                         windowEnd++
                     }
                     if (fractionalMillis < minuteMillis) break
                     val windowLast = windowEnd - 1
                     val windowLength = windowLast - windowStart + 1
-                    if (windowLength < bestLength ||
-                        (windowLength == bestLength &&
-                            (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
-                    ) {
-                        bestStart = windowStart
-                        bestEnd = windowLast
-                        bestLength = windowLength
+                    val crossesDate = localDate(normalized[windowStart].startAt, zone) !=
+                        localDate(normalized[windowLast].startAt, zone)
+                    if (!crossesDate || wholeMinuteFragments == 0) {
+                        if (windowLength < bestLength ||
+                            (windowLength == bestLength &&
+                                (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
+                        ) {
+                            bestStart = windowStart
+                            bestEnd = windowLast
+                            bestLength = windowLength
+                        }
                     }
-                    fractionalMillis -= duration(normalized[windowStart]).remainder(minuteMillis)
+                    val firstDuration = duration(normalized[windowStart])
+                    fractionalMillis -= firstDuration.remainder(minuteMillis)
+                    if (firstDuration >= minuteMillis) wholeMinuteFragments--
                 }
                 runStart = runEnd
             }
