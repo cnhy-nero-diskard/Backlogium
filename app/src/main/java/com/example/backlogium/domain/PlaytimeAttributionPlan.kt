@@ -677,11 +677,11 @@ object PlaytimeAttributionPlanner {
         val previous = request.previousObservationAt ?: return emptyList()
         if (request.recoveryObservedAt <= previous) return emptyList()
         // Evidence-ID boundaries can split one continuously confirmed interval. Recover only the
-        // fractional capacity needed to fund this session, and never merge placements that begin
-        // on different local dates: their independently supported date attribution must survive.
+        // fractional capacity needed to fund this session; never bridge a real gap, and leave
+        // independently sufficient whole-minute capacity untouched.
         val usable = usableSpans(request, previous, mutableListOf())
         val normalizedSpans = normalizeWholeMinuteCapacity(
-            usable, request.authorizedDeltaMinutes, request.zone,
+            usable, request.authorizedDeltaMinutes,
         )
         val (timed, remaining) = placeEvidence(
             request, normalizedSpans, request.authorizedDeltaMinutes,
@@ -778,13 +778,13 @@ object PlaytimeAttributionPlanner {
 
     /**
      * Recover only the fractional whole-minute capacity needed by this historical placement.
-     * Merges never bridge a real gap. Across local dates, only sub-minute fragments may merge, so
-     * independently supported whole-minute placements keep their date attribution.
+     * Merges never bridge a real gap, and are attempted only while whole-minute capacity is below
+     * the requested minutes. This lets contiguous fractional remainders combine across midnight
+     * without coalescing date placements when the requested minutes are already supported.
      */
     private fun normalizeWholeMinuteCapacity(
         spans: List<Span>,
         requiredMinutes: Int,
-        zone: ZoneId,
     ): List<Span> {
         if (spans.isEmpty() || requiredMinutes <= 0) return spans
         val minuteMillis = BigInteger.valueOf(60_000L)
@@ -812,36 +812,29 @@ object PlaytimeAttributionPlanner {
                 }
 
                 // A shortest adjacent window whose remainders total one minute gains capacity.
-                // Cross-date windows may combine fractional fragments, but cannot absorb a span
-                // that independently funds a whole minute on its own start date.
+                // A window may include an already-whole-minute span: only the unspent remainders
+                // create its additional capacity, and this loop runs only while funding is short.
                 var windowEnd = runStart
                 var fractionalMillis = BigInteger.ZERO
-                var wholeMinuteFragments = 0
                 for (windowStart in runStart until runEnd) {
                     while (windowEnd < runEnd && fractionalMillis < minuteMillis) {
                         val spanDuration = duration(normalized[windowEnd])
                         fractionalMillis += spanDuration.remainder(minuteMillis)
-                        if (spanDuration >= minuteMillis) wholeMinuteFragments++
                         windowEnd++
                     }
                     if (fractionalMillis < minuteMillis) break
                     val windowLast = windowEnd - 1
                     val windowLength = windowLast - windowStart + 1
-                    val crossesDate = localDate(normalized[windowStart].startAt, zone) !=
-                        localDate(normalized[windowLast].startAt, zone)
-                    if (!crossesDate || wholeMinuteFragments == 0) {
-                        if (windowLength < bestLength ||
-                            (windowLength == bestLength &&
-                                (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
-                        ) {
-                            bestStart = windowStart
-                            bestEnd = windowLast
-                            bestLength = windowLength
-                        }
+                    if (windowLength < bestLength ||
+                        (windowLength == bestLength &&
+                            (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
+                    ) {
+                        bestStart = windowStart
+                        bestEnd = windowLast
+                        bestLength = windowLength
                     }
                     val firstDuration = duration(normalized[windowStart])
                     fractionalMillis -= firstDuration.remainder(minuteMillis)
-                    if (firstDuration >= minuteMillis) wholeMinuteFragments--
                 }
                 runStart = runEnd
             }

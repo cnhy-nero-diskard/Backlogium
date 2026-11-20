@@ -832,6 +832,125 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
     }
 
     @Test
+    fun wholeMinuteAndFractionalEvidenceAcrossMidnightRefilesWithoutBridgingGap() = runTest {
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(),
+            BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val settings = DataStoreSettingsRepository(
+            SettingsDataStore(RuntimeEnvironment.getApplication()),
+        )
+        val marks = InMemoryProgressMarksStore(
+            ProgressMarks(lastCelebratedLevel = 1, initialized = true),
+        )
+        val updater = GamificationUpdater(
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            hltbDataDao = database.hltbDataDao(),
+            achievementDao = database.achievementDao(),
+            gameDao = database.gameDao(),
+            hiddenGameDao = database.hiddenGameDao(),
+            progressMarksStore = marks,
+        )
+        val useCase = CloudPresencePlaytimeRefilingUseCase(
+            gameDao = database.gameDao(),
+            sessionDao = database.sessionDao(),
+            dailyProgressDao = database.dailyProgressDao(),
+            playerProfileDao = database.playerProfileDao(),
+            cloudHistoricalDao = database.cloudHistoricalDao(),
+            settings = settings,
+            gamificationUpdater = updater,
+            time = FixedTime,
+            syncCoordinator = com.example.backlogium.work.SteamSyncCoordinator(),
+            derivedStateWrites = DerivedStateWriteCoordinator(),
+            transaction = RoomDatabaseTransactionScope(database),
+        )
+        val originalStart = utc("2026-07-25T23:58:00Z")
+        val firstEvidenceStart = utc("2026-07-25T23:59:00Z")
+        val firstEvidenceEnd = utc("2026-07-26T00:00:30Z")
+        val secondEvidenceEnd = utc("2026-07-26T00:01:00Z")
+        val disjointEvidenceStart = utc("2026-07-26T00:02:00Z")
+        val originalEnd = utc("2026-07-26T00:03:00Z")
+        fun interval(startAt: Long, endAt: Long) = CloudPresenceInterval(
+            appId = GAME,
+            gameName = "Portal",
+            startAt = startAt,
+            endAt = endAt,
+            ongoing = false,
+            coverage = CloudCoverageState.CONTINUOUS,
+            observedUntil = null,
+            coverageLapseFrom = null,
+            coverageLapseRecoveredAt = null,
+            mayHaveStartedBefore = false,
+        )
+
+        try {
+            settings.clearCloudPresenceRefiling()
+            database.gameDao().upsert(
+                Game(
+                    appId = GAME,
+                    name = "Portal",
+                    iconUrl = "",
+                    playtimeForever = 130,
+                    playtime2Weeks = 0,
+                    lastPlaytime = 130,
+                    isGoal = true,
+                    source = GameSource.STEAM_OWNED,
+                ),
+            )
+            database.sessionDao().insert(
+                Session(
+                    appId = GAME,
+                    startAt = originalStart,
+                    endAt = originalEnd,
+                    minutes = 3,
+                    open = false,
+                ),
+            )
+            database.playerProfileDao().upsert(PlayerProfile(longestStreak = 7))
+            database.dailyProgressDao().upsert(
+                DailyProgress("2026-07-25", minutesPlayed = 3, goalMinutesPlayed = 3, questMet = false),
+            )
+
+            val beforeSessions = database.sessionDao().getAll()
+            val beforeDays = database.dailyProgressDao().getAllOrdered()
+            val intervals = listOf(
+                interval(firstEvidenceStart, firstEvidenceEnd),
+                interval(firstEvidenceEnd, secondEvidenceEnd),
+                interval(disjointEvidenceStart, originalEnd),
+            )
+
+            val applied = useCase.apply(intervals)
+
+            assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
+            assertEquals(1, applied.sessionsRefiled)
+            assertEquals(setOf("2026-07-25", "2026-07-26"), applied.datesAffected)
+            val replacements = database.sessionDao().getAll().sortedBy { it.startAt }
+            assertEquals(listOf(2, 1), replacements.map { it.minutes })
+            assertEquals(listOf(firstEvidenceStart, disjointEvidenceStart), replacements.map { it.startAt })
+            assertEquals(listOf(secondEvidenceEnd, originalEnd), replacements.map { it.endAt })
+            assertEquals(
+                listOf(LocalDate.of(2026, 7, 25), LocalDate.of(2026, 7, 26)),
+                replacements.map { Instant.ofEpochMilli(it.startAt).atZone(ZoneOffset.UTC).toLocalDate() },
+            )
+            assertTrue(replacements.all { it.minutes <= (it.endAt!! - it.startAt) / 60_000L })
+            assertEquals(3, replacements.sumOf { it.minutes })
+
+            val reversed = useCase.reverse()
+
+            assertEquals(CloudPresenceRefilingOperation.REVERSED, reversed.operation)
+            assertEquals(beforeSessions, database.sessionDao().getAll())
+            assertEquals(beforeDays, database.dailyProgressDao().getAllOrdered())
+            assertEquals(3, database.sessionDao().getAll().sumOf { it.minutes })
+            assertFalse(settings.cloudPresenceRefilingApplied.first())
+        } finally {
+            settings.clearCloudPresenceRefiling()
+            database.close()
+        }
+    }
+
+    @Test
     fun applyResumesAfterInterruptionWithoutLosingTheBackup() = runTest {
         val database = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(),
