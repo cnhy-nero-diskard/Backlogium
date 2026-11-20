@@ -676,8 +676,14 @@ object PlaytimeAttributionPlanner {
     internal fun placeHistoricalSession(request: PlaytimeRecoveryRequest): List<TimedPlacement> {
         val previous = request.previousObservationAt ?: return emptyList()
         if (request.recoveryObservedAt <= previous) return emptyList()
+        // Evidence-ID boundaries can split one continuously confirmed interval. Normalize only
+        // contiguous components where flooring each fragment would lose confirmed minutes; this
+        // preserves existing per-interval placements when their whole-minute bounds already sum
+        // to the component's capacity. Real gaps remain separate components.
+        val usable = usableSpans(request, previous, mutableListOf())
+        val normalizedSpans = normalizeWholeMinuteCapacity(usable)
         val (timed, remaining) = placeEvidence(
-            request, usableSpans(request, previous, mutableListOf()), request.authorizedDeltaMinutes,
+            request, normalizedSpans, request.authorizedDeltaMinutes,
             wholeMinutesPerSpan = true,
         )
         return if (remaining == 0) timed else emptyList()
@@ -767,6 +773,41 @@ object PlaytimeAttributionPlanner {
             }
         }
         return merged
+    }
+
+    /**
+     * Coalesce a contiguous component only when whole-minute truncation per evidence fragment
+     * would undercount the confirmed union. This keeps each resulting replacement within its own
+     * whole-minute bound without changing placements whose fragment capacities already add up.
+     */
+    private fun normalizeWholeMinuteCapacity(spans: List<Span>): List<Span> {
+        if (spans.isEmpty()) return emptyList()
+        val minuteMillis = BigInteger.valueOf(60_000L)
+        val ordered = spans.sortedBy { it.startAt }
+        val normalized = mutableListOf<Span>()
+        var componentStart = 0
+        while (componentStart < ordered.size) {
+            var componentEnd = componentStart + 1
+            var componentEndAt = ordered[componentStart].endAt
+            while (componentEnd < ordered.size && ordered[componentEnd].startAt <= componentEndAt) {
+                componentEndAt = maxOf(componentEndAt, ordered[componentEnd].endAt)
+                componentEnd++
+            }
+            val component = ordered.subList(componentStart, componentEnd)
+            val unionMinutes = BigInteger.valueOf(componentEndAt)
+                .subtract(BigInteger.valueOf(component.first().startAt)) / minuteMillis
+            val fragmentMinutes = component.fold(BigInteger.ZERO) { total, span ->
+                total + (BigInteger.valueOf(span.endAt).subtract(BigInteger.valueOf(span.startAt)) /
+                    minuteMillis)
+            }
+            if (unionMinutes > fragmentMinutes) {
+                normalized += mergeContiguousByTime(component)
+            } else {
+                normalized += component
+            }
+            componentStart = componentEnd
+        }
+        return normalized
     }
 
     private fun fullDateRange(

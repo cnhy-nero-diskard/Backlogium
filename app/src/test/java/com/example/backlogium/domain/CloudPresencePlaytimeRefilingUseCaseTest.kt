@@ -431,7 +431,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
     }
 
     @Test
-    fun applyAndReverseRestoresTheLedgerExactlyAndCanBeOfferedAgain() = runTest {
+    fun partiallyOverlappingEvidenceAcrossMidnightRefilesAndReversesExactly() = runTest {
         val database = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(),
             BacklogiumDatabase::class.java,
@@ -469,8 +469,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             derivedStateWrites = DerivedStateWriteCoordinator(),
             transaction = RoomDatabaseTransactionScope(database),
         )
-        val originalStart = utc("2026-07-25T23:50:00Z")
-        val originalEnd = utc("2026-07-26T00:30:00Z")
+        val originalStart = utc("2026-07-25T23:58:00Z")
+        val originalEnd = utc("2026-07-26T00:02:00Z")
         val presenceStart = utc("2026-07-26T00:00:00Z")
         val presenceEnd = originalEnd
 
@@ -494,7 +494,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     appId = GAME,
                     startAt = originalStart,
                     endAt = originalEnd,
-                    minutes = 30,
+                    minutes = 2,
                     open = false,
                     recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,
                     timingInformedSteamPlay = TimingInformedSteamPlayState.PARTIAL,
@@ -505,7 +505,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                 DailyProgress("2026-07-24", minutesPlayed = 99, goalMinutesPlayed = 40, questMet = true),
             )
             database.dailyProgressDao().upsert(
-                DailyProgress("2026-07-25", minutesPlayed = 30, goalMinutesPlayed = 30, questMet = true),
+                DailyProgress("2026-07-25", minutesPlayed = 2, goalMinutesPlayed = 2, questMet = false),
             )
 
             val beforeSessions = database.sessionDao().getAll()
@@ -517,6 +517,18 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
                     appId = GAME,
                     gameName = "Portal",
                     startAt = presenceStart,
+                    endAt = utc("2026-07-26T00:01:30Z"),
+                    ongoing = false,
+                    coverage = CloudCoverageState.CONTINUOUS,
+                    observedUntil = null,
+                    coverageLapseFrom = null,
+                    coverageLapseRecoveredAt = null,
+                    mayHaveStartedBefore = false,
+                ),
+                CloudPresenceInterval(
+                    appId = GAME,
+                    gameName = "Portal",
+                    startAt = utc("2026-07-26T00:01:00Z"),
                     endAt = presenceEnd,
                     ongoing = false,
                     coverage = CloudCoverageState.CONTINUOUS,
@@ -528,8 +540,8 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             )
             val range = CloudPresenceHistoricalSelection(
                 choice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE,
-                selectedStartAt = presenceStart,
-                effectiveStartAt = presenceStart,
+                selectedStartAt = originalStart,
+                effectiveStartAt = originalStart,
                 throughAt = presenceEnd,
                 zoneId = "UTC",
             )
@@ -540,6 +552,11 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             assertEquals(1, applied.sessionsRefiled)
             assertEquals(setOf("2026-07-25", "2026-07-26"), applied.datesAffected)
             assertEquals(beforeMinutes, database.sessionDao().getAll().sumOf { it.minutes })
+            val refiledSession = database.sessionDao().getAll().single()
+            assertEquals(presenceStart, refiledSession.startAt)
+            assertEquals(presenceEnd, refiledSession.endAt)
+            assertEquals(2, refiledSession.minutes)
+            assertTrue(refiledSession.minutes <= (refiledSession.endAt!! - refiledSession.startAt) / 60_000L)
             // No pre-data cutoff was confirmed, so the date-only re-file leaves imported play alone.
             assertEquals(beforeGame, database.gameDao().getAll().single())
             assertNotEquals(beforeSessions, database.sessionDao().getAll())
