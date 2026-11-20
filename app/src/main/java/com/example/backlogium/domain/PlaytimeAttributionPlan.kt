@@ -676,12 +676,13 @@ object PlaytimeAttributionPlanner {
     internal fun placeHistoricalSession(request: PlaytimeRecoveryRequest): List<TimedPlacement> {
         val previous = request.previousObservationAt ?: return emptyList()
         if (request.recoveryObservedAt <= previous) return emptyList()
-        // Evidence-ID boundaries can split one continuously confirmed interval. Normalize only
-        // contiguous components where flooring each fragment would lose confirmed minutes; this
-        // preserves existing per-interval placements when their whole-minute bounds already sum
-        // to the component's capacity. Real gaps remain separate components.
+        // Evidence-ID boundaries can split one continuously confirmed interval. Recover only the
+        // fractional capacity needed to fund this session, and never merge placements that begin
+        // on different local dates: their independently supported date attribution must survive.
         val usable = usableSpans(request, previous, mutableListOf())
-        val normalizedSpans = normalizeWholeMinuteCapacity(usable)
+        val normalizedSpans = normalizeWholeMinuteCapacity(
+            usable, request.authorizedDeltaMinutes, request.zone,
+        )
         val (timed, remaining) = placeEvidence(
             request, normalizedSpans, request.authorizedDeltaMinutes,
             wholeMinutesPerSpan = true,
@@ -776,36 +777,78 @@ object PlaytimeAttributionPlanner {
     }
 
     /**
-     * Coalesce a contiguous component only when whole-minute truncation per evidence fragment
-     * would undercount the confirmed union. This keeps each resulting replacement within its own
-     * whole-minute bound without changing placements whose fragment capacities already add up.
+     * Recover only the fractional whole-minute capacity needed by this historical placement.
+     * Merges stay within contiguous fragments that start on the same local date, so neither a
+     * genuine gap nor an independently supported date attribution is collapsed.
      */
-    private fun normalizeWholeMinuteCapacity(spans: List<Span>): List<Span> {
-        if (spans.isEmpty()) return emptyList()
+    private fun normalizeWholeMinuteCapacity(
+        spans: List<Span>,
+        requiredMinutes: Int,
+        zone: ZoneId,
+    ): List<Span> {
+        if (spans.isEmpty() || requiredMinutes <= 0) return spans
         val minuteMillis = BigInteger.valueOf(60_000L)
-        val ordered = spans.sortedBy { it.startAt }
-        val normalized = mutableListOf<Span>()
-        var componentStart = 0
-        while (componentStart < ordered.size) {
-            var componentEnd = componentStart + 1
-            var componentEndAt = ordered[componentStart].endAt
-            while (componentEnd < ordered.size && ordered[componentEnd].startAt <= componentEndAt) {
-                componentEndAt = maxOf(componentEndAt, ordered[componentEnd].endAt)
-                componentEnd++
+        val required = BigInteger.valueOf(requiredMinutes.toLong())
+        val normalized = spans.sortedBy { it.startAt }.toMutableList()
+
+        fun duration(span: Span): BigInteger =
+            BigInteger.valueOf(span.endAt).subtract(BigInteger.valueOf(span.startAt))
+
+        fun wholeMinuteCapacity(): BigInteger = normalized.fold(BigInteger.ZERO) { total, span ->
+            total + duration(span) / minuteMillis
+        }
+
+        while (wholeMinuteCapacity() < required) {
+            var bestStart = -1
+            var bestEnd = -1
+            var bestLength = Int.MAX_VALUE
+            var runStart = 0
+            while (runStart < normalized.size) {
+                val date = localDate(normalized[runStart].startAt, zone)
+                var runEnd = runStart + 1
+                while (runEnd < normalized.size &&
+                    localDate(normalized[runEnd].startAt, zone) == date &&
+                    normalized[runEnd].startAt <= normalized[runEnd - 1].endAt
+                ) {
+                    runEnd++
+                }
+
+                // A shortest adjacent window whose remainders total one minute gains exactly one
+                // minute of capacity. Merge one such window at a time, stopping as soon as the
+                // requested historical quantity is fundable.
+                var windowEnd = runStart
+                var fractionalMillis = BigInteger.ZERO
+                for (windowStart in runStart until runEnd) {
+                    while (windowEnd < runEnd && fractionalMillis < minuteMillis) {
+                        fractionalMillis += duration(normalized[windowEnd]).remainder(minuteMillis)
+                        windowEnd++
+                    }
+                    if (fractionalMillis < minuteMillis) break
+                    val windowLast = windowEnd - 1
+                    val windowLength = windowLast - windowStart + 1
+                    if (windowLength < bestLength ||
+                        (windowLength == bestLength &&
+                            (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
+                    ) {
+                        bestStart = windowStart
+                        bestEnd = windowLast
+                        bestLength = windowLength
+                    }
+                    fractionalMillis -= duration(normalized[windowStart]).remainder(minuteMillis)
+                }
+                runStart = runEnd
             }
-            val component = ordered.subList(componentStart, componentEnd)
-            val unionMinutes = BigInteger.valueOf(componentEndAt)
-                .subtract(BigInteger.valueOf(component.first().startAt)) / minuteMillis
-            val fragmentMinutes = component.fold(BigInteger.ZERO) { total, span ->
-                total + (BigInteger.valueOf(span.endAt).subtract(BigInteger.valueOf(span.startAt)) /
-                    minuteMillis)
-            }
-            if (unionMinutes > fragmentMinutes) {
-                normalized += mergeContiguousByTime(component)
-            } else {
-                normalized += component
-            }
-            componentStart = componentEnd
+
+            if (bestStart < 0) break
+            val mergedSpans = normalized.subList(bestStart, bestEnd + 1).toList()
+            val merged = Span(
+                startAt = mergedSpans.first().startAt,
+                endAt = mergedSpans.maxOf { it.endAt },
+                source = mergedSpans.minBy { it.source.ordinal }.source,
+                evidenceIds = mergedSpans.flatMap { it.evidenceIds }.distinct().sorted(),
+            )
+            normalized.subList(bestStart, bestEnd + 1).clear()
+            normalized.add(bestStart, merged)
         }
         return normalized
     }
