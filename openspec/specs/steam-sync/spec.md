@@ -105,6 +105,13 @@ The positive diff SHALL authorize exactly that many minutes, represented as time
 - **WHEN** usable intervals span more or less time than the diffed increase
 - **THEN** timestamped and unknown-time credited minutes together equal the diffed increase exactly
 
+#### Scenario: Partial presence cannot absorb a whole increase
+- **WHEN** a 105-minute increase has only 35 whole confirmed minutes of non-overlapping usable timing and no previously funded share
+- **THEN** timed placement receives 35 minutes and unknown-time recovery receives 70
+- **AND** no synthetic session is created to hold the residual
+
+
+
 ### Requirement: Play deltas available to dependent work
 The sync SHALL make the per-game playtime deltas it computes available to work that depends on
 knowing which games were played, so that information is derived once per run rather than
@@ -494,6 +501,13 @@ Unknown-time play SHALL instead be credited to its explicit frozen allocation da
 #### Scenario: Unknown-time allocation date
 - **WHEN** recovered play is allocated to Wednesday without session timing
 - **THEN** Wednesday receives that credit without creating a session start
+
+#### Scenario: Correction re-evaluates the date losing minutes
+- **WHEN** a placement-only correction moves qualifying minutes away from a previously met date
+- **THEN** that date's daily total and quest are re-evaluated, including persisting a met-to-unmet change
+- **AND** the same correction re-evaluates the receiving dates without changing the game's credited quantity
+
+
 
 ### Requirement: A playtime baseline is only diffed against the same account
 The system SHALL NOT compare a stored playtime baseline against a poll for a different Steam

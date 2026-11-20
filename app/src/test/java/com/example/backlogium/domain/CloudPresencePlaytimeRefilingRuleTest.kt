@@ -10,12 +10,12 @@ import org.junit.Test
 class CloudPresencePlaytimeRefilingRuleTest {
     @Test
     fun selectedRangeClipsSessionPlacementWithoutOverlapOrMinuteChanges() {
-        val original = session(appId = GAME, startAt = 0L, endAt = 100L, minutes = 10)
+        val original = session(appId = GAME, startAt = 0L, endAt = 100 * MINUTE, minutes = 10)
         val selection = CloudPresenceHistoricalSelection(
             choice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE,
-            selectedStartAt = 20L,
-            effectiveStartAt = 20L,
-            throughAt = 80L,
+            selectedStartAt = 20 * MINUTE,
+            effectiveStartAt = 20 * MINUTE,
+            throughAt = 80 * MINUTE,
             zoneId = "UTC",
         )
 
@@ -23,8 +23,8 @@ class CloudPresencePlaytimeRefilingRuleTest {
             sessions = listOf(original),
             ownedAppIds = setOf(GAME),
             intervals = listOf(
-                interval(startAt = 0L, endAt = 50L),
-                interval(startAt = 50L, endAt = 100L),
+                interval(startAt = 0L, endAt = 50 * MINUTE),
+                interval(startAt = 50 * MINUTE, endAt = 100 * MINUTE),
             ),
             range = selection,
         )
@@ -33,8 +33,8 @@ class CloudPresencePlaytimeRefilingRuleTest {
         val replacement = refiles.single().replacement
         assertEquals(listOf(5, 5), replacement.map { it.minutes })
         assertEquals(original.minutes, replacement.sumOf { it.minutes })
-        assertEquals(listOf(20L, 50L), replacement.map { it.startAt })
-        assertEquals(listOf(50L, 80L), replacement.map { it.endAt })
+        assertEquals(listOf(20 * MINUTE, 50 * MINUTE), replacement.map { it.startAt })
+        assertEquals(listOf(50 * MINUTE, 80 * MINUTE), replacement.map { it.endAt })
         assertTrue(replacement.all { it.startAt >= selection.effectiveStartAt && it.endAt!! <= selection.throughAt })
         assertTrue(replacement.zipWithNext().all { (first, next) -> first.endAt!! <= next.startAt })
     }
@@ -62,7 +62,7 @@ class CloudPresencePlaytimeRefilingRuleTest {
 
     @Test
     fun splitPlacementKeepsEachGameTotalExact() {
-        val original = session(appId = GAME, startAt = 0L, endAt = 1_000L, minutes = 10).copy(
+        val original = session(appId = GAME, startAt = 0L, endAt = 20 * MINUTE, minutes = 10).copy(
             recoveredSharedPlay = RecoveredSharedPlayState.PARTIAL,
             timingInformedSteamPlay = TimingInformedSteamPlayState.UNKNOWN,
         )
@@ -71,8 +71,8 @@ class CloudPresencePlaytimeRefilingRuleTest {
             sessions = listOf(original),
             ownedAppIds = setOf(GAME),
             intervals = listOf(
-                interval(startAt = 0L, endAt = 400L),
-                interval(startAt = 600L, endAt = 1_000L),
+                interval(startAt = 0L, endAt = 8 * MINUTE),
+                interval(startAt = 12 * MINUTE, endAt = 20 * MINUTE),
             ),
         )
 
@@ -83,6 +83,25 @@ class CloudPresencePlaytimeRefilingRuleTest {
             it.recoveredSharedPlay == RecoveredSharedPlayState.PARTIAL &&
                 it.timingInformedSteamPlay == TimingInformedSteamPlayState.FULL
         })
+    }
+
+    @Test
+    fun duplicateOverlapAndAnInteriorGapCannotJustifyRefilingUnsupportedMinutes() {
+        val original = session(GAME, 0L, 40 * MINUTE, 35)
+        val partiallyCovered = interval(
+            startAt = 0L, endAt = 38 * MINUTE,
+            coverageLapseFrom = 10 * MINUTE, coverageLapseRecoveredAt = 14 * MINUTE,
+        )
+        val evidence = listOf(partiallyCovered, partiallyCovered, interval(16 * MINUTE, 20 * MINUTE))
+        assertTrue(cloudPresenceSessionRefiles(listOf(original), setOf(GAME), evidence).isEmpty())
+
+        val replacement = cloudPresenceSessionRefiles(
+            listOf(original.copy(minutes = 34)), setOf(GAME), evidence,
+        ).single().replacement
+        assertEquals(34, replacement.sumOf { it.minutes })
+        assertTrue(replacement.all { it.minutes <= (it.endAt!! - it.startAt) / MINUTE })
+        assertTrue(replacement.none { it.startAt < 14 * MINUTE && it.endAt!! > 10 * MINUTE })
+        assertTrue(replacement.zipWithNext().all { (before, after) -> before.endAt!! <= after.startAt })
     }
 
     @Test
@@ -140,6 +159,7 @@ class CloudPresencePlaytimeRefilingRuleTest {
     )
 
     private companion object {
+        const val MINUTE = 60_000L
         const val GAME = 440L
         const val SHARED = 441L
     }

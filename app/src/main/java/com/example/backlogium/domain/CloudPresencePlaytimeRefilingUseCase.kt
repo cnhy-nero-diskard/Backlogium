@@ -62,47 +62,54 @@ internal fun cloudPresenceSessionRefiles(
     intervals: List<CloudPresenceInterval>,
     range: CloudPresenceHistoricalSelection? = null,
     fundedSessionIds: Set<Long> = emptySet(),
-): List<CloudPresenceSessionRefile> = sessions
-    .asSequence()
-    .filter {
-        it.appId in ownedAppIds && !it.open && it.endAt != null && it.minutes > 0 &&
-            it.id !in fundedSessionIds
-    }
-    .mapNotNull { original ->
+): List<CloudPresenceSessionRefile> {
+    val intervalsByGame = intervals.groupBy { it.appId }
+    // The historical apply admits its stage before invoking this pure rule. This identity is
+    // local to the calculation; no baseline, evidence or contribution is persisted from it.
+    val scope = CloudReaderIdentity("historical-refile", 0L)
+    val zone = ZoneId.of(range?.zoneId ?: "UTC")
+    return sessions.mapNotNull { original ->
         val originalEndAt = original.endAt ?: return@mapNotNull null
+        if (original.appId !in ownedAppIds || original.open || original.minutes <= 0 ||
+            original.id in fundedSessionIds
+        ) return@mapNotNull null
         val periodStartAt = maxOf(original.startAt, range?.effectiveStartAt ?: Long.MIN_VALUE)
         val periodEndAt = minOf(originalEndAt, range?.throughAt ?: Long.MAX_VALUE)
         if (periodEndAt <= periodStartAt) return@mapNotNull null
-        val replacement = CloudPresencePlaytimePlacement.place(
-            CloudPresencePlaytimePlacement.Request(
+        val replacement = PlaytimeAttributionPlanner.placeHistoricalSession(
+            PlaytimeRecoveryRequest(
+                account = scope.account,
                 appId = original.appId,
-                diffedMinutes = original.minutes,
-                periodStartAt = periodStartAt,
-                periodEndAt = periodEndAt,
-                intervals = intervals,
+                baselineEpoch = 1L,
+                authorizedDeltaMinutes = original.minutes,
+                previousObservationAt = periodStartAt,
+                recoveryObservedAt = periodEndAt,
+                zone = zone,
+                activeReaderIdentity = scope,
+                evidence = intervalsByGame[original.appId].orEmpty().mapNotNull {
+                    it.toRecoveryEvidence(scope.account, scope, periodEndAt)
+                },
             ),
         )
-            ?.filterIsInstance<SessionDiffer.SessionAction.Open>()
-            ?.map { action ->
-                original.copy(
-                    id = 0L,
-                    startAt = action.startAt,
-                    endAt = action.endAt,
-                    minutes = action.minutes,
-                    open = false,
-                    openAppId = null,
-                    timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
-                )
-            }
-            ?.takeIf { it.isNotEmpty() && it.sumOf(Session::minutes) == original.minutes }
-            ?: return@mapNotNull null
-        if (replacement.isSameLedgerRowAs(original)) {
+        if (replacement.isEmpty()) return@mapNotNull null
+        val rows = replacement.map { placement ->
+            original.copy(
+                id = 0L,
+                startAt = placement.startAt,
+                endAt = placement.endAt,
+                minutes = placement.minutes,
+                open = false,
+                openAppId = null,
+                timingInformedSteamPlay = TimingInformedSteamPlayState.FULL,
+            )
+        }
+        if (rows.isSameLedgerRowAs(original)) {
             null
         } else {
-            CloudPresenceSessionRefile(original, replacement)
+            CloudPresenceSessionRefile(original, rows)
         }
     }
-    .toList()
+}
 
 /**
  * Re-files already-recorded owned-game sessions against a complete cloud-presence snapshot.
@@ -674,7 +681,13 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
 
         val hasLedgerChanges = payload.originalSessions.isNotEmpty() || payload.createdSessions.isNotEmpty()
         val hasBalanceChanges = payload.transferredMinutesByAppId.isNotEmpty()
-        val recomputedDates = if (hasLedgerChanges || hasBalanceChanges) recompute() else emptySet()
+        val operationDates = historicalDailyDates(payload)
+        val createdDailyDates = settings.cloudPresenceRefilingBackup()?.createdDailyProgressDates.orEmpty()
+        val recomputedDates = if (hasLedgerChanges || hasBalanceChanges) {
+            recompute(operationDates, createdDailyDates.intersect(operationDates))
+        } else {
+            emptySet()
+        }
         val affectedDates = (
             payload.datesAffected + payload.originalSessions.map { it.toSession().localDate(payload.zoneId) } +
                 payload.replacementSessions.map { it.toSession().localDate(payload.zoneId) } +
@@ -795,7 +808,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         }
         val hasLedgerChanges = originals.isNotEmpty() || createdIds.isNotEmpty()
 
-        val recomputedDates = if (hasLedgerChanges) recompute() else emptySet()
+        val recomputedDates = if (hasLedgerChanges) recompute(historicalDailyDates(payload)) else emptySet()
         val createdDailyDates = if (hasLedgerChanges) {
             dailyProgressDao.getAllOrdered().map { it.date }.toSet() - dailyBefore.map { it.date }.toSet()
         } else {
@@ -1037,7 +1050,14 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
         if (currentById[original.id] != null) sessionDao.update(original)
     }
 
-    private suspend fun recompute(): Set<String> {
+    private fun historicalDailyDates(payload: CloudHistoricalApplyPayload): Set<String> =
+        (payload.originalSessions + payload.replacementSessions + payload.createdSessions)
+            .map { dateOf(it.toSession()) }.toSet() + payload.datesAffected
+
+    private suspend fun recompute(
+        affectedDates: Set<String> = emptySet(),
+        removeEmptyDates: Set<String> = emptySet(),
+    ): Set<String> {
         val account = playerProfileDao.get()?.steamId?.trim()?.takeIf { it.isNotEmpty() }
         val activeTimed = account?.let { recoveryDao?.activeTimedPlacementsForAccount(it) }.orEmpty()
         val activeAllocations = account?.let { recoveryDao?.activeAllocationsForAccount(it) }.orEmpty()
@@ -1051,6 +1071,7 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
             zone = time.zone(),
             timedShares = activeTimed,
             allocations = activeAllocations,
+            affectedDates = affectedDates,
         )
         corrections.forEach { correction ->
             dailyProgressDao.ensureDate(correction.date)
@@ -1059,6 +1080,11 @@ class CloudPresencePlaytimeRefilingUseCase @Inject constructor(
                 minutesPlayed = correction.correctedMinutes,
                 goalMinutesPlayed = correction.correctedGoalMinutes,
             )
+        }
+        // An apply-created date with surviving ordinary play or recovery credit is not ours to
+        // remove. Only empty rows for this operation can be absent again after reversal.
+        removeEmptyDates.forEach { date ->
+            if (dailyProgressDao.getByDate(date)?.minutesPlayed == 0) dailyProgressDao.deleteByDate(date)
         }
         recomputeGamification()
         return corrections.map { it.date }.toSet()

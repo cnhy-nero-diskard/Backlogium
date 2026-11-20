@@ -156,6 +156,46 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
     }
 
     @Test
+    fun receiptReversalRestoresDailyRowsExactlyWhenThereWasNoIndependentPlay() = runTest {
+        val oldDay = "2026-07-24"
+        val newDay = "2026-07-25"
+        val midnight = utc("${newDay}T00:00:00Z")
+        database.sessionDao().insert(
+            Session(appId = GAME, startAt = midnight - 30 * 60_000L,
+                endAt = midnight + 30 * 60_000L, minutes = 30, open = false),
+        )
+        database.dailyProgressDao().upsert(
+            com.example.backlogium.data.local.entity.DailyProgress(oldDay, minutesPlayed = 30, questMet = true),
+        )
+        val sessionsBefore = database.sessionDao().getAll()
+        val dailyBefore = database.dailyProgressDao().getAllOrdered()
+        val operation = CloudHistoricalOperation(
+            operationId = "exact-daily-reversal", account = ACCOUNT, readerGeneration = 5L,
+            endpointIdentity = "https://presence.example.test/readPresence",
+            startChoice = CloudPresenceHistoricalStartChoice.CUSTOM_LOCAL_DATE.name, zoneId = "UTC",
+            selectedStartAt = midnight - 86_400_000L, fromAt = midnight - 86_400_000L,
+            throughAt = midnight + 3_600_000L, acquisitionComplete = true,
+            state = CloudHistoricalStates.COMPLETE, createdAt = 1L, updatedAt = 1L,
+        )
+        check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
+        database.cloudHistoricalDao().insertInterval(
+            CloudHistoricalInterval(
+                operationId = operation.operationId, account = ACCOUNT, readerGeneration = 5L,
+                endpointIdentity = operation.endpointIdentity, appId = GAME, startAt = midnight,
+                endAt = midnight + 30 * 60_000L, ongoing = false, coverage = "CONTINUOUS",
+                observedUntil = null, coverageLapseFrom = null, coverageLapseRecoveredAt = null,
+                mayHaveStartedBefore = false, gameName = "Portal", windowStart = operation.fromAt,
+            ),
+        )
+        assertEquals(1, useCase.applyHistorical(operation).sessionsRefiled)
+        assertEquals(0, database.dailyProgressDao().getByDate(oldDay)?.minutesPlayed)
+        assertEquals(30, database.dailyProgressDao().getByDate(newDay)?.minutesPlayed)
+        assertEquals(CloudPresenceRefilingOperation.REVERSED, useCase.reverse().operation)
+        assertEquals(sessionsBefore, database.sessionDao().getAll())
+        assertEquals(dailyBefore, database.dailyProgressDao().getAllOrdered())
+    }
+
+    @Test
     fun reversalPreservesAFundedShareAcquiredOnACreatedRowAfterApply() = runTest {
         database.gameDao().upsert(game().copy(isGoal = true))
         database.playerProfileDao().upsert(
@@ -165,7 +205,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:25:00Z"),
                 minutes = 30,
                 open = false,
             ),
@@ -173,7 +213,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val unrelatedOriginal = Session(
             appId = GAME,
             startAt = utc("2026-07-26T00:30:00Z"),
-            endAt = utc("2026-07-26T00:50:00Z"),
+            endAt = utc("2026-07-26T01:00:00Z"),
             minutes = 20,
             open = false,
         )
@@ -200,9 +240,9 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         check(database.cloudHistoricalDao().insertOperation(operation) != -1L)
         listOf(
             interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
-            interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+            interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:25:00Z")),
             interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
-            interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+            interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T01:00:00Z")),
         ).forEach { row ->
             database.cloudHistoricalDao().insertInterval(
                 CloudHistoricalInterval(
@@ -287,7 +327,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         // The funded split group remains as a unit, while the unrelated unfunded split from the
         // same app restores fully. Recovery revision state on an app must not shrink that group.
         val sessions = database.sessionDao().getAll()
-        assertTrue("funded created row must survive", sessions.any { it.id == created.id && it.minutes == 20 })
+        assertTrue("funded created row must survive unchanged", created in sessions)
         val fundedFamilyIds = fundedFamilyBefore.map { it.id }.toSet()
         assertEquals(fundedFamilyBefore, sessions.filter { it.id in fundedFamilyIds })
         assertEquals(unrelatedOriginal.copy(id = unrelatedOriginalId), sessions.single { it.id == unrelatedOriginalId })
@@ -307,7 +347,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:25:00Z"),
                 minutes = 30,
                 open = false,
             ),
@@ -315,7 +355,7 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val unrelatedOriginal = Session(
             appId = GAME,
             startAt = utc("2026-07-26T00:30:00Z"),
-            endAt = utc("2026-07-26T00:50:00Z"),
+            endAt = utc("2026-07-26T01:00:00Z"),
             minutes = 20,
             open = false,
         )
@@ -323,9 +363,9 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
         val applied = useCase.apply(
             listOf(
                 interval(utc("2026-07-25T23:55:00Z"), utc("2026-07-26T00:00:00Z")),
-                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z")),
+                interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:25:00Z")),
                 interval(utc("2026-07-26T00:30:00Z"), utc("2026-07-26T00:35:00Z")),
-                interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T00:50:00Z")),
+                interval(utc("2026-07-26T00:45:00Z"), utc("2026-07-26T01:00:00Z")),
             ),
         )
         assertEquals(CloudPresenceRefilingOperation.APPLIED, applied.operation)
@@ -394,13 +434,13 @@ class CloudPresencePlaytimeRefilingRecoveryIntegrationTest {
             Session(
                 appId = GAME,
                 startAt = utc("2026-07-25T23:50:00Z"),
-                endAt = utc("2026-07-26T00:10:00Z"),
+                endAt = utc("2026-07-26T00:30:00Z"),
                 minutes = 30,
                 open = false,
             ),
         )
         val applied = useCase.apply(
-            listOf(interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:10:00Z"))),
+            listOf(interval(utc("2026-07-26T00:00:00Z"), utc("2026-07-26T00:30:00Z"))),
         )
         assertEquals(1, applied.sessionsRefiled)
 

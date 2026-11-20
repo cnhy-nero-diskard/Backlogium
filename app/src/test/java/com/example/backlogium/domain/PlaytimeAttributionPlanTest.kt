@@ -167,6 +167,29 @@ class PlaytimeAttributionPlanTest {
     }
 
     @Test
+    fun `continuous evidence caps session credit and leaves the remaining minute unknown`() {
+        val previous = ts("2024-01-08T23:45:00")
+        val recovery = ts("2024-01-09T00:20:00")
+        val plan = plan(
+            authorizedDeltaMinutes = 36,
+            previousObservationAt = previous,
+            recoveryObservedAt = recovery,
+            evidence = listOf(evidence("continuous", previous, recovery)),
+        )
+
+        val open = plan.sessionActions.single() as SessionAction.Open
+        assertEquals(previous, open.startAt)
+        assertEquals(recovery, open.endAt)
+        assertEquals(35, open.addedMinutes)
+        assertEquals(emptyList<TimedPlacement>(), plan.timedPlacements)
+        assertEquals(
+            listOf(DatedAllocation(date("2024-01-09"), 1, PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE)),
+            plan.residualAllocations(),
+        )
+        assertEquals(36, plan.creditedMinutes)
+    }
+
+    @Test
     fun `a gapped interval cannot establish midnight continuity`() {
         val previous = ts("2024-01-08T23:50:00")
         val recovery = ts("2024-01-09T00:10:00")
@@ -417,6 +440,24 @@ class PlaytimeAttributionPlanTest {
     }
 
     @Test
+    fun `timing spanning both window edges is clipped before allocation`() {
+        val previous = ts("2024-01-08T00:00:00")
+        val recovery = ts("2024-01-08T01:00:00")
+        val plan = plan(
+            authorizedDeltaMinutes = 105,
+            previousObservationAt = previous,
+            recoveryObservedAt = recovery,
+            evidence = listOf(evidence("wide", previous - 60_000L, recovery + 60_000L)),
+        )
+        val timed = plan.timedPlacements.single()
+        assertEquals(previous, timed.startAt)
+        assertEquals(recovery, timed.endAt)
+        assertEquals(60, timed.minutes)
+        assertEquals(45, plan.residualMinutes)
+        assertEquals(105, plan.creditedMinutes)
+    }
+
+    @Test
     fun `consumed spans are subtracted before placement`() {
         val plan = plan(
             authorizedDeltaMinutes = 200,
@@ -460,6 +501,8 @@ class PlaytimeAttributionPlanTest {
             ),
         )
         assertEquals(listOf(5, 5), plan.timedPlacements.map { it.minutes })
+        assertEquals(0, plan.residualMinutes)
+        assertEquals(10, plan.creditedMinutes)
     }
 
     @Test
@@ -570,6 +613,22 @@ class PlaytimeAttributionPlanTest {
         assertEquals(1, plan.rejectedEvidenceCount)
         assertTrue(plan.diagnostics.any { it.code == PlaytimeDiagnosticCode.CLOUD_WITHOUT_ACTIVE_IDENTITY })
         assertEquals(20, plan.creditedMinutes)
+    }
+
+    @Test
+    fun `less than one confirmed minute leaves the whole increase unknown`() {
+        val plan = plan(
+            authorizedDeltaMinutes = 20,
+            previousObservationAt = ts("2024-01-08T00:00:00"),
+            recoveryObservedAt = ts("2024-01-08T01:00:00"),
+            evidence = listOf(evidence("brief", ts("2024-01-08T00:10:00"), ts("2024-01-08T00:10:59"))),
+        )
+        assertTrue(plan.sessionActions.isEmpty())
+        assertTrue(plan.timedPlacements.isEmpty())
+        assertEquals(
+            listOf(DatedAllocation(date("2024-01-08"), 20, PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE)),
+            plan.residualAllocations(),
+        )
     }
 
     @Test
@@ -738,6 +797,8 @@ class PlaytimeAttributionPlanTest {
             recoveryObservedAt = ts("2024-01-09T12:00:00"),
         )
         assertNull(plan.residual)
+        assertTrue(plan.changedDates().isEmpty())
+        assertTrue(plan.sessionActions.isEmpty())
         assertEquals(70, plan.pending!!.minutes)
         assertEquals(PlaytimePendingReason.INVERTED_WINDOW, plan.pending!!.reason)
         assertEquals(70, plan.creditedMinutes)

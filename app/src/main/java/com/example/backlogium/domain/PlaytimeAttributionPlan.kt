@@ -269,12 +269,54 @@ data class PlaytimeRecoveryRequest(
     }
 }
 
+/** Translate cloud coverage without claiming unknown tails or transition-only estimates. */
+internal fun CloudPresenceInterval.toRecoveryEvidence(
+    account: String,
+    activeIdentity: CloudReaderIdentity?,
+    windowEnd: Long,
+): PlaytimeTimingEvidence? {
+    if (appId <= 0L) return null
+    val rawEnd = endAt ?: windowEnd.takeIf { ongoing } ?: return null
+    val confirmedEnd = when (coverage) {
+        CloudCoverageState.CONTINUOUS -> rawEnd
+        CloudCoverageState.OBSERVED_UNTIL -> observedUntil ?: return null
+        CloudCoverageState.UNKNOWN, CloudCoverageState.LEGACY_TRANSITIONS -> return null
+    }.coerceAtMost(rawEnd)
+    if ((coverageLapseFrom == null) != (coverageLapseRecoveredAt == null)) return null
+    if (confirmedEnd <= startAt) return null
+    return PlaytimeTimingEvidence(
+        evidenceId = "cloud:$appId:$startAt:$confirmedEnd:${coverageLapseFrom ?: 0}:${coverageLapseRecoveredAt ?: 0}",
+        appId = appId,
+        account = account,
+        readerIdentity = activeIdentity,
+        source = PlaytimeEvidenceSource.CLOUD,
+        startAt = startAt,
+        endAt = confirmedEnd,
+        gapFromAt = coverageLapseFrom,
+        gapRecoveredAt = coverageLapseRecoveredAt,
+    )
+}
+
 object PlaytimeAttributionPlanner {
 
-    /** The cloud-consultation threshold: below it a same-date diff estimate is kept as a session. */
+    /** Maximum window for an ordinary same-date estimate, including the boundary. */
     const val SHORT_GAP_MILLIS: Long = 30L * 60 * 1000
 
     val DEFAULT_GAP_TOLERANCE_MILLIS: Long = CloudPresencePlaytimePlacement.DEFAULT_GAP_TOLERANCE_MILLIS
+
+    internal fun qualifiesForOrdinaryEstimate(
+        previous: Long?,
+        observedAt: Long,
+        zone: ZoneId,
+        minutes: Int,
+        clockAnomalous: Boolean,
+    ): Boolean {
+        if (previous == null || clockAnomalous || observedAt < previous) return false
+        val elapsed = observedAt - previous
+        return elapsed in 0..SHORT_GAP_MILLIS &&
+            minutes.toLong() <= ceilMinutes(elapsed) + 1L &&
+            localDate(observedAt, zone) == localDate(previous, zone)
+    }
 
     fun plan(request: PlaytimeRecoveryRequest): PlaytimeAttributionPlan {
         val total = checkedTotalMinutes(
@@ -407,20 +449,21 @@ object PlaytimeAttributionPlanner {
 
         val playEnd = effectiveKnown ?: request.recoveryObservedAt
         val elapsed = playEnd - previous
-        val sameDate = localDate(playEnd, request.zone) == localDate(previous, request.zone)
         // A supplied end-only target never invents a start from the previous snapshot: without
         // continuity evidence it stays date-known/clock-unknown. Only an ordinary periodic
         // observation (no known instant) may take the same-date short-gap session path.
-        val withinShortGap = request.knownPlayInstantAt == null && elapsed in 0..SHORT_GAP_MILLIS
         val guardOk = elapsed >= 0L && total.toLong() <= ceilMinutes(elapsed) + 1L
-        val continuity = coveredBy(usableSpans, previous, playEnd)
+        val sessionMinutes = when {
+            request.unplacedPendingMinutes > 0 || request.publicationDelayConflict || !guardOk -> 0
+            request.knownPlayInstantAt == null && qualifiesForOrdinaryEstimate(
+                previous, playEnd, request.zone, total, request.clockAnomalous,
+            ) -> total
+            // Continuity can preserve a session but cannot fund more than whole confirmed minutes.
+            coveredBy(usableSpans, previous, playEnd) -> minOf(total.toLong(), elapsed / 60_000L).toInt()
+            else -> 0
+        }
 
-        val sessionEligible = request.unplacedPendingMinutes == 0 &&
-            !request.publicationDelayConflict &&
-            guardOk &&
-            ((sameDate && withinShortGap) || continuity)
-
-        if (sessionEligible) {
+        if (sessionMinutes > 0) {
             val priorOpen = request.priorOpenSession
             // A prior row starting a different calendar date may only be extended when validated
             // timing really continues it from its last increase; otherwise close it and open a
@@ -435,7 +478,7 @@ object PlaytimeAttributionPlanner {
                 appId = request.appId,
                 previous = previous,
                 playEnd = playEnd,
-                total = total,
+                total = sessionMinutes,
                 priorOpen = priorOpen,
                 extendable = extendable,
             )
@@ -443,6 +486,7 @@ object PlaytimeAttributionPlanner {
             // including across midnight with trusted continuity.
             val sessionStartDate = if (extendable) localDate(priorOpen!!.startAt, request.zone)
             else localDate(previous, request.zone)
+            val residual = recoveryResidual(request, previous, usableSpans, total - sessionMinutes, effectiveKnown, diagnostics)
             return PlaytimeAttributionPlan(
                 contributionId = contributionId,
                 account = request.account,
@@ -451,10 +495,11 @@ object PlaytimeAttributionPlanner {
                 authorizedMinutes = total,
                 zone = request.zone,
                 provenance = if (sessionStartDate.isBefore(evaluationDate))
-                    PlaytimePlacementProvenance.RETROACTIVE_PLAY else PlaytimePlacementProvenance.SYNC,
+                    PlaytimePlacementProvenance.RETROACTIVE_PLAY
+                else provenanceFor(request, evaluationDate, emptyList(), residual),
                 sessionActions = actions,
                 timedPlacements = emptyList(),
-                residual = null,
+                residual = residual,
                 pending = null,
                 diagnostics = diagnostics,
             )
@@ -473,25 +518,7 @@ object PlaytimeAttributionPlanner {
         )
 
         val (timed, residualMinutes) = placeEvidence(request, usableSpans, total)
-        val residual = if (residualMinutes > 0) {
-            if (effectiveKnown != null) {
-                val date = localDate(effectiveKnown, request.zone)
-                ResidualDateRecipe(
-                    method = PlaytimeAllocationMethod.KNOWN_TARGETED_DATE,
-                    firstDate = date,
-                    lastDate = date,
-                    eligibleDateCount = 1,
-                    baseMinutes = residualMinutes,
-                    remainderCount = 0,
-                    totalMinutes = residualMinutes,
-                    excludedRanges = emptyList(),
-                )
-            } else {
-                residualRecipe(request, previous, usableSpans, residualMinutes, diagnostics)
-            }
-        } else {
-            null
-        }
+        val residual = recoveryResidual(request, previous, usableSpans, residualMinutes, effectiveKnown, diagnostics)
 
         val provenance = provenanceFor(request, evaluationDate, timed, residual)
 
@@ -508,6 +535,31 @@ object PlaytimeAttributionPlanner {
             residual = residual,
             pending = null,
             diagnostics = diagnostics,
+        )
+    }
+
+    private fun recoveryResidual(
+        request: PlaytimeRecoveryRequest,
+        previous: Long,
+        usableSpans: List<Span>,
+        residualMinutes: Int,
+        effectiveKnown: Long?,
+        diagnostics: MutableList<PlaytimeDiagnostic>,
+    ): ResidualDateRecipe? {
+        if (residualMinutes == 0) return null
+        if (effectiveKnown == null) {
+            return residualRecipe(request, previous, usableSpans, residualMinutes, diagnostics)
+        }
+        val date = localDate(effectiveKnown, request.zone)
+        return ResidualDateRecipe(
+            method = PlaytimeAllocationMethod.KNOWN_TARGETED_DATE,
+            firstDate = date,
+            lastDate = date,
+            eligibleDateCount = 1,
+            baseMinutes = residualMinutes,
+            remainderCount = 0,
+            totalMinutes = residualMinutes,
+            excludedRanges = emptyList(),
         )
     }
 
@@ -588,16 +640,19 @@ object PlaytimeAttributionPlanner {
         request: PlaytimeRecoveryRequest,
         usableSpans: List<Span>,
         total: Int,
+        wholeMinutesPerSpan: Boolean = false,
     ): Pair<List<TimedPlacement>, Int> {
         if (usableSpans.isEmpty()) return emptyList<TimedPlacement>() to total
 
+        val minuteMillis = BigInteger.valueOf(60_000L)
         val spanMillis = usableSpans.map {
-            BigInteger.valueOf(it.endAt).subtract(BigInteger.valueOf(it.startAt))
+            val duration = BigInteger.valueOf(it.endAt).subtract(BigInteger.valueOf(it.startAt))
+            if (wholeMinutesPerSpan) (duration / minuteMillis) * minuteMillis else duration
         }
         val totalSpanMillis = spanMillis.fold(BigInteger.ZERO, BigInteger::add)
         if (totalSpanMillis.signum() <= 0) return emptyList<TimedPlacement>() to total
 
-        val confirmedMinutes = (totalSpanMillis / BigInteger.valueOf(60_000L)).toLong()
+        val confirmedMinutes = (totalSpanMillis / minuteMillis).toLong()
         val evidenceMinutes = minOf(total.toLong(), confirmedMinutes).toInt()
         if (evidenceMinutes <= 0) return emptyList<TimedPlacement>() to total
 
@@ -615,6 +670,24 @@ object PlaytimeAttributionPlanner {
                 )
             }
         return timed to (total - timed.sumOf { it.minutes })
+    }
+
+    /** A legacy row has no funded window for residual recovery; re-date it only in full. */
+    internal fun placeHistoricalSession(request: PlaytimeRecoveryRequest): List<TimedPlacement> {
+        val previous = request.previousObservationAt ?: return emptyList()
+        if (request.recoveryObservedAt <= previous) return emptyList()
+        // Evidence-ID boundaries can split one continuously confirmed interval. Recover only the
+        // fractional capacity needed to fund this session; never bridge a real gap, and leave
+        // independently sufficient whole-minute capacity untouched.
+        val usable = usableSpans(request, previous, mutableListOf())
+        val normalizedSpans = normalizeWholeMinuteCapacity(
+            usable, request.authorizedDeltaMinutes,
+        )
+        val (timed, remaining) = placeEvidence(
+            request, normalizedSpans, request.authorizedDeltaMinutes,
+            wholeMinutesPerSpan = true,
+        )
+        return if (remaining == 0) timed else emptyList()
     }
 
     private fun residualRecipe(
@@ -701,6 +774,83 @@ object PlaytimeAttributionPlanner {
             }
         }
         return merged
+    }
+
+    /**
+     * Recover only the fractional whole-minute capacity needed by this historical placement.
+     * Merges never bridge a real gap, and are attempted only while whole-minute capacity is below
+     * the requested minutes. This lets contiguous fractional remainders combine across midnight
+     * without coalescing date placements when the requested minutes are already supported.
+     */
+    private fun normalizeWholeMinuteCapacity(
+        spans: List<Span>,
+        requiredMinutes: Int,
+    ): List<Span> {
+        if (spans.isEmpty() || requiredMinutes <= 0) return spans
+        val minuteMillis = BigInteger.valueOf(60_000L)
+        val required = BigInteger.valueOf(requiredMinutes.toLong())
+        val normalized = spans.sortedBy { it.startAt }.toMutableList()
+
+        fun duration(span: Span): BigInteger =
+            BigInteger.valueOf(span.endAt).subtract(BigInteger.valueOf(span.startAt))
+
+        fun wholeMinuteCapacity(): BigInteger = normalized.fold(BigInteger.ZERO) { total, span ->
+            total + duration(span) / minuteMillis
+        }
+
+        while (wholeMinuteCapacity() < required) {
+            var bestStart = -1
+            var bestEnd = -1
+            var bestLength = Int.MAX_VALUE
+            var runStart = 0
+            while (runStart < normalized.size) {
+                var runEnd = runStart + 1
+                while (runEnd < normalized.size &&
+                    normalized[runEnd].startAt <= normalized[runEnd - 1].endAt
+                ) {
+                    runEnd++
+                }
+
+                // A shortest adjacent window whose remainders total one minute gains capacity.
+                // A window may include an already-whole-minute span: only the unspent remainders
+                // create its additional capacity, and this loop runs only while funding is short.
+                var windowEnd = runStart
+                var fractionalMillis = BigInteger.ZERO
+                for (windowStart in runStart until runEnd) {
+                    while (windowEnd < runEnd && fractionalMillis < minuteMillis) {
+                        val spanDuration = duration(normalized[windowEnd])
+                        fractionalMillis += spanDuration.remainder(minuteMillis)
+                        windowEnd++
+                    }
+                    if (fractionalMillis < minuteMillis) break
+                    val windowLast = windowEnd - 1
+                    val windowLength = windowLast - windowStart + 1
+                    if (windowLength < bestLength ||
+                        (windowLength == bestLength &&
+                            (bestStart < 0 || normalized[windowStart].startAt < normalized[bestStart].startAt))
+                    ) {
+                        bestStart = windowStart
+                        bestEnd = windowLast
+                        bestLength = windowLength
+                    }
+                    val firstDuration = duration(normalized[windowStart])
+                    fractionalMillis -= firstDuration.remainder(minuteMillis)
+                }
+                runStart = runEnd
+            }
+
+            if (bestStart < 0) break
+            val mergedSpans = normalized.subList(bestStart, bestEnd + 1).toList()
+            val merged = Span(
+                startAt = mergedSpans.first().startAt,
+                endAt = mergedSpans.maxOf { it.endAt },
+                source = mergedSpans.minBy { it.source.ordinal }.source,
+                evidenceIds = mergedSpans.flatMap { it.evidenceIds }.distinct().sorted(),
+            )
+            normalized.subList(bestStart, bestEnd + 1).clear()
+            normalized.add(bestStart, merged)
+        }
+        return normalized
     }
 
     private fun fullDateRange(

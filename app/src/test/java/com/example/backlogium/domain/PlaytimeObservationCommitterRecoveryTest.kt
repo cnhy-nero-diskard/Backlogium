@@ -81,6 +81,43 @@ class PlaytimeObservationCommitterRecoveryTest {
     // ----------------------------------------------------------------- 4.1 one shared path
 
     @Test
+    fun periodicPlacementSkipsTheBoundaryWhenEveryIncreaseHasOrdinaryTiming() = runTest {
+        val laterGame = appId + 1
+        val now = monday + 30 * minute
+        seedGame(laterGame, playtime = 100, lastSyncAt = now - 10 * minute)
+        seedGame(appId, playtime = 100, lastSyncAt = monday)
+        val polls = listOf(SessionDiffer.PollGame(appId, 131), SessionDiffer.PollGame(laterGame, 111))
+        val committer = committer()
+
+        assertFalse(committer.shouldConsultPeriodicPlacement(polls, monday, now - 1, true))
+        assertFalse(committer.shouldConsultPeriodicPlacement(polls, monday, now, true))
+        assertTrue(committer.shouldConsultPeriodicPlacement(polls, monday, now + 1, true))
+        // The later game's own ten-minute window cannot plausibly explain twelve minutes.
+        val implausible = listOf(polls.first(), SessionDiffer.PollGame(laterGame, 112))
+        assertTrue(committer.shouldConsultPeriodicPlacement(implausible, monday, now, true))
+    }
+
+    @Test
+    fun periodicPlacementConsultsAtTheBoundaryForAMixedBatchWithAnOlderRetainedWindow() = runTest {
+        val olderGame = appId + 1
+        val now = atUtc(2026, 7, 22, 0, 45)
+        val lastSync = now - 30 * minute
+        // A retained recovery observation takes precedence over the legacy per-game timestamp.
+        seedGame(olderGame, playtime = 100, lastSyncAt = lastSync)
+        val olderObservation = now - 50 * minute
+        db.playtimeRecoveryDao().upsertStateIfAccountActive(
+            GameRecoveryState(
+                account = account, appId = olderGame, baselineEpoch = 1L, highWaterMinutes = 100L,
+                lastObservationAt = olderObservation, lastObservationDate = null,
+                lastObservationZone = null, updatedAt = olderObservation,
+            ),
+        )
+        seedGame(appId, playtime = 100, lastSyncAt = lastSync)
+        val polls = listOf(SessionDiffer.PollGame(appId, 110), SessionDiffer.PollGame(olderGame, 110))
+        assertTrue(committer().shouldConsultPeriodicPlacement(polls, lastSync, now, true))
+    }
+
+    @Test
     fun concurrentPeriodicAndTargetedReadsCommitTheIncreaseOnceRegardlessOfOrder() = runTest {
         seedGame(appId, playtime = 500, lastSyncAt = monday)
         val committer = committer()
@@ -534,6 +571,12 @@ class PlaytimeObservationCommitterRecoveryTest {
         assertTrue(db.sessionDao().getAll().isEmpty())
         assertEquals(105, result.playedDeltaByAppId[appId])
         assertEquals(105, allocatedMinutes(appId))
+        val contribution = db.playtimeRecoveryDao().contributionsForGame(account, appId).single()
+        val allocations = db.playtimeRecoveryDao().activeAllocations(contribution.contributionId).sortedBy { it.date }
+        assertEquals(listOf("2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24"), allocations.map { it.date })
+        assertEquals(listOf(27L, 26L, 26L, 26L), allocations.map { it.minutes })
+        assertEquals(setOf("MULTI_DAY_ESTIMATE"), allocations.map { it.method }.toSet())
+        assertEquals(setOf(ZoneOffset.UTC.id), allocations.map { it.zone }.toSet())
     }
 
     @Test

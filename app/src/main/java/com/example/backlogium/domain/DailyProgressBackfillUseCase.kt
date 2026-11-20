@@ -41,6 +41,7 @@ internal fun dailyProgressCorrections(
     zone: ZoneId,
     timedShares: List<TimedContributionPlacement> = emptyList(),
     allocations: List<UnknownTimeAllocation> = emptyList(),
+    affectedDates: Set<String> = emptySet(),
 ): List<DailyProgressCorrection> {
     data class Totals(var minutes: Long = 0L, var goals: Long = 0L)
     val totalsByDate = mutableMapOf<String, Totals>()
@@ -85,12 +86,12 @@ internal fun dailyProgressCorrections(
     }
 
     val storedByDate = stored.associateBy { it.date }
-    val earliestActivityDate = totalsByDate.keys.minOrNull() ?: return emptyList()
+    val earliestActivityDate = totalsByDate.keys.minOrNull()
 
     // Every date canonical activity can speak to, plus stored rows after that activity begins whose
     // minutes have since been re-attributed away and must fall to zero.
     val dates = (totalsByDate.keys + storedByDate.keys)
-        .filter { it >= earliestActivityDate }
+        .filter { it in affectedDates || (earliestActivityDate != null && it >= earliestActivityDate) }
         .distinct()
         .sorted()
 

@@ -201,6 +201,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private data class DiffPreview(
         val lastSyncAt: Long,
         val diff: SessionDiffer.DiffResult,
+        val consultPlacement: Boolean,
     )
 
     private data class RawCommitResult(
@@ -388,10 +389,7 @@ class SteamSyncWorker @AssistedInject constructor(
             )
         }
         val provisionalDiff = preview.diff
-        val placementSnapshot = if (
-            provisionalDiff.playedDeltaByAppId.isNotEmpty() &&
-            CloudPresencePlaytimePlacement.shouldConsult(preview.lastSyncAt, now)
-        ) {
+        val placementSnapshot = if (preview.consultPlacement) {
             cloudPresencePlacementReader.readOrNull(CloudReadTrigger.SYNC, preview.lastSyncAt, now)
         } else {
             null
@@ -554,16 +552,15 @@ class SteamSyncWorker @AssistedInject constructor(
         now: Long,
     ): DiffPreview {
         val profile = profileDao.get()
+        val lastSyncAt = profile?.lastSyncAt ?: 0L
         val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        val diff = diffAgainst(polls, existingGames, openSessionsByAppId, lastSyncAt, now)
         return DiffPreview(
-            lastSyncAt = profile?.lastSyncAt ?: 0L,
-            diff = diffAgainst(
-                polls = polls,
-                existingGames = existingGames,
-                openSessionsByAppId = openSessionsByAppId,
-                lastSyncAt = profile?.lastSyncAt ?: 0L,
-                now = now,
+            lastSyncAt = lastSyncAt,
+            diff = diff,
+            consultPlacement = committer.shouldConsultPeriodicPlacement(
+                polls, lastSyncAt, now, diff.playedDeltaByAppId.isNotEmpty(),
             ),
         )
     }

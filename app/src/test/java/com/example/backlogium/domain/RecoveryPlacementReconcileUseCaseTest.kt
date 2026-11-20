@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -101,16 +102,41 @@ class RecoveryPlacementReconcileUseCaseTest {
     @Test
     fun lateEvidenceMoves35Of105ConservingQuantityAndDailyTotalsAcrossReplay() = runBlocking {
         val contribution = contribution()
-        val allocations = estimates27_26_26_26()
+        val allocations = listOf(
+            allocation("2026-09-01", 35L),
+            allocation("2026-09-02", 20L),
+            allocation("2026-09-03", 25L),
+            allocation("2026-09-04", 25L),
+        )
         database.playtimeRecoveryDao().commitAllocatedGraph(
             contribution = contribution,
             timed = emptyList(),
             allocations = allocations,
         )
+        val pendingContribution = contribution(from = 605L, to = 625L).copy(windowStartAt = null)
+        val pending = allocations.first().copy(
+            placementId = PlaytimeRecoveryIdentity.allocationPlacementId(
+                pendingContribution.contributionId, 1L, null,
+            ),
+            contributionId = pendingContribution.contributionId,
+            date = null,
+            minutes = 20L,
+            method = RecoveryAllocationMethods.PENDING_DATE_UNKNOWN,
+            pendingDate = true,
+            windowStartAt = null,
+        )
+        database.playtimeRecoveryDao().commitAllocatedGraph(
+            contribution = pendingContribution, timed = emptyList(), allocations = listOf(pending),
+        )
         seedDaily(allocations)
         updater.recompute(FixedTime.today(), RecomputeSource.SYNC)
-        val xpBefore = database.playerProfileDao().get()!!.totalXp
+        val profileBefore = database.playerProfileDao().get()!!
         val creditedBefore = database.sessionDao().creditedMinutesByGame().single().minutes
+        assertEquals(125, creditedBefore)
+        assertTrue(database.dailyProgressDao().getByDate("2026-09-01")!!.questMet)
+        assertFalse(database.dailyProgressDao().getByDate("2026-09-02")!!.questMet)
+        val owed = setOf(LocalDate.parse("2026-09-01"))
+        val marksBefore = progressMarksStore.update { it.copy(pendingQuestDates = owed) }
 
         val outcome = useCase.reconcileContribution(contribution, listOf(evidenceWeds35))
 
@@ -138,17 +164,21 @@ class RecoveryPlacementReconcileUseCaseTest {
         assertEquals(TimingInformedSteamPlayState.FULL, sessions.single().timingInformedSteamPlay)
         assertTrue(sessions.single().startAt == WEDS_10_00 && sessions.single().endAt == WEDS_10_35)
 
-        // Daily totals moved with the placement: 18 / 53 / 17 / 17, net zero across the window.
+        // Recovery redistributes the residual evenly; the timed share goes to Wednesday.
         assertEquals(18, daily("2026-09-01"))
         assertEquals(53, daily("2026-09-02"))
         assertEquals(17, daily("2026-09-03"))
         assertEquals(17, daily("2026-09-04"))
+        assertFalse(database.dailyProgressDao().getByDate("2026-09-01")!!.questMet)
+        assertTrue(database.dailyProgressDao().getByDate("2026-09-02")!!.questMet)
+        assertEquals(marksBefore, progressMarksStore.read())
 
-        // Steam quantity and XP are conserved: canonical credited minutes stay 105 and the level
-        // transition baseline is untouched by the normalization of daily totals.
-        assertEquals(105, database.sessionDao().creditedMinutesByGame().single().minutes)
+        // Canonical credit includes 35 timed, 70 dated estimates and 20 pending minutes once each.
+        assertEquals(pending, dao.activeAllocations(pendingContribution.contributionId).single())
         assertEquals(creditedBefore, database.sessionDao().creditedMinutesByGame().single().minutes)
-        assertEquals(xpBefore, database.playerProfileDao().get()!!.totalXp)
+        val profileAfter = database.playerProfileDao().get()!!
+        assertEquals(profileBefore.totalXp, profileAfter.totalXp)
+        assertEquals(profileBefore.level, profileAfter.level)
 
         val journal = dao.journalsForContribution(id).single()
         assertEquals(RecoveryJournalStatus.FINALIZED, journal.derivedStatus)
@@ -218,6 +248,11 @@ class RecoveryPlacementReconcileUseCaseTest {
         dao.commitAllocatedGraph(second, timed = listOf(secondShare), allocations = emptyList())
         database.dailyProgressDao().ensureDate("2026-08-31")
         database.dailyProgressDao().addMinutes("2026-08-31", 40, 40)
+        database.dailyProgressDao().ensureDate("2026-09-02")
+        database.dailyProgressDao().addMinutes("2026-09-02", 10, 0)
+        updater.recompute(FixedTime.today(), RecomputeSource.SYNC)
+        assertTrue(database.dailyProgressDao().getByDate("2026-08-31")!!.questMet)
+        assertFalse(database.dailyProgressDao().getByDate("2026-09-02")!!.questMet)
         assertTrue(dao.validateGraph(first.contributionId))
         assertTrue(dao.validateGraph(second.contributionId))
 
@@ -232,7 +267,9 @@ class RecoveryPlacementReconcileUseCaseTest {
         assertEquals(40, database.sessionDao().creditedMinutesByGame().single().minutes)
         val dailyTotals = database.dailyProgressDao().getAllOrdered().associate { it.date to it.minutesPlayed }
         assertEquals(20, dailyTotals["2026-08-31"])
-        assertEquals(20, dailyTotals["2026-09-02"])
+        assertEquals(30, dailyTotals["2026-09-02"])
+        assertFalse(database.dailyProgressDao().getByDate("2026-08-31")!!.questMet)
+        assertTrue(database.dailyProgressDao().getByDate("2026-09-02")!!.questMet)
     }
 
     @Test
