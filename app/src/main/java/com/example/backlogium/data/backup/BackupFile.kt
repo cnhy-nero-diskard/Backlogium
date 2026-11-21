@@ -17,7 +17,7 @@ import kotlinx.serialization.EncodeDefault
  */
 @Serializable
 data class BackupFile(
-    /** Legacy default decodes omitted v1 versions; the export mapper explicitly writes v2. */
+    /** Legacy default decodes omitted v1 versions; the export mapper explicitly writes v3. */
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val formatVersion: Int = 1,
     val exportedAt: String,
@@ -41,9 +41,16 @@ data class BackupFile(
      * Absent in files written before hiding existed, which correctly restores as nothing hidden.
      */
     val hiddenGames: List<BackupHiddenGame> = emptyList(),
+    /**
+     * Version 3's mandatory explicit recovery section (recover-missed-playtime). Null on a v1/v2
+     * file, where recovery is not representable; the preflight requires it non-null on v3 and
+     * rejects it under an older version marker. Kept out of the `@EncodeDefault` path because
+     * `null` must stay absent for the legacy formats.
+     */
+    val recovery: BackupRecovery? = null,
 ) {
     companion object {
-        const val CURRENT_FORMAT_VERSION = 2
+        const val CURRENT_FORMAT_VERSION = 3
     }
 }
 

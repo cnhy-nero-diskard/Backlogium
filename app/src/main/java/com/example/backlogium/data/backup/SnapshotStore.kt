@@ -2,7 +2,9 @@ package com.example.backlogium.data.backup
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -61,8 +63,11 @@ class SnapshotStore @Inject constructor(
 
     fun newestWrittenAtMillis(): Long? = list().maxOfOrNull { it.writtenAtMillis }
 
+    @OptIn(ExperimentalSerializationApi::class)
     fun write(file: BackupFile, nowMillis: Long) {
-        File(dir, "$nowMillis$EXTENSION").writeText(json.encodeToString(BackupFile.serializer(), file))
+        File(dir, "$nowMillis$EXTENSION").outputStream().use { output ->
+            json.encodeToStream(BackupFile.serializer(), file, output)
+        }
     }
 
     fun read(fileName: String): BackupFile? {

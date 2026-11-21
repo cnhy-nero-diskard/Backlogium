@@ -34,6 +34,14 @@ data class HltbReviewGame(
     val appId: Long,
     val candidates: List<HltbCandidate>,
     val matchStatus: HltbMatchState = if (candidates.isEmpty()) HltbMatchState.UNMATCHED else HltbMatchState.NEEDS_REVIEW,
+    val revision: HltbMatchRevision,
+)
+
+/** Opaque snapshot token for a match row shown to a user before confirming a resolution. */
+data class HltbMatchRevision(
+    val fetchedAt: Long,
+    val matchStatus: HltbMatchState,
+    internal val candidatesJson: String?,
 )
 
 /** Result of a user-triggered broader HLTB search (user-triggered rescue). */
@@ -83,7 +91,7 @@ class HltbRepository @Inject constructor(
     ) { rows, hiddenRows ->
         val hidden = hiddenRows.mapTo(mutableSetOf()) { it.appId }
         rows.filterNot { it.appId in hidden }
-            .map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus.toDomain()) }
+            .map { HltbReviewGame(it.appId, candidatesOf(it), it.matchStatus.toDomain(), it.toMatchRevision()) }
     }
 
     /** How many games await manual review — the Library's review badge (still review-only). */
@@ -96,7 +104,7 @@ class HltbRepository @Inject constructor(
     ) { rows, hiddenRows ->
         val hidden = hiddenRows.mapTo(mutableSetOf()) { it.appId }
         rows.filterNot { it.appId in hidden }.map { row ->
-            HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus.toDomain())
+            HltbReviewGame(row.appId, candidatesOf(row), row.matchStatus.toDomain(), row.toMatchRevision())
         }
     }
 
@@ -222,10 +230,34 @@ class HltbRepository @Inject constructor(
     }
 
     /**
-     * Resolve a review-flagged game to the [chosen] candidate: store its id and completion
-     * lengths, mark [HltbMatchStatus.RESOLVED], and drop the retained candidates.
+     * Resolve the exact actionable row version the user reviewed. A replaced candidate payload or
+     * other newer match-center state makes this stale and returns false without writing anything.
      */
-    suspend fun resolveMatch(appId: Long, chosen: HltbCandidate) {
+    suspend fun resolveMatch(
+        appId: Long,
+        chosen: HltbCandidate,
+        expectedRevision: HltbMatchRevision,
+    ): Boolean {
+        val expectedStatus = when (expectedRevision.matchStatus) {
+            HltbMatchState.NEEDS_REVIEW -> HltbMatchStatus.NEEDS_REVIEW
+            HltbMatchState.UNMATCHED -> HltbMatchStatus.UNMATCHED
+            HltbMatchState.NOT_COVERED, HltbMatchState.RESOLVED -> return false
+        }
+        return hltbDataDao.resolveMatchIfUnchanged(
+            appId = appId,
+            expectedMatchStatus = expectedStatus,
+            expectedFetchedAt = expectedRevision.fetchedAt,
+            expectedCandidatesJson = expectedRevision.candidatesJson,
+            hltbId = chosen.hltbId,
+            mainStoryMinutes = chosen.mainStoryMinutes,
+            mainExtraMinutes = chosen.mainExtraMinutes,
+            completionistMinutes = chosen.completionistMinutes,
+            allStylesMinutes = chosen.allStylesMinutes,
+        ) > 0
+    }
+
+    /** Explicit replacement path for Library's already-resolved "change match" picker. */
+    suspend fun replaceMatch(appId: Long, chosen: HltbCandidate) {
         val existing = hltbDataDao.getByAppId(appId)
         hltbDataDao.upsert(
             HltbData(
@@ -248,6 +280,12 @@ class HltbRepository @Inject constructor(
         data.candidatesJson?.let {
             runCatching { json.decodeFromString(CANDIDATE_LIST_SERIALIZER, it) }.getOrNull()
         } ?: emptyList()
+
+    private fun HltbData.toMatchRevision() = HltbMatchRevision(
+        fetchedAt = fetchedAt,
+        matchStatus = matchStatus.toDomain(),
+        candidatesJson = candidatesJson,
+    )
 
     /**
      * Look up every game in an explicit [games] selection (appId → name), unconditionally — an

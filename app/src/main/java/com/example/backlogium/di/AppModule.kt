@@ -2,7 +2,6 @@ package com.example.backlogium.di
 
 import com.example.backlogium.data.credentials.CloudCredentialsStore
 import com.example.backlogium.data.credentials.EncryptedCredentialStore
-import com.example.backlogium.data.backup.AutoSnapshotWriter
 import com.example.backlogium.data.backup.BackupExportGateway
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.DatabaseTransactionScope
@@ -22,17 +21,11 @@ import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.PresenceSessionRecorder
-import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.SessionEndOutbox
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SharedGameNotifier
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.RepositoryCloudPresencePlacementReader
-import com.example.backlogium.data.history.DefaultHistoryImportAccountGateway
-import com.example.backlogium.domain.HistoryImportAccountGateway
-import com.example.backlogium.domain.FirstRunJourneyCoordinator
-import com.example.backlogium.domain.FirstRunJourneyGateway
-import com.example.backlogium.domain.LibraryBaselineGateway
 import com.example.backlogium.domain.gapplan.CurrentPlayerCounts
 import com.example.backlogium.domain.gapplan.GapPlanSeeds
 import com.example.backlogium.data.updates.AndroidInstalledPackageInfoProvider
@@ -59,11 +52,7 @@ import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.SystemTimeProvider
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.work.setup.FirstRunSetupGateway
-import com.example.backlogium.work.setup.MonotonicClock
-import com.example.backlogium.work.setup.SetupAccountIdentity
 import com.example.backlogium.work.setup.SetupCoordinator
-import com.example.backlogium.work.setup.CredentialSetupAccountIdentity
-import com.example.backlogium.work.setup.SystemMonotonicClock
 import com.example.backlogium.work.PostPlayWorkEnqueuer
 import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
 import com.example.backlogium.work.CloudRoutineWorkCancellation
@@ -82,6 +71,16 @@ import kotlin.random.Random
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class AppModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindAchievementUnlockNotifier(impl: com.example.backlogium.data.achievement.AndroidAchievementUnlockNotifier):
+        com.example.backlogium.data.achievement.AchievementUnlockNotifier
+
+    @Binds
+    @Singleton
+    abstract fun bindAchievementWatch(impl: com.example.backlogium.data.achievement.AchievementWatchCoordinator):
+        com.example.backlogium.data.achievement.AchievementWatchLifecycle
 
     @Binds
     @Singleton
@@ -169,12 +168,6 @@ abstract class AppModule {
 
     @Binds
     @Singleton
-    abstract fun bindHistoryImportAccountGateway(
-        impl: DefaultHistoryImportAccountGateway,
-    ): HistoryImportAccountGateway
-
-    @Binds
-    @Singleton
     abstract fun bindOnboardingCredentialsGateway(
         impl: CredentialsRepository,
     ): OnboardingCredentialsGateway
@@ -183,11 +176,6 @@ abstract class AppModule {
     @Singleton
     abstract fun bindBackupExportGateway(impl: BackupRepository): BackupExportGateway
 
-    /** The worker's narrow backup seam; the implementation and protocol are unchanged. */
-    @Binds
-    @Singleton
-    abstract fun bindAutoSnapshotWriter(impl: BackupRepository): AutoSnapshotWriter
-
     @Binds
     @Singleton
     abstract fun bindAccountChangeGateway(impl: AccountChangeCoordinator): AccountChangeGateway
@@ -195,34 +183,6 @@ abstract class AppModule {
     @Binds
     @Singleton
     abstract fun bindFirstRunSetupGateway(impl: SetupCoordinator): FirstRunSetupGateway
-
-    /**
-     * The opaque account scope every setup attempt is recorded under, for the coordinator's
-     * observation fence and per-stage account ownership (stabilize-first-run-setup 3.2/3.6/3.7).
-     */
-    @Binds
-    @Singleton
-    abstract fun bindSetupAccountIdentity(
-        impl: CredentialSetupAccountIdentity,
-    ): SetupAccountIdentity
-
-    // ---------------------------------------------------------------------------------------------
-    // Milestone B — first-run journey (distinct region; keep clear of concurrent setup-agent patches)
-    // ---------------------------------------------------------------------------------------------
-
-    /** App-scope journey seam for onboarding, the Home takeover, and startup recovery (tasks 6.4/7.2). */
-    @Binds
-    @Singleton
-    abstract fun bindFirstRunJourneyGateway(
-        impl: FirstRunJourneyCoordinator,
-    ): FirstRunJourneyGateway
-
-    /** Durable import facts (baseline / receipt / pending recompute) the journey surfaces render. */
-    @Binds
-    @Singleton
-    abstract fun bindLibraryBaselineGateway(
-        impl: ProfileRepository,
-    ): LibraryBaselineGateway
 
     @Binds
     @Singleton
@@ -255,18 +215,14 @@ abstract class AppModule {
         fun provideCurrentPlayerCounts(repository: GameRepository): CurrentPlayerCounts =
             CurrentPlayerCounts(repository::currentPlayerCount)
 
-        /** Seeds for gap-plan generation. Nothing is persisted: a seed lives only as long as the
+        /**
+         * Seeds for gap-plan generation. Nothing is persisted: a seed lives only as long as the
          * result it produced, which is what makes rebuilding a reroll rather than a replay
          * (add-gap-plan-suggestions).
          */
         @Provides
         @Singleton
         fun provideGapPlanSeeds(): GapPlanSeeds = GapPlanSeeds { Random.nextLong() }
-
-        /** Monotonic time source for the foreground observation budget (injectable in tests). */
-        @Provides
-        @Singleton
-        fun provideMonotonicClock(): MonotonicClock = SystemMonotonicClock()
 
         /**
          * Process-lifetime scope for shared repository flows. A [SupervisorJob] keeps one failing

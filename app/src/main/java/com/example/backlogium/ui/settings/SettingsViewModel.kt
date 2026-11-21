@@ -254,13 +254,10 @@ data class SettingsUiState(
     val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
+    val achievementWatch: com.example.backlogium.domain.AchievementWatchPreferences = com.example.backlogium.domain.AchievementWatchPreferences(),
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
     val isImportingHistory: Boolean = false,
-    val historyBaselineReady: Boolean = false,
-    val historyRecomputePending: Boolean = false,
-    val historyRequestPending: Boolean = false,
-    val historyImportResult: com.example.backlogium.domain.HistoryImportResult? = null,
     /** The persisted rules — what "discard" returns to and what a change is measured against. */
     val savedConfig: RuleConfig = RuleConfig(),
     val draft: RuleDraft = RuleDraft.from(RuleConfig()),
@@ -359,7 +356,7 @@ class SettingsViewModel @Inject constructor(
     private val advancedExpanded = MutableStateFlow(false)
     private val previewing = MutableStateFlow(false)
     private val confirmation = MutableStateFlow<RuleChangeConfirmation?>(null)
-    private val isImportingHistory = profileRepository.historyImportInFlight
+    private val isImportingHistory = MutableStateFlow(false)
 
     private val backupBusy = MutableStateFlow(false)
     private val backupMessage = MutableStateFlow<SettingsText?>(null)
@@ -471,10 +468,6 @@ class SettingsViewModel @Inject constructor(
             lastSyncError = profile?.lastSyncError,
             isSyncing = syncing,
             historyImported = profile?.playtimeBackfilled ?: false,
-            historyBaselineReady = profileRepository.libraryBaselineReadiness() ==
-                com.example.backlogium.domain.LibraryBaselineReadiness.Confirmed,
-            historyRecomputePending = profile?.pendingHistoryRecompute == true &&
-                profile.steamId == configured?.steamId,
             savedConfig = config,
             draft = RuleDraft.from(config),
             autoSnapshotEnabled = autoSnapshot.enabled,
@@ -483,6 +476,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
         state.copy(liveMonitorEnabled = monitorEnabled)
+    }.combine(settings.achievementWatch) { state, preferences ->
+        state.copy(achievementWatch = preferences)
     }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
         state.copy(cloudPresenceRefilingApplied = applied)
     }.combine(settings.cloudPresenceRefilingReceipt) { state, receipt ->
@@ -508,11 +503,6 @@ class SettingsViewModel @Inject constructor(
         state.copy(removedSharedGames = removed)
     }.combine(hiddenState) { state, hidden ->
         state.copy(hiddenGameCount = hidden.first, nonGameCandidateCount = hidden.second)
-    }.combine(profileRepository.historyImportState) { state, operation ->
-        val completed = operation as? com.example.backlogium.domain.HistoryImportState.Completed
-        state.copy(historyImportResult = completed?.takeIf { it.accountSteamId == state.steamId }?.result)
-    }.combine(profileRepository.historyImportPendingRequest) { state, request ->
-        state.copy(historyRequestPending = request?.steamId == state.steamId && request != null)
     }
 
     private val ruleLocalState = combine(
@@ -1428,6 +1418,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { profileRepository.reconcileNow() }
     }
 
+    fun onAchievementWatchChanged(preferences: com.example.backlogium.domain.AchievementWatchPreferences) = viewModelScope.launch {
+        settings.setAchievementWatch(preferences)
+    }
+
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
@@ -1502,21 +1496,31 @@ class SettingsViewModel @Inject constructor(
     }
 
     /** Run the one-time historical-playtime import. Idempotent in the use case. */
-    fun importSteamHistory() {
-        val state = uiState.value
-        if (!state.historyBaselineReady || state.isImportingHistory || !state.configured) return
-        viewModelScope.launch { profileRepository.importSteamHistory(expectedSteamId = state.steamId) }
-    }
-
-    fun resumeHistoryImport() {
-        if (uiState.value.isImportingHistory) return
-        viewModelScope.launch { profileRepository.resumeHistoryImport() }
-    }
+    fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
 
     /** Undo a prior import so it can be run again (recovery / opt-out). */
-    fun resetHistoryImport() = viewModelScope.launch {
+    fun resetHistoryImport() = runHistoryOp {
         if (profileRepository.resetSteamHistoryImport() == PlaytimeBackfillResetResult.BLOCKED_BY_CLOUD_TRANSFER) {
             _toastMessages.tryEmit(SettingsText(R.string.settings_history_reset_cloud_refile_required))
+        }
+    }
+
+    // Serialize import/reset behind one in-flight flag so the buttons show progress and
+    // concurrent taps can't overlap.
+    private fun runHistoryOp(op: suspend () -> Unit) {
+        if (isImportingHistory.value) return
+        isImportingHistory.value = true
+        viewModelScope.launch {
+            try {
+                op()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _toastMessages.tryEmit(SettingsText(R.string.settings_history_operation_failed,
+                    listOf(error.message ?: "Try again.")))
+            } finally {
+                isImportingHistory.update { false }
+            }
         }
     }
 
@@ -1563,8 +1567,8 @@ class SettingsViewModel @Inject constructor(
         if (backupRepository.isMismatched(file)) {
             pendingMismatchImport.value = file
         } else {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
@@ -1575,11 +1579,23 @@ class SettingsViewModel @Inject constructor(
         val file = pendingMismatchImport.value ?: return
         pendingMismatchImport.value = null
         runBackupOp {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
+    }
+
+    private fun com.example.backlogium.data.backup.BackupImportSummary.toSettingsMessage(): SettingsText = when {
+        recoveryConflicts.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_conflict,
+            args = listOf(recoveryConflicts.size, recoveryConflicts.joinToString(" • ") { it.detail }),
+        )
+        recoveryWarnings.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_warning,
+            args = listOf(recoveryWarnings.size, recoveryWarnings.joinToString(" • ") { it.detail }),
+        )
+        else -> SettingsText(R.string.settings_backup_imported)
     }
 
     /** Delete one retained automatic snapshot after the user confirms the action in the UI. */

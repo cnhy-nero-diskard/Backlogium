@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -268,6 +269,37 @@ class OnboardingAsyncIdentityTest {
             configured ?: CredentialsState.Unconfigured
     }
 
+    @Test
+    fun coldLaunchRestoresHistoryDecisionButCredentialEditingDoesNotEnroll() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val configured = FakeCredentials(CredentialsState.Configured(KEY, STEAM_ID_A))
+            val firstRun = FakeSetup(com.example.backlogium.work.setup.FirstRunPhase.HISTORY)
+            val restored = OnboardingViewModel(configured, FakeBackup(), FakeAccountChange(), firstRun)
+            advanceUntilIdle()
+            assertEquals(OnboardingStep.HISTORY, restored.uiState.value.step)
+            val editing = OnboardingViewModel(configured, FakeBackup(), FakeAccountChange(), FakeSetup())
+            advanceUntilIdle()
+            assertEquals(OnboardingStep.API_KEY, editing.uiState.value.step)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test
+    fun anySetupExitAdvancesToHistoryWithoutCompletingTheFlow() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val setup = FakeSetup(com.example.backlogium.work.setup.FirstRunPhase.SETUP)
+            val vm = OnboardingViewModel(FakeCredentials(CredentialsState.Configured(KEY, STEAM_ID_A)),
+                FakeBackup(), FakeAccountChange(), setup)
+            advanceUntilIdle()
+            vm.onSetupDone()
+            advanceUntilIdle()
+            assertEquals(OnboardingStep.HISTORY, vm.uiState.value.step)
+            assertFalse(vm.uiState.value.completed)
+            assertTrue(setup.firstRunSetupActive.first())
+        } finally { Dispatchers.resetMain() }
+    }
+
     private class FakeBackup : BackupExportGateway {
         override suspend fun exportTo(uri: Uri) = Unit
     }
@@ -276,16 +308,23 @@ class OnboardingAsyncIdentityTest {
         override suspend fun apply(apiKey: String, steamId: String) = Unit
     }
 
-    private class FakeSetup : FirstRunSetupGateway {
-        private val active = MutableStateFlow(false)
+    private class FakeSetup(initial: com.example.backlogium.work.setup.FirstRunPhase? = null) : FirstRunSetupGateway {
+        private val active = MutableStateFlow(initial != null)
         override val firstRunSetupActive: Flow<Boolean> = active
+        override val firstRunPhase = MutableStateFlow(initial)
+
+        override suspend fun advanceToHistory() {
+            firstRunPhase.value = com.example.backlogium.work.setup.FirstRunPhase.HISTORY
+        }
 
         override suspend fun claimFirstRunSetup() {
             active.value = true
+            firstRunPhase.value = com.example.backlogium.work.setup.FirstRunPhase.SETUP
         }
 
         override suspend fun releaseFirstRunSetup() {
             active.value = false
+            firstRunPhase.value = null
         }
     }
 

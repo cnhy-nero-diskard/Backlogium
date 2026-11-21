@@ -18,6 +18,7 @@ import com.example.backlogium.gamification.XpState
 import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /** The only field a gamification recompute is allowed to change on a progress row. */
@@ -56,13 +57,15 @@ data class GamificationResult(
  * logic — only the I/O and the injected "today".
  *
  * Two distinct playtime inputs (kept separate, per design):
- * - **XP** is fed per-game tracked `Session.minutes` (only playtime the app tracked) plus any
- *   frozen `Game.backfillMinutes` from an opt-in Steam-history import, plus any family-shared
- *   game's own `Game.manualSharedMinutes` estimate (add-shared-game-playtime-and-filter) — the
- *   two are mutually exclusive per game (a game's source gates which one can ever be nonzero) —
- *   joined with each game's HowLongToBeat completionist length so the engine can taper XP per
- *   game. Because `gameXp` tapers over *cumulative* minutes, feeding `backfill + manual +
- *   tracked` as one total yields the correctly bounded XP with no engine change.
+ * - **XP** is fed per-game canonical credited minutes (tracked `Session.minutes` plus recovered
+ *   contribution quantity counted exactly once — recover-missed-playtime Decision 7, read through
+ *   `SessionDao.creditedMinutesByGame()`) plus any frozen `Game.backfillMinutes` from an opt-in
+ *   Steam-history import, plus any family-shared game's own `Game.manualSharedMinutes` estimate
+ *   (add-shared-game-playtime-and-filter) — the two are mutually exclusive per game (a game's
+ *   source gates which one can ever be nonzero) — joined with each game's HowLongToBeat
+ *   completionist length so the engine can taper XP per game. Because `gameXp` tapers over
+ *   *cumulative* minutes, feeding `backfill + manual + credited` as one total yields the correctly
+ *   bounded XP with no engine change.
  * - **Goal progress** is fed each game's total `playtimeForever` and is derived in the UI
  *   layer via [com.example.backlogium.gamification.Gamification.goalProgress].
  *
@@ -93,10 +96,6 @@ class GamificationUpdater @Inject constructor(
     /**
      * Recompute and persist all derived gamification values. [source] is required so every write
      * declares whether the resulting transition was earned progress or a baseline reset.
-     *
-     * [config] is threaded through to [persist] as the refresh config: when a pending-import
-     * marker is held, the persisted values are recomputed against the *current committed raw
-     * state* under this same config rather than trusting a result computed earlier.
      */
     suspend fun recompute(
         today: LocalDate,
@@ -104,7 +103,7 @@ class GamificationUpdater @Inject constructor(
         config: RuleConfig = RuleConfig(),
         configVersion: Long = 0L,
     ) {
-        persist(compute(today, config), source, configVersion, refreshConfig = config)
+        persist(compute(today, config), source, configVersion)
     }
 
     /**
@@ -116,6 +115,7 @@ class GamificationUpdater @Inject constructor(
         today: LocalDate,
         config: RuleConfig = RuleConfig(),
         hiddenAppIds: Set<Long>? = null,
+        excludeEarned: RecoveryEarnedInputs = RecoveryEarnedInputs(),
     ): GamificationResult {
         // A rule value stored before RuleField gained its ceilings bypasses Settings validation on
         // every background recompute — opening Settings is not required for a sync — so the raw
@@ -131,10 +131,33 @@ class GamificationUpdater @Inject constructor(
         val hidden = hiddenAppIds ?: hiddenGameDao.hiddenAppIds().toSet()
         // XP/level from each game's cumulative minutes = frozen backfill offset (0 unless the
         // player opted in to importing Steam history) + a family-shared game's manual estimate
-        // (0 for an owned game) + tracked session minutes, tapered against that game's HLTB
-        // completionist average. Games with no HLTB row resolve to null -> flat fallback. The
-        // union covers backfilled/manually-estimated games with no tracked sessions.
-        val trackedByGame = sessionDao.trackedMinutesByGame().associate { it.appId to it.minutes }
+        // (0 for an owned game) + canonical credited minutes (recover-missed-playtime Decision 7:
+        // funded recovery contributions count once, and each session contributes only its unlinked
+        // legacy remainder, so a recovered bucket is never double-counted), tapered against that
+        // game's HLTB completionist average. Games with no HLTB row resolve to null -> flat
+        // fallback. The union covers backfilled/manually-estimated games with no tracked sessions.
+        if (excludeEarned.contributions.isNotEmpty()) {
+            val activeContributions = sessionDao.observeActiveRecoveryContributions().first()
+                .associateBy { it.contributionId }
+            for (snapshot in excludeEarned.contributions) {
+                val current = activeContributions[snapshot.identity()]
+                    ?: error("fresh contribution ${snapshot.identity()} is no longer active")
+                require(
+                    current.appId == snapshot.appId &&
+                        current.baselineEpoch == snapshot.baselineEpoch &&
+                        current.fromMinutes == snapshot.fromMinutes &&
+                        current.toMinutes == snapshot.toMinutes &&
+                        current.revision == snapshot.revision &&
+                        current.authorizedMinutes == snapshot.authorizedMinutes,
+                ) { "fresh contribution snapshot no longer matches ${snapshot.identity()}" }
+            }
+        }
+        val allCreditedByGame = sessionDao.creditedMinutesByGame()
+            .associate { it.appId to it.minutes.toLong() }
+        // A mixed corrective pass subtracts only the exact fresh contribution ranges recorded in
+        // its journal. Existing/past credit for the same game remains in the baseline.
+        val trackedByGame = recoveryCorrectiveCreditedByGame(allCreditedByGame, excludeEarned)
+            .mapValues { (_, minutes) -> minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
         val allGames = gameDao.getAll()
         val backfillByGame = allGames.associate { it.appId to it.backfillMinutes }
         val manualByGame = allGames.associate { it.appId to it.manualSharedMinutes }
@@ -162,7 +185,11 @@ class GamificationUpdater @Inject constructor(
         // achievements are excluded here and would contribute 0 XP anyway.
         // Achievements of a hidden game are excluded for the same reason its minutes are: the
         // level has to be explicable from the library the player can see.
-        val achievements = achievementDao.getAllUnlocked().filterNot { it.appId in hidden }.map { row ->
+        val achievementExclusions = excludeEarned.achievementKeys
+        val achievements = achievementDao.getAllUnlocked()
+            .filterNot { it.appId in hidden }
+            .filterNot { RecoveryAchievementKey(it.appId, it.apiName) in achievementExclusions }
+            .map { row ->
             AchievementInput(
                 id = row.apiName,
                 unlocked = row.unlocked,
@@ -176,7 +203,8 @@ class GamificationUpdater @Inject constructor(
         // day that happened, and a bookkeeping preference expressed today does not unmake it. Going
         // forward, SteamSyncWorker keeps a hidden game out of daily attribution, so the divergence
         // does not grow (add-hidden-games design decision 3).
-        val days = dailyProgressDao.getAllOrdered()
+        val storedDays = dailyProgressDao.getAllOrdered()
+        val days = recoveryCorrectiveDailyProgress(storedDays, excludeEarned)
         val daysByDate = days.associateBy { LocalDate.parse(it.date) }
         val changedDays = mutableListOf<QuestStatusUpdate>()
         // The pure engine folds by list order, so the caller must make calendar order explicit. Do
@@ -234,39 +262,9 @@ class GamificationUpdater @Inject constructor(
     }
 
     /**
-     * The presentation source a persist must use for the profile currently stored.
-     *
-     * Both overrides re-define the delivery baseline instead of emitting earned events, because the
-     * transitions they describe were not earned through play: an #114 overflow correction, or the
-     * unfinished recomputation behind a raw import/merge whose marker this persist is about to
-     * clear. The pending-import provenance picks BACKFILL (explicit history import) vs RESTORE
-     * (backup merge); legacy markers with no provenance could only have come from a backup merge.
-     */
-    private fun effectiveRecomputeSource(
-        previousProfile: PlayerProfile?,
-        declaredSource: RecomputeSource,
-    ): RecomputeSource = when {
-        previousProfile?.pendingXpIntegrityCorrection == true -> RecomputeSource.XP_INTEGRITY_CORRECTION
-        previousProfile?.pendingImportRecompute == true ->
-            if (previousProfile.pendingImportRecomputeSource == RecomputeSource.BACKFILL.name) {
-                RecomputeSource.BACKFILL
-            } else {
-                RecomputeSource.RESTORE
-            }
-        else -> declaredSource
-    }
-
-    /**
      * Write a [compute] result back, then update progress-event delivery state. [source] has no
      * default deliberately: a future derived-value writer cannot compile without declaring why
      * the values changed.
-     *
-     * @param refreshConfig the [RuleConfig] the result was computed under. When a pending-import
-     *   marker is held, the caller's precomputed [result] may describe stale committed raw state
-     *   (e.g. computed before the import's raw commit), so the protocol recomputes fresh from the
-     *   current committed raw under this same config before writing, and **without** it the write
-     *   is refused: a stale or incomplete derived write must never clear pending recovery. The
-     *   caller's config is never ignored — it stays the appropriate rule candidate for the write.
      *
      * The whole protocol — resolve prior pending transition, capture previous state, write the
      * pending-transition write-ahead record, perform the Room writes, finalize the marks, clear the
@@ -279,10 +277,10 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long = 0L,
-        refreshConfig: RuleConfig? = null,
+        operationId: String? = null,
     ) {
         transitionCoordinator.withTransition {
-            persistWithinProtocol(result, source, configVersion, refreshConfig)
+            persistWithinProtocol(result, source, configVersion, operationId)
         }
     }
 
@@ -300,7 +298,7 @@ class GamificationUpdater @Inject constructor(
         result: GamificationResult,
         source: RecomputeSource,
         configVersion: Long,
-        refreshConfig: RuleConfig?,
+        operationId: String?,
     ) {
         val today = result.evaluationDate
 
@@ -311,31 +309,16 @@ class GamificationUpdater @Inject constructor(
         resolvePendingTransitionWithinProtocol(progressMarksStore, playerProfileDao, dailyProgressDao)
 
         val previousProfile = playerProfileDao.get()
-
-        // A raw transaction whose recomputation never finished is the pending-import marker
-        // (stabilize-first-run-setup, task 5.6). Whichever derived writer runs next — a periodic
-        // SYNC, a RULE_CHANGE, a visibility change — is the one that would otherwise clear it, so:
-        // 1. it must present the transition administratively (BACKFILL for an explicit history
-        //    import, RESTORE for a backup merge / legacy marker) rather than announce imported
-        //    historical XP as newly earned play; and
-        // 2. it must never write a possibly-STALE result computed before the raw commit landed.
-        //    The caller's own rule candidate ([refreshConfig]) stays the appropriate config, but
-        //    the values are recomputed fresh against the current committed raw state; without a
-        //    refresh config the write is refused outright (returning with nothing written, the
-        //    marker untouched) so no stale derived write can ever consume pending recovery.
-        var writeResult = result
-        if (previousProfile?.pendingImportRecompute == true) {
-            val refresh = refreshConfig
-            if (refresh == null) return
-            writeResult = compute(today, refresh)
-        }
-
         // A device migrated with a totalXp the #114 overflow bug may have wrapped to 0
         // (PlayerProfile.pendingXpIntegrityCorrection) gets its first post-fix recompute treated
         // as a correction regardless of the caller's own source — the caller has no way to know
         // this device is affected, and the caller-declared source must not smuggle a wrapped
         // total's correction through as earned progress.
-        val effectiveSource = effectiveRecomputeSource(previousProfile, source)
+        val effectiveSource = if (previousProfile?.pendingXpIntegrityCorrection == true) {
+            RecomputeSource.XP_INTEGRITY_CORRECTION
+        } else {
+            source
+        }
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
         val previousState = previousProfile?.let {
             ProgressState(
@@ -354,31 +337,19 @@ class GamificationUpdater @Inject constructor(
                         previousStreak = previousState.currentStreak,
                         previousTodayQuestMet = previousState.todayQuestMet,
                         evaluationDate = today,
+                        operationId = operationId,
                     ),
                 )
             }
         }
 
         try {
-            writeAndFinalize(writeResult, effectiveSource, previousState, previousProfile, today, configVersion)
-            // The marker and its provenance survive the Room write, and are cleared as the LAST
-            // step of a successful whole-protocol finalization (after the marks finalize): a crash
-            // between the Room write and this clear keeps the BACKFILL/RESTORE provenance recovery
-            // needs. The comparison makes this clear incapable of erasing a newer marker another
-            // raw transaction may have written while this protocol ran.
-            if (previousProfile?.pendingImportRecompute == true) {
-                playerProfileDao.clearPendingImportRecomputeIfMatches(
-                    source = previousProfile.pendingImportRecomputeSource,
-                    steamId = previousProfile.pendingImportRecomputeSteamId,
-                    requestId = previousProfile.pendingImportRecomputeRequestId,
-                )
-            }
+            writeAndFinalize(result, effectiveSource, previousState, previousProfile, today, configVersion)
         } catch (t: Throwable) {
             // A pending transition suppresses event derivation by design, so returning from this
             // call with our own record still in place would freeze delivery for the rest of the
             // process — the WAL exists to survive process death, not to outlive a caught failure.
             // Resolve it against whatever Room actually committed, then let the failure propagate.
-            // The pending-import marker is intentionally NOT cleared on this path.
             withContext(NonCancellable) {
                 runCatching {
                     resolvePendingTransitionWithinProtocol(

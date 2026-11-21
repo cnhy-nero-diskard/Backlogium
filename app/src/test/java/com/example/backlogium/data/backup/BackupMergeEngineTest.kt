@@ -34,7 +34,6 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.GamificationUpdater
-import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.flow.Flow
@@ -42,7 +41,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
@@ -163,81 +161,6 @@ class BackupMergeEngineTest {
 
         assertEquals(1_234L, stored.getValue(620L).fetchedAt)
         assertEquals(HltbDataOrigin.MANUAL, stored.getValue(620L).origin)
-    }
-
-    @Test
-    fun mixedRestoreOverPendingBackfillKeepsBackfillIdentityInTheRawTransaction() = runTest {
-        // An explicit history import's recomputation is pending (BACKFILL provenance + account +
-        // request). A backup merge's raw commit must NOT clobber that identity with RESTORE — the
-        // existing marker already signals unfinished recomputation, and recovery will recompute the
-        // merged current raw administratively. Observed mid-protocol (raw commit only, before any
-        // recompute) so the transaction's own write is what is under test.
-        val harness = newEngine(
-            profile = PlayerProfile(
-                steamId = "s",
-                pendingImportRecompute = true,
-                pendingImportRecomputeSource = RecomputeSource.BACKFILL.name,
-                pendingImportRecomputeSteamId = "s",
-                pendingImportRecomputeRequestId = "req-1",
-            ),
-        )
-        val file = baseFile(
-            games = listOf(
-                BackupGame(appId = 620L, name = "Portal 2", isGoal = false, backfillMinutes = 10),
-            ),
-        )
-
-        harness.engine.mergeRawWithLockHeld(file)
-
-        val profile = harness.profileDao.get()!!
-        assertTrue(profile.pendingImportRecompute)
-        assertEquals(RecomputeSource.BACKFILL.name, profile.pendingImportRecomputeSource)
-        assertEquals("s", profile.pendingImportRecomputeSteamId)
-        assertEquals("req-1", profile.pendingImportRecomputeRequestId)
-    }
-
-    @Test
-    fun mergeWithoutPendingMarkerWritesRestoreProvenance() = runTest {
-        // Control: a marker-less merge still writes RESTORE (backup) provenance as before.
-        val harness = newEngine(profile = PlayerProfile(steamId = "s", playtimeBackfilled = true))
-        val file = baseFile()
-
-        harness.engine.mergeRawWithLockHeld(file)
-
-        val profile = harness.profileDao.get()!!
-        assertTrue(profile.pendingImportRecompute)
-        assertEquals(RecomputeSource.RESTORE.name, profile.pendingImportRecomputeSource)
-        assertNull(profile.pendingImportRecomputeSteamId)
-        assertNull(profile.pendingImportRecomputeRequestId)
-    }
-
-    @Test
-    fun mixedRestoreRecomputeResolvesAdministrativelyAndClearsViaBackfillMatch() = runTest {
-        // Full merge over a pending BACKFILL: the whole-protocol recompute presents the transition
-        // with the preserved BACKFILL source (administrative, silent) and clears the marker via the
-        // match-guarded finalizer — never announcing imported XP as newly earned.
-        val harness = newEngine(
-            profile = PlayerProfile(
-                steamId = "s",
-                pendingImportRecompute = true,
-                pendingImportRecomputeSource = RecomputeSource.BACKFILL.name,
-                pendingImportRecomputeSteamId = "s",
-                pendingImportRecomputeRequestId = "req-1",
-            ),
-        )
-        val file = baseFile(
-            games = listOf(
-                BackupGame(appId = 620L, name = "Portal 2", isGoal = false, backfillMinutes = 10),
-            ),
-        )
-
-        harness.engine.merge(file, RuleConfig())
-
-        val profile = harness.profileDao.get()!!
-        assertFalse(profile.pendingImportRecompute)
-        assertNull(profile.pendingImportRecomputeSource)
-        assertNull(profile.pendingImportRecomputeSteamId)
-        assertNull(profile.pendingImportRecomputeRequestId)
     }
 
     @Test
@@ -1325,10 +1248,19 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
 
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff && !it.open })
+    override fun observeAllOpenSessions(): Flow<List<Session>> = flowOf(store.filter { it.open })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
+    override suspend fun sessionsByIds(sessionIds: List<Long>): List<Session> =
+        store.filter { it.id in sessionIds.toSet() }
+    override suspend fun sessionsBetweenSnapshot(startInclusive: Long, endExclusive: Long): List<Session> =
+        store.filter { it.startAt >= startInclusive && it.startAt < endExclusive }
+    override suspend fun closedSessionsSinceSnapshot(cutoff: Long): List<Session> =
+        store.filter { it.startAt >= cutoff && !it.open }
+    override suspend fun allOpenSessionsSnapshot(): List<Session> = store.filter { it.open }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override suspend fun earliestVisibleSessionStartSnapshot(): Long? = store.minOfOrNull { it.startAt }
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )
@@ -1361,6 +1293,50 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeActiveRecoveryAllocations(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryAllocationsSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> =
+        emptyList()
+    override fun observeActiveRecoveryTimedPlacements(): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryTimedPlacementsSnapshot(): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> =
+        emptyList()
+    override fun observeRecoveryProjectionInvalidation(): Flow<Long> = flowOf(0L)
+    override suspend fun hiddenAppIdsSnapshot(): List<Long> = emptyList()
+    override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryContributions(): Flow<List<com.example.backlogium.data.local.entity.PlaytimeContribution>> =
+        flowOf(emptyList())
+    override fun observeDatedAllocationsBetween(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun datedAllocationsBetweenSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> = emptyList()
+    override fun observeTimedPlacementsByDate(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun timedPlacementsByDateSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>> =
+        flowOf(emptyList())
+    override suspend fun hostSessionsForDatesSnapshot(fromDate: String, toDateExclusive: String): List<Session> =
+        emptyList()
+    override fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeTimedPlacementsForSessionsSnapshot(
+        sessionIds: List<Long>,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeEarliestDatedAllocationDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestDatedAllocationDateSnapshot(): String? = null
+    override fun observeEarliestTimedShareDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestTimedShareDateSnapshot(): String? = null
+    override suspend fun activeRecoveryRecipesSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe> =
+        emptyList()
+    override suspend fun activeRecoveryContributionsSnapshot(): List<com.example.backlogium.data.local.entity.PlaytimeContribution> =
+        emptyList()
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {
@@ -1385,6 +1361,14 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
         store[date] = day.copy(
             minutesPlayed = minutesPlayed,
             goalMinutesPlayed = goalMinutesPlayed,
+        )
+    }
+
+    override suspend fun applyMinutesDelta(date: String, minutesDelta: Int, goalDelta: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(
+            minutesPlayed = day.minutesPlayed + minutesDelta,
+            goalMinutesPlayed = day.goalMinutesPlayed + goalDelta,
         )
     }
 
@@ -1422,6 +1406,17 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
     override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun getMatchCenter(): List<HltbData> = emptyList()
     override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+    override suspend fun resolveMatchIfUnchanged(
+        appId: Long,
+        expectedMatchStatus: HltbMatchStatus,
+        expectedFetchedAt: Long,
+        expectedCandidatesJson: String?,
+        hltbId: Long,
+        mainStoryMinutes: Int?,
+        mainExtraMinutes: Int?,
+        completionistMinutes: Int?,
+        allStylesMinutes: Int?,
+    ): Int = 0
 }
 
 private class FakeAchievementDao(private val store: MutableList<Achievement>) : AchievementDao {
@@ -1504,15 +1499,7 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
     }
 
     override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) {
-        profile = (profile ?: PlayerProfile()).copy(
-            totalXp = totalXp,
-            level = level,
-            currentStreak = currentStreak,
-            longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
-            gamificationConfigVersion = gamificationConfigVersion,
-            // The pending import marker is cleared by clearPendingImportRecomputeIfMatches only.
-            pendingXpIntegrityCorrection = false,
-        )
+        profile = (profile ?: PlayerProfile()).copy(totalXp = totalXp, level = level, currentStreak = currentStreak, longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak), gamificationConfigVersion = gamificationConfigVersion, pendingImportRecompute = false, pendingXpIntegrityCorrection = false)
     }
 
     override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) {
@@ -1523,39 +1510,13 @@ private class FakePlayerProfileDao(initial: PlayerProfile?) : PlayerProfileDao {
         profile = (profile ?: PlayerProfile()).copy(lastSyncError = message)
     }
 
-    override suspend fun markPendingImportRecompute(source: String, steamId: String?, requestId: String?) {
-        profile = (profile ?: PlayerProfile()).copy(
-            pendingImportRecompute = true,
-            pendingImportRecomputeSource = source,
-            pendingImportRecomputeSteamId = steamId,
-            pendingImportRecomputeRequestId = requestId,
-        )
-    }
-
-    override suspend fun clearPendingImportRecomputeIfMatches(source: String?, steamId: String?, requestId: String?) {
-        val current = profile ?: return
-        if (!current.pendingImportRecompute) return
-        if (current.pendingImportRecomputeSource != source) return
-        if (current.pendingImportRecomputeSteamId != steamId) return
-        if (current.pendingImportRecomputeRequestId != requestId) return
-        profile = current.copy(
-            pendingImportRecompute = false,
-            pendingImportRecomputeSource = null,
-            pendingImportRecomputeSteamId = null,
-            pendingImportRecomputeRequestId = null,
-        )
+    override suspend fun markPendingImportRecompute() {
+        profile = (profile ?: PlayerProfile()).copy(pendingImportRecompute = true)
     }
 
     override suspend fun raiseLongestStreak(longestStreak: Int) {
         profile = (profile ?: PlayerProfile()).copy(
             longestStreak = maxOf(profile?.longestStreak ?: 0, longestStreak),
-        )
-    }
-
-    override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) {
-        profile = (profile ?: PlayerProfile()).copy(
-            confirmedLibrarySteamId = steamId,
-            confirmedLibraryAt = confirmedAt,
         )
     }
 }

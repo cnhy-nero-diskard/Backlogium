@@ -5,7 +5,9 @@
 Defines the Settings destination: the Steam account section, sync section, editable
 gamification rule configuration (and the retroactive-recompute behavior those edits
 trigger), and the data-management (history import) controls.
+
 ## Requirements
+
 ### Requirement: Settings uses task-oriented groups
 The top-level Settings destination SHALL present exactly four task-oriented groups: Account & sync, Gameplay, Data & privacy, and Advanced & diagnostics. Each group SHALL open a pushed Settings sub-destination and SHALL NOT add another top-level navigation item.
 
@@ -632,10 +634,12 @@ When the player opts to date pre-Backlogium imported play, Settings SHALL ask th
 Stating the limit is load-bearing rather than polite. The natural expectation of an action that recovers a month of more accurate history is that progression improves, and it will not — only its placement in time and its tracked/imported classification do. An action that lets that expectation stand would read as broken when it worked correctly.
 
 #### Scenario: Offered while configured
+
 - **WHEN** the cloud section is shown while configured and the action has not been run
 - **THEN** the action is offered, with its effect, limit, available beginning, selected range and optional imported-play transfer explained
 
 #### Scenario: Not offered while unconfigured
+
 - **WHEN** no cloud endpoint is configured
 - **THEN** the action is not offered
 
@@ -659,14 +663,17 @@ Stating the limit is load-bearing rather than polite. The natural expectation of
 - **THEN** the selected range may still re-date existing sessions without creating new owned-game minutes from the poller
 
 #### Scenario: Completed state
+
 - **WHEN** the action has completed
 - **THEN** the section reflects that it has run, shows its effective applied range and optional pre-data cutoff, and offers its reversal instead
 
 #### Scenario: The limit is stated before it runs
+
 - **WHEN** the action is presented
 - **THEN** it states that experience, levels and total playtime are unchanged by it
 
 #### Scenario: Outcome reported
+
 - **WHEN** the action completes, even if no session changed
 - **THEN** the section reports the selected and actually covered range, how many existing sessions were re-filed, how many imported minutes became dated tracked sessions, how many remain imported, and how many dates were affected
 
@@ -675,12 +682,19 @@ Stating the limit is load-bearing rather than polite. The natural expectation of
 - **THEN** Settings shows progress and offers an explicit retry or continue action without claiming that the re-file was applied
 
 #### Scenario: Reversal returns the previous attribution
+
 - **WHEN** the user reverses a completed re-filing
 - **THEN** original session attribution and transferred imported balances return to their pre-action classification without erasing later ordinary play, and the action is offered again with a new start-date/cutoff choice
 
 #### Scenario: Resetting the Steam-history import while a transfer is applied
 - **WHEN** the player requests the separate Steam-history import reset before reversing a cloud pre-data transfer
 - **THEN** Settings explains that they must undo the cloud re-file first instead of silently losing or double-counting transferred minutes
+
+#### Scenario: Resuming does not silently select another operation
+- **WHEN** an interrupted historical acquisition or apply is resumed
+- **THEN** Settings presents the retained range and optional cutoff rather than silently starting a new range or changing the imported-play choice
+
+
 
 ### Requirement: Disclose original transition-only timing estimates
 
@@ -737,3 +751,29 @@ While the reader is configured, Settings SHALL offer Automatic as the initial ro
 - **WHEN** no cloud reader is configured
 - **THEN** no routine frequency control or cloud error is shown
 - **AND** Settings remains usable offline from local state
+
+### Requirement: Achievement watching and unlock alerts are independently configurable
+Settings SHALL expose watch enablement, a 60-second default/30-second alternative, and independent unlock-alert enablement. Watching SHALL require the separate opted-in live monitor. Disabling alerts SHALL retain achievement persistence; disabling watching SHALL cancel its traffic. Settings SHALL explain best-effort monitoring and slower failure backoff.
+
+#### Scenario: Watch enabled without live monitor
+- **WHEN** the watch preference is enabled but live monitoring is off
+- **THEN** no watch requests are scheduled and the prerequisite is explained
+
+#### Scenario: Alert opt-out
+- **WHEN** the player disables unlock alerts while leaving watching enabled
+- **THEN** new achievement observations persist without feedback
+
+#### Scenario: Cadence selection
+- **WHEN** the player selects thirty seconds
+- **THEN** subsequent eligible ticks use that interval without immediate catch-up requests
+
+### Requirement: Full achievement refresh explains its scope
+Settings SHALL explain that full achievement refresh reconciles eligible played and family-shared games, while unplayed owned games load their achievement lists when opened. It SHALL NOT imply that refresh downloads every untouched library game's catalogue. Achievement browsing SHALL remain available with the live monitor, watch, or unlock alerts disabled.
+
+#### Scenario: Large unplayed backlog
+- **WHEN** Settings offers full achievement refresh to a player with unplayed owned games
+- **THEN** its explanation makes the eligible-game scope and on-demand browsing clear
+
+#### Scenario: Monitoring disabled
+- **WHEN** the user disables Live monitor and opens an unplayed game's detail
+- **THEN** catalogue browsing remains available without enabling monitoring or alerts

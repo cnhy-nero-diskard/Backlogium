@@ -92,6 +92,8 @@ data class LibraryGame(
      * owned game (add-shared-game-playtime-and-filter).
      */
     val manualSharedMinutes: Int = 0,
+    /** First recorded observation by Backlogium; baseline and legacy games remain undated. */
+    val firstSeenAt: Long? = null,
 )
 
 /** Read/write access to the game library, exposing domain models as observable [Flow]s. */
@@ -237,6 +239,7 @@ private fun Game.toDomain(
     lastPlayedAt = lastPlayedAt,
     source = source,
     manualSharedMinutes = manualSharedMinutes,
+    firstSeenAt = firstSeenAt,
 )
 
 /** Storage → domain status mapping; a missing row is an explicit lack of dataset coverage. */

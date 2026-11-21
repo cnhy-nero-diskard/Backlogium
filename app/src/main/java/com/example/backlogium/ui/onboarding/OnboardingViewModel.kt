@@ -4,30 +4,21 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.backup.BackupExportGateway
-import com.example.backlogium.data.history.HistoryImportRequestRecord
 import com.example.backlogium.data.repo.AccountChangeGateway
-import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsSaveResult
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.OnboardingCredentialsGateway
 import com.example.backlogium.data.repo.SteamIdResolution
-import com.example.backlogium.domain.FirstRunJourney
-import com.example.backlogium.domain.FirstRunJourneyGateway
-import com.example.backlogium.domain.FirstRunPhase
-import com.example.backlogium.domain.HistoryImportResult
-import com.example.backlogium.domain.HistoryImportState
 import com.example.backlogium.work.setup.FirstRunSetupGateway
+import com.example.backlogium.work.setup.FirstRunPhase
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -52,13 +43,7 @@ enum class OnboardingStep(val credentialStepNumber: Int?) {
 
     /** The staged setup checklist. Presented only on a first configuration. */
     SETUP(null),
-
-    /**
-     * The optional one-time Steam-history import decision, reached from completed/continued/declined
-     * setup. Past the credential flow entirely; not a credential step. Rendered by the parent
-     * surface; the ViewModel owns the durable phase transitions behind it.
-     */
-    HISTORY_CHOICE(null),
+    HISTORY(null),
     ;
 
     companion object {
@@ -102,12 +87,6 @@ sealed interface VerifyState {
 
 data class OnboardingUiState(
     val step: OnboardingStep = OnboardingStep.API_KEY,
-    /**
-     * True until the flow has resolved whether this open resumes an owed first-run journey. The
-     * parent surface keeps a loading treatment up while this is true so an unresolved resume can
-     * never flash the credential steps.
-     */
-    val loading: Boolean = true,
     val apiKey: String = "",
     /** True when editing an already-configured account: the key may be left blank to keep it. */
     val hasExistingKey: Boolean = false,
@@ -158,33 +137,18 @@ class OnboardingViewModel @Inject constructor(
     private val credentials: OnboardingCredentialsGateway,
     private val backupRepository: BackupExportGateway,
     private val accountChange: AccountChangeGateway,
-    private val journey: FirstRunJourneyGateway,
+    private val setup: FirstRunSetupGateway,
 ) : ViewModel() {
-
-    /**
-     * Legacy test seam: the pre-phase constructor shape used by JVM ViewModel tests. Production
-     * Hilt always injects [FirstRunJourneyGateway]; this wraps the old takeover flag so the
-     * credential-flow tests keep running against the same surface logic.
-     */
-    constructor(
-        credentials: OnboardingCredentialsGateway,
-        backupRepository: BackupExportGateway,
-        accountChange: AccountChangeGateway,
-        setup: FirstRunSetupGateway,
-    ) : this(credentials, backupRepository, accountChange, LegacyFirstRunJourneyGateway(credentials, setup))
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
 
-    private val _historyChoice = MutableStateFlow(HistoryChoiceUiState())
-    val historyChoice: StateFlow<HistoryChoiceUiState> = _historyChoice.asStateFlow()
-
     private var pendingAccountChange: PendingAccountChange? = null
 
     /**
-     * Whether this flow ends in setup / the history decision. Fixed from the credential state the
-     * flow *opened* with, not the live one: saving credentials makes the account configured, and
-     * re-reading it afterwards would conclude that every first run was an edit.
+     * Whether this flow ends in setup. Fixed from the credential state the flow *opened* with, not
+     * the live one: saving credentials makes the account configured, and re-reading it afterwards
+     * would conclude that every first run was an edit.
      *
      * An already-configured user reopening the flow from Settings to change credentials gets the
      * credential steps and nothing more — their new credentials are verified, but setup is not
@@ -204,60 +168,29 @@ class OnboardingViewModel @Inject constructor(
     private var credentialGeneration = 0L
 
     init {
-        // Keep the history-choice projection honest against the shared import state, fenced to the
-        // active account (a stale-account Running/Completed must never render as this account's).
-        viewModelScope.launch { journey.historyImportState.collect(::refreshHistoryChoice) }
-        viewModelScope.launch { resolveResumePhase() }
-    }
-
-    /**
-     * Decide the flow's opening step from the durable journey, not the credential store alone.
-     * Awaiting [FirstRunJourneyGateway.resolvedJourney] (which runs the one-way legacy migration)
-     * means a cold launch on an owed SETUP/HISTORY_CHOICE phase resumes exactly there — a
-     * configured account mid-journey never re-sees credential entry.
-     */
-    private suspend fun resolveResumePhase() {
-        val current = credentials.currentCredentials()
-        val resolved = journey.resolvedJourney()
-        val owed = resolved != null && resolved.owed
-        presentsSetup = when (current) {
-            is CredentialsState.Configured -> owed
-            else -> true
-        }
-        _uiState.update { state ->
-            val resumeStep = when (resolved?.phase) {
-                FirstRunPhase.SETUP -> OnboardingStep.SETUP
-                FirstRunPhase.HISTORY_CHOICE, FirstRunPhase.IMPORT_REQUESTED ->
-                    OnboardingStep.HISTORY_CHOICE
-                else -> null
+        viewModelScope.launch {
+            val current = credentials.currentCredentials()
+            if (current is CredentialsState.Configured) {
+                // Configured *and* still owing setup means this flow is a first run resumed after
+                // the process died on the setup step — not an edit. Sending it back to step 1 would
+                // ask a user who has already verified their credentials to re-enter them.
+                val phase = setup.firstRunPhase.first()
+                val resumingFirstRun = phase != null
+                presentsSetup = resumingFirstRun
+                _uiState.update {
+                    it.copy(
+                        hasExistingKey = true,
+                        steamIdInput = current.steamId,
+                        step = when (phase) {
+                            FirstRunPhase.SETUP -> OnboardingStep.SETUP
+                            FirstRunPhase.HISTORY -> OnboardingStep.HISTORY
+                            null -> it.step
+                        },
+                    )
+                }
+            } else {
+                presentsSetup = true
             }
-            state.copy(
-                hasExistingKey = current != null,
-                steamIdInput = current?.steamId.orEmpty(),
-                step = resumeStep ?: state.step,
-                loading = false,
-            )
-        }
-        refreshHistoryChoice(journey.historyImportState.first())
-    }
-
-    private suspend fun refreshHistoryChoice(state: HistoryImportState) {
-        val active = journey.activeAccountSteamId()
-        val busy = state is HistoryImportState.Running && state.accountSteamId == active
-        val result = (state as? HistoryImportState.Completed)
-            ?.takeIf { it.accountSteamId == active }
-            ?.result
-        val pendingRecompute = result == HistoryImportResult.PendingRecompute ||
-            (active != null && journey.recomputePending(active))
-        val failure = (result as? HistoryImportResult.Failed)?.reason
-        _historyChoice.update {
-            it.copy(
-                baselineReady = journey.baselineConfirmed(),
-                imported = journey.importBackfilled(),
-                busy = busy,
-                recomputePending = pendingRecompute,
-                failure = failure,
-            )
         }
     }
 
@@ -396,7 +329,7 @@ class OnboardingViewModel @Inject constructor(
     private suspend fun persist(apiKey: String, steamId: String) {
         _uiState.update { it.copy(saving = true) }
         when (val result = credentials.save(apiKey = apiKey, steamId = steamId)) {
-            CredentialsSaveResult.Saved -> moveOnFromCredentials(steamId)
+            CredentialsSaveResult.Saved -> moveOnFromCredentials()
 
             is CredentialsSaveResult.IdentityChanged -> {
                 pendingAccountChange = PendingAccountChange(apiKey, result.incomingSteamId)
@@ -417,97 +350,26 @@ class OnboardingViewModel @Inject constructor(
      * Where the flow goes once credentials are stored: into setup on a first configuration, so a
      * newly configured install is populated rather than empty, and straight out on an edit.
      *
-     * On a first configuration the journey is claimed durably for [steamId] *before* the setup
-     * step is shown. From this point on the install is configured, so `configured == false` no
-     * longer holds the onboarding surface up, and a process killed on the setup step would
-     * otherwise cold-launch straight into an empty app with the setup it was midway through
-     * silently dropped.
+     * On a first configuration the takeover is claimed durably *before* the step is shown. From this
+     * point on the install is configured, so `configured == false` no longer holds the onboarding
+     * surface up, and a process killed on the setup step would otherwise cold-launch straight into
+     * an empty app with the setup it was midway through silently dropped.
      */
-    private suspend fun moveOnFromCredentials(steamId: String) {
+    private suspend fun moveOnFromCredentials() {
         if (presentsSetup) {
-            journey.claim(steamId)
+            setup.claimFirstRunSetup()
             _uiState.update { it.copy(saving = false, step = OnboardingStep.SETUP) }
         } else {
             _uiState.update { it.copy(saving = false, completed = true) }
         }
     }
 
-    /**
-     * Route completed / continued / declined setup into the history choice. The journey phase is
-     * advanced durably (SETUP -> HISTORY_CHOICE) before the step changes, so a cold launch finds
-     * the history decision still owed; setup worker completion alone can never clear the journey.
-     */
+    /** All setup exits lead to the optional, durable history decision before entering Home. */
     fun onSetupDone() {
         viewModelScope.launch {
-            val steamId = journey.activeAccountSteamId() ?: return@launch
-            if (journey.setupDone(steamId)) {
-                _uiState.update { it.copy(step = OnboardingStep.HISTORY_CHOICE) }
-            }
-            refreshHistoryChoice(journey.historyImportState.first())
+            setup.advanceToHistory()
+            _uiState.update { it.copy(step = OnboardingStep.HISTORY) }
         }
-    }
-
-    // ----------------------------------------------------------------- first-run history decision
-
-    /** Explicit Import: durable consent + app-scope launch. Mounting the surface never consents. */
-    fun onHistoryImport() {
-        if (_historyChoice.value.busy) return
-        viewModelScope.launch {
-            val steamId = journey.activeAccountSteamId() ?: return@launch
-            handleHistoryImportResult(steamId, journey.requestImport(steamId))
-        }
-    }
-
-    /** Resume a pending/unfinished import without new consent (fallback replays the exact request). */
-    fun onHistoryRetry() {
-        if (_historyChoice.value.busy) return
-        viewModelScope.launch {
-            val steamId = journey.activeAccountSteamId() ?: return@launch
-            val result = journey.resumeImport() ?: journey.requestImport(steamId)
-            handleHistoryImportResult(steamId, result)
-        }
-    }
-
-    /** Skip / do later: record DEFERRED (an admitted import keeps running) and enter Home. */
-    fun onHistorySkip() {
-        viewModelScope.launch {
-            val steamId = journey.activeAccountSteamId() ?: return@launch
-            // Only the gateway-accepted deferral dismisses the flow: a stale-account or rejected
-            // phase must never complete the replacement account's local onboarding.
-            if (journey.skipHistory(steamId)) completeFlow()
-        }
-    }
-
-    /** Continue from an already-imported state: complete the journey for the exact request. */
-    fun onHistoryContinue() {
-        viewModelScope.launch {
-            val steamId = journey.activeAccountSteamId() ?: return@launch
-            if (journey.finishHistory(steamId)) completeFlow()
-        }
-    }
-
-    /** Native Back affordance to review setup; never dismisses the journey. */
-    fun onReviewSetup() {
-        _uiState.update { it.copy(step = OnboardingStep.SETUP) }
-    }
-
-    private suspend fun handleHistoryImportResult(steamId: String, result: HistoryImportResult) {
-        when (result) {
-            is HistoryImportResult.Imported, HistoryImportResult.AlreadyImported -> {
-                // Leave the flow only if the journey durably completed for the active account (the
-                // gateway re-verifies eligibility; a late old-account Imported can never dismiss
-                // the replacement account's local flow).
-                if (journey.finishHistory(steamId)) completeFlow()
-            }
-            HistoryImportResult.PendingRecompute,
-            HistoryImportResult.NeedsBaseline,
-            HistoryImportResult.Superseded,
-            is HistoryImportResult.Failed -> refreshHistoryChoice(journey.historyImportState.first())
-        }
-    }
-
-    private fun completeFlow() {
-        _uiState.update { it.copy(completed = true) }
     }
 
     /** Declining is a complete no-op: the repository has not written either credential. */
@@ -562,7 +424,7 @@ class OnboardingViewModel @Inject constructor(
                 credentials.refresh()
                 pendingAccountChange = null
                 _uiState.update { it.copy(identityChange = null) }
-                moveOnFromCredentials(pending.steamId)
+                moveOnFromCredentials()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -599,64 +461,4 @@ class OnboardingViewModel @Inject constructor(
         val apiKey: String,
         val steamId: String,
     )
-}
-
-/**
- * Test-only [FirstRunJourneyGateway] backing the legacy 4-argument constructor. Production Hilt
- * injects [FirstRunJourneyCoordinator]; this adapter maps the old durable takeover flag so the
- * credential-flow tests keep exercising the same ViewModel logic. Import/baseline facts report
- * conservative defaults because the credential tests never drive the history surface.
- */
-private class LegacyFirstRunJourneyGateway(
-    private val credentials: CredentialsProvider,
-    private val setup: FirstRunSetupGateway,
-) : FirstRunJourneyGateway {
-    override val journey: Flow<FirstRunJourney?> = flowOf(null)
-    override val firstRunOwed: Flow<Boolean?> = setup.firstRunSetupActive.map { it as Boolean? }
-    override val historyImportState: Flow<HistoryImportState> = flowOf(HistoryImportState.Idle)
-    override val historyImportPendingRequest: Flow<HistoryImportRequestRecord?> = flowOf(null)
-
-    override suspend fun currentHistoryImportPendingRequest(): HistoryImportRequestRecord? = null
-
-    override suspend fun activeAccountSteamId(): String? =
-        credentials.currentCredentials()?.steamId?.trim()?.takeIf { it.isNotEmpty() }
-
-    override suspend fun baselineConfirmed(): Boolean = false
-
-    override suspend fun importBackfilled(): Boolean = false
-
-    override suspend fun recomputePending(activeAccount: String?): Boolean = false
-
-    override suspend fun resolvedJourney(): FirstRunJourney? {
-        val active = activeAccountSteamId()
-        return if (active != null && setup.firstRunSetupActive.first()) {
-            FirstRunJourney(active, FirstRunPhase.SETUP)
-        } else {
-            null
-        }
-    }
-
-    override suspend fun claim(steamId: String) = setup.claimFirstRunSetup()
-
-    override suspend fun setupDone(steamId: String): Boolean {
-        setup.releaseFirstRunSetup()
-        return true
-    }
-
-    override suspend fun requestImport(steamId: String): HistoryImportResult =
-        HistoryImportResult.Superseded
-
-    override suspend fun resumeImport(): HistoryImportResult? = null
-
-    override suspend fun recoverPendingImport() = Unit
-
-    override suspend fun skipHistory(steamId: String): Boolean = true
-
-    override suspend fun finishHistory(steamId: String, requestId: String?): Boolean = true
-
-    override suspend fun onImportReset(steamId: String) = Unit
-
-    override suspend fun refreshAccountOwed() = Unit
-
-    override suspend fun startupRecovery() = Unit
 }

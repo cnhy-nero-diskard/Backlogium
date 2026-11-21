@@ -1,0 +1,5 @@
+LIST: systemBottomPx=63 scaffoldBottomPx=273 barTop=810.2857.dp finalTextBottom=790.0952.dp
+GRID: systemBottomPx=63 scaffoldBottomPx=273 barTop=810.2857.dp finalTextBottom=790.0952.dp
+COMPACT_GRID: systemBottomPx=63 scaffoldBottomPx=273 barTop=810.2857.dp finalTextBottom=790.0952.dp
+barExitMidpoint: systemBottomPx=63 scaffoldBottomPx=273
+barExitComplete: systemBottomPx=63 scaffoldBottomPx=63

@@ -82,6 +82,13 @@ Published releases use tag `hltb-dataset-vN`, asset `hltb-dataset.json`, and che
 
 ## Refresh selected libraries
 
+For agent-assisted fetching, resuming, inspecting, applying, or preparing a data PR,
+use the repository's [`hltb-dataset-refresh` skill](../../.claude/skills/hltb-dataset-refresh/SKILL.md).
+It accepts entry at any stage, keeps inspection read-only, verifies candidate/report
+integrity, and asks before unapproved fetches, canonical writes, and publication.
+Invoke it explicitly or describe the HLTB dataset task naturally to an agent with
+repository skill discovery. Matching a task does not itself grant write/publication consent.
+
 The dependency-free Node 22 `refresh.mjs` CLI resolves the current owned libraries of explicitly
 selected SteamID64s. Set `STEAM_WEB_API_KEY` privately in the process environment. The key is
 never accepted as a command argument or written to state. Target IDs are validated as individual
@@ -165,3 +172,118 @@ unavailable libraries and exhausted budgets. Dry runs distinguish plan-only from
 Schema-v1 `gatheredAt` remains global merge metadata. Existing Android consumers may assign that
 age to imported failed/untouched rows. Local entry history and this report do not migrate that
 consumer behavior or claim that every row was refreshed. See [FORMAT.md](FORMAT.md).
+
+## Discover uncovered games for private review
+
+Discovery is separate from refresh. It searches only uncovered apps in the union
+of selected readable Steam libraries, intersected with repeated `--app-id` options.
+Unavailable libraries are reported separately from readable empty ones. Credentials
+come from `STEAM_WEB_API_KEY`; never put the key in arguments or reports.
+
+```bash
+node tools/hltb-dataset/discover.mjs --steam-id "$STEAM_ID" --dry-run
+# With explicit authorization for bounded HLTB searching:
+node tools/hltb-dataset/discover.mjs --steam-id "$STEAM_ID" --app-id 620 --max-requests 30 --max-run-seconds 90
+# Optional --broader permits <=3 variants only after a successful empty primary.
+```
+
+Execution prints a sanitized report and saves review/report JSON beneath a fresh
+`tools/hltb-dataset/.local/discovery/<opaque-id>/` directory. Use `--output` for a
+new review path beneath `.local/` and `--report` for a separate report. Outputs
+never replace existing reviews. Keep private artifacts out of publication: owned
+app IDs and exact-pair decisions disclose ownership even without account IDs.
+
+Review both identities and titles, and edit only each candidate's `decision` to
+`approved` or `rejected`; leave unresolved pairs `pending`. At most one candidate
+per Steam app may be approved. Even an exact-title score of 1 remains pending.
+Scores, queries and preview minutes are untrusted guidance, never permission or
+fresh completion evidence. No direct game pages are read during discovery.
+
+Discovery uses Android's existing browser user agent, HLTB Origin and homepage
+Referer consistently across initialization, same-origin endpoint discovery, and
+search POSTs. Initialization/discovery accept `*/*`; POSTs use JSON headers.
+Steam and direct-page refresh defaults are unchanged. These headers are a fixed
+request contract, not profiles to cycle after a denial; all existing stop rules apply.
+Denied response bodies are cancelled without reading them. Diagnostics never infer
+an upstream error value or claim that an unread response had no challenge markers;
+only fixed categories and validated HTTP statuses are retained.
+
+```bash
+node tools/hltb-dataset/discover.mjs --inspect tools/hltb-dataset/.local/discovery/RUN/review.json
+# Optional --report <separate-file> saves only this current inspection summary.
+```
+
+Inspection needs no credentials, performs zero network requests, and recomputes
+counts from the edited file. The original discovery report predates decisions.
+`--inspect` cannot be mixed with search options. Invalid reviews fail closed.
+The [private format](FORMAT.md#private-review-format-version-1) defines fields,
+minute units, outcomes and guarded custom layouts.
+
+Discovery exit codes: 0 clean plan or complete search/inspection, 2 usable partial
+(unavailable libraries, unmatched/failed/unattempted apps or partial broader search),
+1 blocked/invalid. Candidate apps and candidate pairs have separate units; pending,
+approved and rejected pairs are independent of search success. Search success is
+never counted as a completion fetch. A controlled stop retains completed results
+and marks remaining apps unattempted. There is no discovery resume: authorize a
+fresh bounded run to a new destination, preserving earlier decisions. Dry run
+reads Steam only and writes nothing except an explicitly requested plan report.
+Neither command applies a candidate or modifies the canonical dataset/history.
+
+Session initialization and endpoint discovery are shared setup, not game searches.
+If setup fails before any search POST begins, execution is **blocked (exit 1)**;
+the private review is still saved and searchable apps remain **unattempted**. If
+setup/renewal fails after earlier POSTs, execution is **partial (exit 2)** and
+earlier candidates or unmatched results survive. Exhausted setup is not repeated
+for later apps. A denied search POST is instead a failure of that app's search.
+The optional `sessionFailure` in the review summary identifies `session-init` or
+`endpoint-discovery`, a fixed category, and numeric HTTP status (or null). It is
+also shown by offline `--inspect`; original reviews without it remain readable.
+A successful empty search remains unmatched. Empty/unsearchable scope never
+initializes HLTB. Live search acceptance needs separate bounded authorization;
+a successful initialization GET alone does not prove a POST works.
+
+After the human has approved exact pairs, hand the same private file to refresh:
+
+```bash
+node tools/hltb-dataset/refresh.mjs --steam-id "$STEAM_ID" \
+  --review-candidates tools/hltb-dataset/.local/discovery/RUN/review.json --dry-run
+# With separate authorization for the planned direct-page fetching:
+node tools/hltb-dataset/refresh.mjs --steam-id "$STEAM_ID" \
+  --review-candidates tools/hltb-dataset/.local/discovery/RUN/review.json \
+  --max-requests 30 --max-run-seconds 90
+node .claude/skills/hltb-dataset-refresh/scripts/verify-pair.mjs \
+  tools/hltb-dataset/dataset.json tools/hltb-dataset/.local/candidate.json \
+  tools/hltb-dataset/.local/report.json
+```
+
+Use fresh guarded output/report paths when earlier fetch results must be retained.
+`--review-candidates` and legacy `--reviewed-mappings` are mutually exclusive.
+The latter remains available for a schema-v1 reviewed contribution, including an
+Android Match Center export; that format alone does not attest to human approval.
+Only approved pairs inside both artifact and current owned-library/app scope are
+admitted. Stale discovery baselines and global correspondence conflicts block output.
+Pending/rejected pairs never authorize mapping or fetching, even when another
+approved pair legitimately shares their numeric HLTB ID.
+
+Each new correspondence schedules a direct-page read independently of mode/shared
+lengths; each distinct HLTB ID is read once. Search previews never supply contribution
+values or successful history. Failed, empty and unattempted reads retain baseline
+lengths and may leave an approved addition mapping-only. These are partial results,
+not successful fresh observations. Reports retain version 1 and add `review` with
+artifact hash/version, candidate app/pair counts, approved/rejected/pending pair
+counts and IDs, scope exclusions, and discovery outcomes. Fetch `unmapped`,
+`noLengths`, `failures` and `unattempted` remain separate; the last three use unique
+HLTB IDs. Actual shared tuple changes report every canonical app alias.
+
+The entire review byte hash and input kind bind a frozen fetch plan. Changing any
+decision or title, including withdrawing approval, blocks resume before requests
+and blocks active-run finalization. Use a newly authorized run or an explicitly
+reviewed reconciliation; never edit checkpoint hashes. Completed observations
+retain their original times and are not fetched again on compatible resume. Legacy
+version-1 checkpoints without review input remain compatible.
+
+Stop after offline verification for human review. Dataset application and data
+publication require separate authorization. Pair verification establishes byte and
+diff consistency, not human approval or live provenance. Global schema-v1
+`gatheredAt` can advance for changed rows while untouched/failed rows keep old
+values; it does not prove per-row freshness or full-library coverage.

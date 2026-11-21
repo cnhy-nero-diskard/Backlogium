@@ -106,6 +106,7 @@ data class GoalGameUi(
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
     override val isFamilyShared: Boolean = false,
+    override val firstSeenAt: Long? = null,
 ) : LibraryRow
 
 data class BacklogGameUi(
@@ -137,6 +138,7 @@ data class BacklogGameUi(
      * never as colour alone; false for an owned game, which carries no marking at all.
      */
     override val isFamilyShared: Boolean = false,
+    override val firstSeenAt: Long? = null,
 ) : LibraryRow
 
 /** One processed game in a running selection lookup, including structured failure evidence. */
@@ -219,6 +221,7 @@ class LibraryViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val credentials: CredentialsRepository,
     private val liveStatusRepository: LiveStatusRepository,
+    val visit: LibraryVisitState,
 ) : ViewModel() {
 
     /** Per-game manual-lookup state, keyed by appId. Not persisted — cleared on success. */
@@ -237,8 +240,8 @@ class LibraryViewModel @Inject constructor(
      */
     private val needsAttention = MutableStateFlow<Long?>(null)
 
-    /** Transient discovery filters. Cleared by the screen when Library is left. */
-    private val filters = MutableStateFlow(LibraryFilters())
+    /** Shared discovery filters survive destination disposal for the current visit. */
+    private val filters = visit.filters
 
     /** Transient multi-select for the targeted refresh. Never persisted (see [clearSelection]). */
     private val selection = MutableStateFlow<Set<Long>>(emptySet())
@@ -377,7 +380,8 @@ class LibraryViewModel @Inject constructor(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
+        // Keep the retained destination's filtered content current for identity-based restoration.
+        started = SharingStarted.Eagerly,
         initialValue = LibraryUiState(),
     )
 
@@ -516,7 +520,7 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun resolveMatch(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
-        hltbRepository.resolveMatch(appId, candidate)
+        hltbRepository.replaceMatch(appId, candidate)
     }
 
     fun changeMatch(appId: Long, name: String) {
@@ -614,7 +618,7 @@ class LibraryViewModel @Inject constructor(
 
     fun confirmPickerManualLink(appId: Long) = viewModelScope.launch {
         val preview = pickerManualLinkStates.value[appId]?.preview ?: return@launch
-        hltbRepository.resolveMatch(appId, preview)
+        hltbRepository.replaceMatch(appId, preview)
         clearPicker(appId)
     }
 
@@ -672,7 +676,7 @@ private data class SelectionLookupState(
     val log: List<HltbLogEntry> = emptyList(),
 )
 
-private fun LibraryGame.toGoalUi(
+internal fun LibraryGame.toGoalUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
@@ -694,13 +698,14 @@ private fun LibraryGame.toGoalUi(
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
     recencyState = recencyState,
+    firstSeenAt = firstSeenAt,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false
     },
 )
 
-private fun LibraryGame.toBacklogUi(
+internal fun LibraryGame.toBacklogUi(
     xp: XpInputs,
     counts: Map<Long, AchievementCountSummary>,
     ops: Map<Long, HltbFetchOp>,
@@ -722,6 +727,7 @@ private fun LibraryGame.toBacklogUi(
     isCurrentlyPlaying = appId == playingAppId,
     genres = genres,
     recencyState = recencyState,
+    firstSeenAt = firstSeenAt,
     isFamilyShared = when (source) {
         GameSource.FAMILY_SHARED -> true
         GameSource.STEAM_OWNED -> false

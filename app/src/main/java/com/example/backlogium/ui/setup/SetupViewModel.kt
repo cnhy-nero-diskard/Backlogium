@@ -8,13 +8,13 @@ import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.setup.SetupStageSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -23,25 +23,15 @@ import javax.inject.Inject
  * newly registered stage reaches both without either being touched.
  */
 @HiltViewModel
-class SetupViewModel internal constructor(
+class SetupViewModel @Inject constructor(
     private val source: SetupStageSource,
     private val coordinator: SetupCoordinator,
-    credentialsConfigured: Flow<Boolean>,
+    credentials: CredentialsRepository,
 ) : ViewModel() {
-
-    @Inject
-    constructor(
-        source: SetupStageSource,
-        coordinator: SetupCoordinator,
-        credentials: CredentialsRepository,
-    ) : this(
-        source,
-        coordinator,
-        credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
-    )
 
     /** The user's pending checklist selection, before a run makes it the coordinator's business. */
     private val selection = MutableStateFlow<Set<String>>(emptySet())
+    private val editing = MutableStateFlow(false)
     private var prepared = false
 
     /**
@@ -54,15 +44,17 @@ class SetupViewModel internal constructor(
     val uiState: StateFlow<SetupUiState> = combine(
         coordinator.state,
         selection,
-        credentialsConfigured,
-    ) { run, pending, configured ->
+        credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
+        editing,
+    ) { run, pending, configured, isEditing ->
         SetupUiState(
             loading = !run.loaded,
-            stages = setupStagesUi(source.stages, pending, run),
+            stages = setupStagesUi(source.stages, pending, run, isEditing),
             running = run.running,
             finished = run.finished,
             inScreenSettled = run.inScreenSettled,
             credentialsConfigured = configured,
+            editing = isEditing,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -93,6 +85,7 @@ class SetupViewModel internal constructor(
 
     fun toggle(stageId: String, selected: Boolean) {
         if (coordinator.state.value.running) return
+        if (coordinator.state.value.finished && !editing.value) editSelection()
         // An unavailable stage is not selectable; a toggle aimed at one is dropped rather than
         // producing a selection that the coordinator would then have to filter out again.
         if (source.stages.none { it.id == stageId && it.isAvailable }) return
@@ -102,23 +95,35 @@ class SetupViewModel internal constructor(
     }
 
     fun start() {
-        if (coordinator.state.value.running) return
-        val requested = selection.value
-        selection.value = emptySet()
+        if (!uiState.value.canStart) return
+        val preserveOutcomes = coordinator.state.value.finished || editing.value
+        editing.value = false
         coordinator.start(
-            selectedIds = requested,
-            recordUnselectedAsSkipped = isFirstRunFlow,
+            selectedIds = selection.value,
+            recordUnselectedAsSkipped = isFirstRunFlow && !preserveOutcomes,
         )
     }
 
+    fun editSelection() {
+        val run = coordinator.state.value
+        if (!run.loaded || run.running) return
+        selection.value = source.stages.filter {
+            it.isAvailable && run.outcomes[it.id] is com.example.backlogium.work.setup.SetupOutcome.Failed
+        }.map { it.id }.toSet()
+        editing.value = true
+    }
+
     /** Re-run one stage, replacing that stage's recorded outcome and no other's. */
-    fun retry(stageId: String) =
-        coordinator.retryStage(stageId)
-
-    fun reobserve(stageId: String) = coordinator.reobserveStage(stageId)
-
-    fun continueLater() = coordinator.continueLater()
+    fun retry(stageId: String) {
+        if (coordinator.state.value.running) return
+        editing.value = false
+        coordinator.start(selectedIds = setOf(stageId), recordUnselectedAsSkipped = false)
+    }
 
     /** Decline setup entirely: nothing runs and every stage is recorded as skipped. */
-    fun skip() = coordinator.skipAll()
+    fun skip(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            if (coordinator.skipAll()) onComplete()
+        }
+    }
 }

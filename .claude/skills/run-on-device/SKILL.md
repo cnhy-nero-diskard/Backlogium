@@ -29,6 +29,21 @@ release build at that id.
 
 ## Workflow
 
+### Local emulator target
+
+For local emulator runs, first follow [AGENTS.md](../../../AGENTS.md) and use
+`scripts/test-emulator.sh start` (macOS/Linux) or `scripts/test-emulator.ps1 start`
+(Windows). Check its GPU verification succeeds. Set `ANDROID_SERIAL` to its
+reported serial, add `-Pandroid.injected.device.serial=<serial>` to `installDebug`,
+and use `adb -s <serial>` for every ADB command below. For
+`connectedDebugAndroidTest`, keep `ANDROID_SERIAL` set and pass
+`-Pandroid.testInstrumentationRunnerArguments.serial=<serial>`; the runner
+argument alone does not select a device. Avoid the task's `--serial` option with
+AGP 9.3.0 (see the launcher guide for the reproduced plugin failure). Never use
+an untargeted emulator install or test with a wireless phone attached. See
+[the launcher guide](../../../docs/test-emulator.md) for overrides and Windows
+benchmark limits. This does not change an explicitly requested phone deployment.
+
 ### 1. Resolve the build directory
 
 - If a `<worktree>` argument is given:

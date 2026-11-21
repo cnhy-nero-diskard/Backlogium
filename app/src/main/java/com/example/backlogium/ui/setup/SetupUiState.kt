@@ -1,11 +1,11 @@
 package com.example.backlogium.ui.setup
 
 import com.example.backlogium.work.setup.SetupOutcome
-import com.example.backlogium.work.setup.SetupOperationState
 import com.example.backlogium.work.setup.SetupRunState
 import com.example.backlogium.work.setup.SetupStage
 import com.example.backlogium.work.setup.SetupStageExecution
 import com.example.backlogium.work.setup.SetupStageProgress
+import com.example.backlogium.work.setup.SetupStageActivity
 
 /** One checklist row. Everything here is derived from a registered stage plus the run's state. */
 data class SetupStageUi(
@@ -20,7 +20,7 @@ data class SetupStageUi(
     val running: Boolean,
     /** Non-null only while [running] and only once the work has published a usable total. */
     val progress: SetupStageProgress?,
-    val operationState: SetupOperationState = legacyOperationState(outcome, running, progress),
+    val activity: SetupStageActivity? = null,
 ) {
     val available: Boolean get() = unavailableReason == null
 
@@ -41,29 +41,20 @@ data class SetupUiState(
     val inScreenSettled: Boolean = false,
     /** False only on the Settings entry with no credentials: stages cannot succeed without them. */
     val credentialsConfigured: Boolean = true,
+    val editing: Boolean = false,
 ) {
     /** Starting with nothing selected is legitimate — it completes immediately, all skipped. */
-    val canStart: Boolean get() = !running && credentialsConfigured
+    val canStart: Boolean get() = !loading && !running && (!finished || editing) && credentialsConfigured
 
     /** Whether starting this selection will detach work, so the notification request is warranted. */
     val willDetachWork: Boolean
         get() = stages.any { it.selected && it.execution == SetupStageExecution.DETACHED }
 
     val detachedStillRunning: Boolean
-        get() = stages.any { it.execution == SetupStageExecution.DETACHED && it.operationState.isPending }
-
-    val pendingCount: Int get() = stages.count { it.operationState.isPending }
-}
-
-internal fun legacyOperationState(
-    outcome: SetupOutcome,
-    running: Boolean,
-    progress: SetupStageProgress?,
-): SetupOperationState = if (running) SetupOperationState.Running(progress) else when (outcome) {
-    SetupOutcome.NeverRun -> SetupOperationState.NeverRun
-    SetupOutcome.Succeeded -> SetupOperationState.Succeeded()
-    SetupOutcome.Skipped -> SetupOperationState.Skipped
-    is SetupOutcome.Failed -> SetupOperationState.Failed(outcome.reason)
+        get() = running && stages.any {
+            it.selected && it.execution == SetupStageExecution.DETACHED &&
+                it.outcome is SetupOutcome.NeverRun
+        }
 }
 
 /**
@@ -76,13 +67,9 @@ internal fun setupStagesUi(
     stages: List<SetupStage>,
     selection: Set<String>,
     run: SetupRunState,
+    editing: Boolean = false,
 ): List<SetupStageUi> = stages.map { stage ->
-    val operation = run.operations[stage.id] ?: legacyOperationState(
-        run.outcomes[stage.id] ?: SetupOutcome.NeverRun,
-        run.running && run.currentStageId == stage.id,
-        run.progress,
-    )
-    val running = operation is SetupOperationState.Running
+    val running = run.running && run.currentStageId == stage.id
     SetupStageUi(
         id = stage.id,
         title = stage.title,
@@ -91,12 +78,11 @@ internal fun setupStagesUi(
         unavailableReason = stage.unavailableReason,
         // While a run is in flight the run's own selection is authoritative: it is what is
         // actually happening, and the checkboxes are not editable then anyway.
-        selected = if (run.running) stage.id in run.selected else stage.id in selection,
+        selected = if (run.running || (run.finished && !editing)) stage.id in run.selected else stage.id in selection,
         outcome = run.outcomes[stage.id] ?: SetupOutcome.NeverRun,
         running = running,
-        progress = (operation as? SetupOperationState.Running)?.progress
-            ?.takeIf { it.isDeterminate && it.processed >= 0 },
-        operationState = operation,
+        progress = run.progress?.takeIf { running && it.isDeterminate && it.activity == SetupStageActivity.RUNNING },
+        activity = run.progress?.activity?.takeIf { running },
     )
 }
 
@@ -106,16 +92,19 @@ internal fun setupStagesUi(
  * stages are unrelated and at most one of them is what went wrong.
  */
 fun setupSummaryLines(stages: List<SetupStageUi>): List<String> = stages.map { stage ->
-    when (val operation = stage.operationState) {
-        is SetupOperationState.Succeeded -> "${stage.title} — ${operation.detail ?: "done"}"
-        SetupOperationState.Skipped -> "${stage.title} — skipped"
-        SetupOperationState.NeverRun ->
+    if (stage.running) return@map "${stage.title} — ${stage.activityLabel()}"
+    when (val outcome = stage.outcome) {
+        SetupOutcome.Succeeded -> "${stage.title} — done"
+        SetupOutcome.Skipped -> "${stage.title} — skipped"
+        SetupOutcome.NeverRun ->
             if (stage.available) "${stage.title} — not run" else "${stage.title} — unavailable"
-        is SetupOperationState.Failed -> "${stage.title} — ${operation.reason ?: "failed"}"
-        SetupOperationState.Cancelled -> "${stage.title} — cancelled"
-        is SetupOperationState.RecoveryRequired -> "${stage.title} — recovery required"
-        is SetupOperationState.Waiting -> "${stage.title} — waiting: ${operation.reason}"
-        is SetupOperationState.RetryScheduled -> "${stage.title} — retry scheduled: ${operation.reason}"
-        is SetupOperationState.Running -> "${stage.title} — running"
+        is SetupOutcome.Failed -> "${stage.title} — ${outcome.reason}"
     }
+}
+
+fun SetupStageUi.activityLabel(): String = when (activity) {
+    SetupStageActivity.WAITING -> "Waiting for background work or a connection"
+    SetupStageActivity.RETRY_BACKOFF -> "Waiting to retry automatically"
+    SetupStageActivity.RUNNING -> "Running"
+    null -> "Preparing"
 }

@@ -63,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import com.example.backlogium.R
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.RecoveryExplanationControl
 import com.example.backlogium.ui.util.UiFormat
 import com.example.backlogium.data.repo.ContributionState
 import compose.icons.TablerIcons
@@ -76,6 +77,10 @@ internal const val TAG_HISTORY_MEASUREMENT_HELP = "history-measurement-help"
 internal const val TAG_HISTORY_LOADING = "history-loading"
 internal const val TAG_HISTORY_CLOUD_MARK = "history-cloud-mark"
 internal const val TAG_HISTORY_REVEAL_UNAVAILABLE = "history-reveal-unavailable"
+internal const val TAG_HISTORY_RECOVERY_STATUS = "history-recovery-status"
+internal const val TAG_HISTORY_ESTIMATE_HELP = "history-estimate-help"
+internal const val TAG_HISTORY_DAY_ESTIMATE_HELP = "history-day-estimate-help"
+internal const val TAG_HISTORY_GAME_ESTIMATE_HELP = "history-game-estimate-help"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -226,6 +231,22 @@ internal fun HistoryContent(
                 }
             }
 
+            if (hasRecoveryDisclosure(state)) {
+                item(key = "history-recovery-status") {
+                    recoveryStatusMessage(state)?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .testTag(TAG_HISTORY_RECOVERY_STATUS),
+                        )
+                    }
+                }
+            }
+
             if (state.days.isEmpty()) {
                 item(key = "history-empty") {
                     Column(
@@ -324,6 +345,7 @@ internal fun historyVisibleItemKeys(
     expandedDays: Set<String>,
 ): List<String> = buildList {
     add("history-heading")
+    if (hasRecoveryDisclosure(state)) add("history-recovery-status")
     if (state.days.isEmpty()) {
         add("history-empty")
     } else {
@@ -348,6 +370,35 @@ private fun historyDayItemKey(date: String) = "day-$date"
 private fun historyGamesItemKey(date: String) = "games-$date"
 internal fun historyDayTestTag(date: String) = "history-day-$date"
 internal fun historySessionTestTag(sessionId: Long) = "history-session-$sessionId"
+internal fun historyAllocationTestTag(placementId: String) = "history-allocation-$placementId"
+
+/** Whether a recovery disclosure row is owed above the timeline. */
+internal fun hasRecoveryDisclosure(state: HistoryUiState): Boolean =
+    state.pendingDateUnknownMinutes > 0 || state.recoveryStatus != RecoveryStatusUi.KNOWN_GOOD
+
+/**
+ * The honest recovery disclosure shown above the timeline. Last-good figures stay on screen in
+ * every non-quiet state; the copy never claims real-time detection of invisible play, and a
+ * successful unchanged read is not presented as a known recovery debt.
+ */
+@Composable
+private fun recoveryStatusMessage(state: HistoryUiState): String? = when {
+    state.pendingDateUnknownMinutes > 0 -> stringResource(
+        R.string.history_recovery_status_pending,
+        UiFormat.localizedMinutes(state.pendingDateUnknownMinutes),
+    )
+
+    state.recoveryStatus == RecoveryStatusUi.REMOTE_UNAVAILABLE ->
+        stringResource(R.string.history_recovery_status_unavailable)
+
+    state.recoveryStatus == RecoveryStatusUi.OBSERVED_AWAITING_STEAM ->
+        stringResource(R.string.history_recovery_status_awaiting)
+
+    state.recoveryStatus == RecoveryStatusUi.UNCHANGED_NO_KNOWN_PLAY ->
+        stringResource(R.string.history_recovery_status_unchanged)
+
+    else -> null
+}
 
 /** One day's rows: its header, then (if expanded) a single connected block of its games. */
 private fun LazyListScope.dayItems(
@@ -403,6 +454,7 @@ private fun DayHeaderRow(
     expanded: Boolean,
     expandable: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val connected = expanded && expandable
     val actionLabel = stringResource(
@@ -438,7 +490,7 @@ private fun DayHeaderRow(
     }
     Card(
         shape = dayCardShape(topOnly = connected),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 4.dp, bottom = if (connected) 0.dp else 4.dp)
             .testTag(historyDayTestTag(day.date))
@@ -502,6 +554,14 @@ private fun DayHeaderRow(
                             modifier = Modifier.padding(start = 4.dp),
                         )
                     }
+                }
+                if (day.estimatedMinutes > 0) {
+                    RecoveryExplanationControl(
+                        shares = recoveryShares(day.games.flatMap { it.allocations }),
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .testTag(TAG_HISTORY_DAY_ESTIMATE_HELP),
+                    )
                 }
                 if (expandable) {
                     Icon(
@@ -660,17 +720,28 @@ private fun DayGamesBlock(
                     )
                 }
 
-                GameRow(
-                    game = game,
-                    expanded = gameExpanded,
-                    dotColor = lineColor,
-                    onClick = { onToggleGame(date, game.appId) },
-                    onDotPositioned = if (index == games.lastIndex) {
-                        { lastDotCoordinates = it }
-                    } else {
-                        null
-                    },
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GameRow(
+                        game = game,
+                        expanded = gameExpanded,
+                        dotColor = lineColor,
+                        onClick = { onToggleGame(date, game.appId) },
+                        onDotPositioned = if (index == games.lastIndex) {
+                            { lastDotCoordinates = it }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (game.estimatedMinutes > 0) {
+                        RecoveryExplanationControl(
+                            shares = recoveryShares(game.allocations),
+                            modifier = Modifier
+                                .padding(start = 4.dp, end = 12.dp)
+                                .testTag(TAG_HISTORY_GAME_ESTIMATE_HELP),
+                        )
+                    }
+                }
 
                 if (gameExpanded) {
                     Column(
@@ -687,11 +758,31 @@ private fun DayGamesBlock(
                                 reveal?.takeIf { it.date == date && it.appId == game.appId && it.sessionId == session.id },
                                 onRevealHandled)
                         }
+                        game.timedShares.forEach { share ->
+                            HistoryTimedShareRow(share)
+                        }
+                        game.allocations.forEach { allocation ->
+                            HistoryAllocationRow(allocation)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/** A frozen-date funded part of a real session, separated from the host row's unlinked remainder. */
+@Composable
+private fun HistoryTimedShareRow(share: HistoryTimedShareUi) {
+    Text(
+        text = stringResource(
+            R.string.history_timed_share,
+            UiFormat.localizedMinutes(share.minutes),
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -774,6 +865,43 @@ private fun HistorySessionRow(
     }
 }
 
+/**
+ * One dated unknown-time allocation rendered as a leaf: its minutes and an honest "exact session
+ * times unavailable" label — deliberately no clock time and no open/closed state, since the
+ * allocation has neither. The `!` control explains the recovery window and this day's share.
+ */
+@Composable
+private fun HistoryAllocationRow(allocation: HistoryAllocationUi) {
+    val accessibleDescription = stringResource(
+        R.string.history_allocation_accessibility,
+        UiFormat.localizedMinutes(allocation.minutes),
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = accessibleDescription
+            }
+            .testTag(historyAllocationTestTag(allocation.placementId)),
+    ) {
+        Text(
+            text = stringResource(
+                R.string.history_allocation_leaf,
+                UiFormat.localizedMinutes(allocation.minutes),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        RecoveryExplanationControl(
+            shares = recoveryShares(listOf(allocation)),
+            label = stringResource(R.string.recovery_explanation_indicator_label),
+            modifier = Modifier.testTag(TAG_HISTORY_ESTIMATE_HELP),
+        )
+    }
+}
+
 /** One game's row inside [DayGamesBlock]: a dot on the timeline, its icon, name, playtime, and chevron. */
 @Composable
 private fun GameRow(
@@ -782,6 +910,7 @@ private fun GameRow(
     dotColor: Color,
     onClick: () -> Unit,
     onDotPositioned: ((LayoutCoordinates) -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     val actionLabel = stringResource(
         if (expanded) R.string.history_collapse_game else R.string.history_expand_game,
@@ -797,7 +926,7 @@ private fun GameRow(
         stringResource(R.string.history_collapsed)
     }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
                 contentDescription = gameDescription

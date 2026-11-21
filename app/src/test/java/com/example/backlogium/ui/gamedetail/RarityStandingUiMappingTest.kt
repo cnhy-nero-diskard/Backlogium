@@ -38,6 +38,17 @@ class RarityStandingUiMappingTest {
     }
 
     @Test
+    fun catalogueOnlyObjectivesDoNotClaimPersonalStandingOrCompletion() {
+        val objective = achievement(unlocked = false, global = 0.1).copy(progressKnown = false)
+        assertNull(content(objective).toRarityStanding())
+        val row = objective.toUi(RuleConfig())
+        assertEquals(false, row.progressKnown)
+        assertEquals(0, row.xp)
+        assertNull(row.tier)
+        assertEquals(false, GameDetailUiState(achievements = listOf(row)).allUnlocked)
+    }
+
+    @Test
     fun noRows_omitsTheStanding() {
         assertNull(content().toRarityStanding())
     }

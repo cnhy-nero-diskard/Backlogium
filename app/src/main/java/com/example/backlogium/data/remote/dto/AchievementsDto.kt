@@ -50,7 +50,8 @@ data class GlobalAchievementPercentageDto(
  * schema at all omit [GameSchemaResult.availableGameStats] entirely. */
 @Serializable
 data class GameSchemaResponse(
-    val game: GameSchemaResult = GameSchemaResult(),
+    /** Required so an unusable/malformed envelope cannot masquerade as an empty schema. */
+    val game: GameSchemaResult,
 )
 
 @Serializable
@@ -60,7 +61,8 @@ data class GameSchemaResult(
 
 @Serializable
 data class AvailableGameStatsDto(
-    val achievements: List<AchievementSchemaDto> = emptyList(),
+    /** May be absent when Steam reports stats but the game defines no achievements. */
+    val achievements: List<AchievementSchemaDto>? = null,
 )
 
 /**

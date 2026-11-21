@@ -36,6 +36,7 @@ export function buildReport({ options, base, baselineText, candidate, candidateT
   const affected = new Set(affectedApps.map((a) => a.appId));
   return {
     toolVersion: 1, reportVersion: 1, runId, mode: options.mode,
+    ...(plan.review ? { review: plan.review } : {}),
     outcome: blocked ? "blocked" : options.dryRun ? "plan-only" : partial ? "partial" : "complete",
     partialCoverage: partial, changed,
     baseline: { sha256: hash(baselineText), datasetVersion: base.datasetVersion, gatheredAt: base.gatheredAt },

@@ -44,16 +44,14 @@ screen, state, theme, and viewport:
 - `main/<screen>/<state>/<theme>/<viewport>.png` contains the 20 core cells.
 - `alternatives/<screen>/<state>/dark/standard.png` contains the bounded edge-state cells.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
-- `setup/<state>/<theme>/<viewport>.png` contains the 16 settled-pending, history-ready,
-  history-needs-baseline and Settings-pending-import recovery cells. These render the real
-  stateless checklist, summary, history choice and history-import card.
+- `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.
 
 Generated actual, compare/diff, JSON, and HTML report files live below `app/build/` and are
 ignored. They must not be committed as baselines.
 
 ## Verify baselines locally
 
-Verification never records or rewrites tracked PNGs. Run it with the same five screenshot test
+Verification never records or rewrites tracked PNGs. Run it with the same three screenshot test
 classes used by CI:
 
 ```powershell
@@ -103,4 +101,3 @@ It fails only when a fixture-rendered source changed and no file under
 A copy-only edit to `strings.xml` counts as visual, because it moves rendered pixels. A pull request
 that regenerates the whole suite satisfies the gate on any recorded baseline, because
 `recordRoborazziDebug` always re-records every matching test.
-

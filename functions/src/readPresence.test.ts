@@ -52,14 +52,17 @@ function request(authorization: string | undefined, query: Record<string, unknow
 }
 
 const steamId = "76561198000000001";
-const firstAt = new Date("2026-09-10T00:00:00.000Z");
-const secondAt = new Date("2026-09-10T00:01:00.000Z");
+const firstAt = new Date(Date.now() - 2 * 60_000);
+const secondAt = new Date(firstAt.getTime() + 60_000);
+const previousLastObservedAt = new Date(firstAt.getTime() - 2 * 60_000);
+const previousCoverageLapseFrom = new Date(firstAt.getTime() - 3 * 60_000);
+const previousCoverageLapseRecoveredAt = new Date(firstAt.getTime() - 60_000);
 
 function seedPresence(firestore: FakeFirestore): void {
   firestore.seed("players/" + steamId, {
     v: 3,
     lastObservedAt: secondAt,
-    coverageLapseFrom: new Date("2026-09-09T23:59:00.000Z"),
+    coverageLapseFrom: previousCoverageLapseRecoveredAt,
     coverageLapseRecoveredAt: firstAt,
     personastate: 1,
     gameid: "440",
@@ -75,9 +78,9 @@ function seedPresence(firestore: FakeFirestore): void {
   firestore.seed("players/" + steamId + "/presence/first", {
     t: firstAt,
     v: 2,
-    prevLastObservedAt: new Date("2026-09-09T23:58:00.000Z"),
-    prevCoverageLapseFrom: new Date("2026-09-09T23:57:00.000Z"),
-    prevCoverageLapseRecoveredAt: new Date("2026-09-09T23:59:00.000Z"),
+    prevLastObservedAt: previousLastObservedAt,
+    prevCoverageLapseFrom: previousCoverageLapseFrom,
+    prevCoverageLapseRecoveredAt: previousCoverageLapseRecoveredAt,
     personastate: 1,
     gameid: "440",
     gameName: "Team Fortress 2",
@@ -541,13 +544,13 @@ describe("servePresenceRead", () => {
     expect(body.transitions).toHaveLength(2);
     expect(body.transitions[0]).toMatchObject({
       t: firstAt.toISOString(),
-      prevLastObservedAt: "2026-09-09T23:58:00.000Z",
-      prevCoverageLapseFrom: "2026-09-09T23:57:00.000Z",
-      prevCoverageLapseRecoveredAt: "2026-09-09T23:59:00.000Z",
+      prevLastObservedAt: previousLastObservedAt.toISOString(),
+      prevCoverageLapseFrom: previousCoverageLapseFrom.toISOString(),
+      prevCoverageLapseRecoveredAt: previousCoverageLapseRecoveredAt.toISOString(),
     });
     expect(body.current).toMatchObject({
       lastObservedAt: secondAt.toISOString(),
-      coverageLapseFrom: "2026-09-09T23:59:00.000Z",
+      coverageLapseFrom: previousCoverageLapseRecoveredAt.toISOString(),
       coverageLapseRecoveredAt: firstAt.toISOString(),
     });
     expect(body.nextPosition).toBe(secondAt.toISOString());
@@ -620,7 +623,7 @@ describe("servePresenceRead", () => {
 
   it("caps a response and exposes a resumable position", async () => {
     const firestore = new FakeFirestore();
-    const base = new Date("2026-09-11T00:00:00.000Z");
+    const base = new Date(Date.now() - 10 * 60_000);
     for (let index = 0; index < MAX_RESPONSE_TRANSITIONS + 1; index += 1) {
       const at = new Date(base.getTime() + index * 1_000);
       firestore.seed("players/" + steamId + "/presence/" + index, {

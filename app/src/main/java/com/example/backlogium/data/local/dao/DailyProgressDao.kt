@@ -40,6 +40,23 @@ interface DailyProgressDao {
     )
     suspend fun setMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int)
 
+    /**
+     * Apply a *signed* contribution delta to one date's totals, for a canonical placement
+     * correction that moves minutes off an old date and onto a new one.
+     *
+     * Unlike [setMinutes], which replaces a date's whole total, this only applies the difference.
+     * That is what keeps a day's unrelated legacy or manual remainder intact: the recovery ledger
+     * is authoritative for the shares it owns, not for every minute the row happens to hold.
+     * Underflow is deliberately **not** clamped: the caller validates the target total inside the
+     * raw transaction and rejects (throws) on a negative result, so an inconsistent quantity graph
+     * surfaces instead of being silently erased into a zero.
+     */
+    @Query(
+        "UPDATE daily_progress SET minutesPlayed = minutesPlayed + :minutesDelta, " +
+            "goalMinutesPlayed = goalMinutesPlayed + :goalDelta WHERE date = :date",
+    )
+    suspend fun applyMinutesDelta(date: String, minutesDelta: Int, goalDelta: Int)
+
     /** Gamification owns only the derived quest flag; raw playtime remains sync-owned. */
     @Query("UPDATE daily_progress SET questMet = :questMet WHERE date = :date")
     suspend fun updateQuestMet(date: String, questMet: Boolean)

@@ -21,10 +21,10 @@ import org.junit.runner.RunWith
  * before merging the migration. Schema validation by itself cannot catch a migration that
  * creates the right columns while dropping the user's rows.
  *
- * The deep-history chain test runs the populated v13 fixture through every registered
- * migration to the version the database currently declares, so the composed path a real
- * long-lived install takes is exercised on every change. The per-hop tests remain the
- * precise regression checks for individual hops; the chain does not replace them.
+ * The original raw-v1 chain and the populated pre-#182 v13 chain reach the current schema.
+ * The v13 path checks enriched representative rows, while v42 fixtures exercise the final
+ * additive recovery hop. Per-hop tests remain the precise regression checks; neither chain
+ * replaces them.
  */
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
@@ -99,7 +99,117 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_41_42,
         BacklogiumDatabase.MIGRATION_42_43,
         BacklogiumDatabase.MIGRATION_43_44,
+        BacklogiumDatabase.MIGRATION_44_45,
     )
+
+    /** The complete registered chain from the original raw v1 tables through the current schema. */
+    private val allMigrationsFromV1 = arrayOf<Migration>(
+        BacklogiumDatabase.MIGRATION_1_2,
+        BacklogiumDatabase.MIGRATION_2_3,
+        BacklogiumDatabase.MIGRATION_3_4,
+        BacklogiumDatabase.MIGRATION_4_5,
+        BacklogiumDatabase.MIGRATION_5_6,
+        BacklogiumDatabase.MIGRATION_6_7,
+        BacklogiumDatabase.MIGRATION_7_8,
+        BacklogiumDatabase.MIGRATION_8_9,
+        BacklogiumDatabase.MIGRATION_9_10,
+        BacklogiumDatabase.MIGRATION_10_11,
+        BacklogiumDatabase.MIGRATION_11_12,
+        BacklogiumDatabase.MIGRATION_12_13,
+        *allMigrationsFromV13,
+    )
+
+    @Test
+    fun catalogueUpgrade_startsWithoutBackfillAndPreservesWatchWork() {
+        val name = "migration-catalogue-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 44).apply {
+            execSQL("INSERT INTO achievement_watch_work VALUES ('event', 'fixture', 1, 'epoch', 1, 1, NULL, 'pending', 0)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 45, true, BacklogiumDatabase.MIGRATION_44_45).use { db ->
+            for (table in listOf("achievement_catalogue", "achievement_catalogue_cache")) {
+                db.query("SELECT COUNT(*) FROM $table").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            }
+            db.query("SELECT recomputeSource FROM achievement_watch_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("SYNC", cursor.getString(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun watchUpgrade_startsEmptyAndPreservesPlayerSnapshot() {
+        val name = "migration-watch-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 43).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO achievements (appId, apiName, unlocked, snapshotPercent, hidden, retired, fetchedAt) VALUES (1, 'fixture', 1, 0.5, 0, 0, 1)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 44, true, BacklogiumDatabase.MIGRATION_43_44).use { db ->
+            db.query("SELECT snapshotPercent FROM achievements WHERE appId = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0.5, cursor.getDouble(0), 0.0)
+            }
+            db.query("SELECT COUNT(*) FROM achievement_watch_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun deepHistory_v1ToCurrent_preservesLegacyDataThroughTheCompleteRegisteredChain() {
+        assertEquals(
+            "The original-install chain must end at the current database version.",
+            currentDatabaseVersion,
+            allMigrationsFromV1.last().endVersion,
+        )
+
+        val databaseName = "migration-v1-${System.nanoTime()}"
+        val rawHelper = openRawV1Database(databaseName)
+        try {
+            rawHelper.writableDatabase.seedRawV1Data()
+        } finally {
+            rawHelper.close()
+        }
+
+        try {
+            val migrationsToV42 = allMigrationsFromV1.filter { it.endVersion <= 42 }.toTypedArray()
+            val migrationsAfterV42 = allMigrationsFromV1.filter { it.startVersion >= 42 }.toTypedArray()
+            assertEquals(42, migrationsToV42.last().endVersion)
+            val migratedV42 = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                42,
+                true,
+                *migrationsToV42,
+            )
+            try {
+                migratedV42.seedV42ToV43Survivors()
+            } finally {
+                migratedV42.close()
+            }
+
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                currentDatabaseVersion,
+                true,
+                *migrationsAfterV42,
+            )
+            try {
+                migrated.assertRecoverySchema()
+                migrated.assertV42ToV43Survivors()
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
 
     @Test
     fun deepHistory_v13ToCurrent_preservesRepresentativeDataAndTranslatesSentinel() {
@@ -120,92 +230,31 @@ class MigrationTest {
         }
 
         try {
+            val migrationsToV42 = allMigrationsFromV13.filter { it.endVersion <= 42 }.toTypedArray()
+            val migrationsAfterV42 = allMigrationsFromV13.filter { it.startVersion >= 42 }.toTypedArray()
+            assertEquals(42, migrationsToV42.last().endVersion)
+            val migratedV42 = migrationTestHelper.runMigrationsAndValidate(
+                databaseName,
+                42,
+                true,
+                *migrationsToV42,
+            )
+            try {
+                // Add pre-recovery v42 fields and records after the populated v13 -> v42 chain;
+                // the following real Room upgrade then proves that exact legacy state survives.
+                migratedV42.seedV42ToV43Survivors()
+            } finally {
+                migratedV42.close()
+            }
+
             val migrated = migrationTestHelper.runMigrationsAndValidate(
                 databaseName,
                 currentDatabaseVersion,
                 true,
-                *allMigrationsFromV13,
+                *migrationsAfterV42,
             )
             try {
                 migrated.assertRepresentativeData()
-            } finally {
-                migrated.close()
-            }
-        } finally {
-            context.deleteDatabase(databaseName)
-        }
-    }
-
-    /**
-     * v43 -> v44: the attributable library-poll evidence table AND the pending-recompute
-     * provenance triple on `player_profile` (stabilize-first-run-setup). Both were authored on an
-     * unreleased branch, so they ship as one additive hop from the only released version (43).
-     * The v43 confirmation columns and every legacy aggregate survive untouched; the new table
-     * starts empty; a synced, imported, nonempty legacy profile keeps its unconfirmed state and
-     * its legacy pending marker keeps no invented source/account/request.
-     */
-    @Test
-    fun v43ToV44_createsAttributablePollEvidenceAndProvenanceWithoutTouchingProfiles() {
-        val databaseName = "migration-v43-${System.nanoTime()}"
-        val database = migrationTestHelper.createDatabase(databaseName, 43)
-        try {
-            database.execSQL(
-                "INSERT INTO player_profile (id, steamId, steamLevel, totalXp, level, currentStreak, " +
-                    "longestStreak, gamificationConfigVersion, lastSyncAt, lastSyncError, " +
-                    "playtimeBackfilled, personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
-                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection, " +
-                    "confirmedLibrarySteamId, confirmedLibraryAt) VALUES " +
-                    "(0, '76561198000000000', 42, 9876, 8, 3, 12, 5, 1700000050000, NULL, 1, " +
-                    "'Player One', 'avatar-url', 'PH', 1, 1700000060000, 1, NULL, NULL)",
-            )
-        } finally {
-            database.close()
-        }
-
-        try {
-            val migrated = migrationTestHelper.runMigrationsAndValidate(
-                databaseName,
-                44,
-                true,
-                BacklogiumDatabase.MIGRATION_43_44,
-            )
-            try {
-                assertTableInfo(
-                    migrated,
-                    "library_poll_evidence",
-                    listOf(
-                        ColumnInfo("workIdentity", "TEXT", notNull = true, pk = 1),
-                        ColumnInfo("accountSteamId", "TEXT", notNull = true, pk = 2),
-                        ColumnInfo("outcome", "TEXT", notNull = true, pk = 0),
-                        ColumnInfo("gameCount", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("lastSyncAt", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("refusal", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("reason", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("recordedAt", "INTEGER", notNull = true, pk = 0),
-                    ),
-                )
-                migrated.query("SELECT COUNT(*) FROM library_poll_evidence").use { cursor ->
-                    assertTrue("the new table starts empty on upgrade", cursor.moveToFirst())
-                    assertEquals(0, cursor.getInt(0))
-                }
-                migrated.query(
-                    "SELECT steamId, playtimeBackfilled, pendingImportRecompute, lastSyncAt, " +
-                        "confirmedLibrarySteamId, confirmedLibraryAt, " +
-                        "pendingImportRecomputeSource, pendingImportRecomputeSteamId, " +
-                        "pendingImportRecomputeRequestId FROM player_profile WHERE id = 0",
-                ).use { cursor ->
-                    assertTrue(cursor.moveToFirst())
-                    assertEquals("76561198000000000", cursor.getString(0))
-                    assertEquals(1, cursor.getInt(1))
-                    assertEquals(1, cursor.getInt(2))
-                    assertEquals(1_700_000_050_000L, cursor.getLong(3))
-                    assertTrue("v44 must not infer confirmation for legacy rows", cursor.isNull(4))
-                    assertTrue(cursor.isNull(5))
-                    assertTrue("legacy pending keeps no invented source", cursor.isNull(6))
-                    assertTrue("legacy pending keeps no invented account", cursor.isNull(7))
-                    assertTrue("legacy pending keeps no invented request", cursor.isNull(8))
-                    assertFalse(cursor.moveToNext())
-                }
             } finally {
                 migrated.close()
             }
@@ -1785,158 +1834,176 @@ class MigrationTest {
         }
     }
 
-    /**
-     * v42 -> v43: `player_profile` gains explicit confirmed-library-baseline evidence
-     * (stabilize-first-run-setup). The migration is additive with NULL defaults: it must never
-     * infer readiness from `lastSyncAt`, a nonempty `games` table, `playtimeBackfilled`,
-     * `pendingImportRecompute`, or scheduler success, and it must leave the imported flag, frozen
-     * backfill offsets, tracked sessions, and the cloud historical operation/journal receipts (with
-     * their v42-only fields) untouched.
-     */
     @Test
-    fun v42ToV43_addsConfirmedLibraryEvidenceWithoutInferringReadiness() {
+    fun v42ToV43_createsRecoveryTablesAndSeedsMatchingOwnedHighWaterHonestly() {
         val databaseName = "migration-v42-${System.nanoTime()}"
-        val database = migrationTestHelper.createDatabase(databaseName, 42)
+        val previous = migrationTestHelper.createDatabase(databaseName, 42)
         try {
-            database.execSQL(
+            previous.execSQL(
                 "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
                     "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
                     "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
-                    "(440, 'Team Fortress 2', '', 5000, 0, 5000, 1, 1200, 1700000000000, " +
-                    "42, 'STEAM_OWNED', 1700000000000, NULL, NULL, 0), " +
-                    "(441, 'Shared Game', '', 30, 0, 30, 0, NULL, 1700000000001, 17, " +
-                    "'FAMILY_SHARED', 1700000000001, NULL, NULL, 0)",
+                    "(440, 'Owned Game', '', 570, 0, 500, 0, NULL, 1700000000000, 42, 'STEAM_OWNED', " +
+                    "1700000000000, NULL, NULL, 0)",
             )
-            database.execSQL(
-                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, " +
+            previous.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(441, 'Borrowed Game', '', 0, 0, 0, 0, NULL, 1700000000001, 0, 'FAMILY_SHARED', " +
+                    "NULL, NULL, NULL, 30)",
+            )
+            previous.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+                    "(0, '76561198000000000', 42, 1200, 7, 3, 19, 5, 1700000000000, NULL, 1, " +
+                    "'Nero', 'https://cdn/full.jpg', 'UTC', 0, NULL, 0)",
+            )
+            previous.execSQL(
+                "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, openAppId, " +
                     "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
-                    "(7, 440, 1700000010000, 1700005410000, 90, 0, 'FULL', 'FULL')",
+                    "(7, 440, 1700000010000, 1700005410000, 90, 0, NULL, NULL, NULL)",
             )
-            // Every plausible "already ready" hint set: synced, imported, pending recompute,
-            // nonempty games present. Confirmation must still arrive NULL — nothing may infer it.
-            database.execSQL(
-                "INSERT INTO player_profile (id, steamId, steamLevel, totalXp, level, " +
-                    "currentStreak, longestStreak, gamificationConfigVersion, lastSyncAt, " +
-                    "lastSyncError, playtimeBackfilled, personaName, avatarUrl, storeRegion, " +
-                    "pendingImportRecompute, lastSuccessfulWishlistReadAt, " +
-                    "pendingXpIntegrityCorrection) VALUES " +
-                    "(0, '76561198000000000', 42, 9876, 8, 3, 12, 5, 1700000050000, NULL, 1, " +
-                    "'Player One', 'avatar-url', 'PH', 1, 1700000060000, 1)",
+            previous.execSQL(
+                "INSERT INTO daily_progress (date, minutesPlayed, goalMinutesPlayed, questMet) " +
+                    "VALUES ('2026-08-13', 90, 60, 1)",
             )
-            database.execSQL(
-                "INSERT INTO cloud_historical_operations (operationId, account, " +
-                    "readerGeneration, endpointIdentity, selectedStartAt, fromAt, throughAt, " +
-                    "pagesFetched, transitionsFetched, acquisitionComplete, state, createdAt, " +
-                    "updatedAt) VALUES " +
-                    "('history-v42', '76561198000000001', 2, " +
-                    "'https://presence.example.test/readPresence', 10, 10, 20, 1, 4, 1, " +
-                    "'COMPLETE', 1, 2)",
-            )
-            database.execSQL(
-                "INSERT INTO cloud_historical_journals (operationId, account, " +
-                    "readerGeneration, endpointIdentity, state, payloadVersion, payloadJson, " +
-                    "updatedAt) VALUES " +
-                    "('history-v42', '76561198000000001', 2, " +
-                    "'https://presence.example.test/readPresence', 'APPLIED', 1, " +
-                    "'{\"appliedAt\":1700000070000}', 1700000070000)",
-            )
+            previous.seedV42ToV43Survivors()
         } finally {
-            database.close()
+            previous.close()
         }
 
         try {
             val migrated = migrationTestHelper.runMigrationsAndValidate(
-                databaseName,
-                43,
-                true,
-                BacklogiumDatabase.MIGRATION_42_43,
+                databaseName, 43, true, BacklogiumDatabase.MIGRATION_42_43,
             )
             try {
-                assertTableInfo(
-                    migrated,
-                    "player_profile",
-                    listOf(
-                        ColumnInfo("id", "INTEGER", notNull = true, pk = 1),
-                        ColumnInfo("steamId", "TEXT", notNull = true, pk = 0),
-                        ColumnInfo("steamLevel", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("totalXp", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("level", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("currentStreak", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("longestStreak", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("gamificationConfigVersion", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("lastSyncAt", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("lastSyncError", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("playtimeBackfilled", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("personaName", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("avatarUrl", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("storeRegion", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("pendingImportRecompute", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("lastSuccessfulWishlistReadAt", "INTEGER", notNull = false, pk = 0),
-                        ColumnInfo("pendingXpIntegrityCorrection", "INTEGER", notNull = true, pk = 0),
-                        ColumnInfo("confirmedLibrarySteamId", "TEXT", notNull = false, pk = 0),
-                        ColumnInfo("confirmedLibraryAt", "INTEGER", notNull = false, pk = 0),
-                    ),
-                )
+                // Legacy data survives the hop untouched.
                 migrated.query(
-                    "SELECT steamId, totalXp, playtimeBackfilled, pendingImportRecompute, " +
-                        "lastSyncAt, confirmedLibrarySteamId, confirmedLibraryAt " +
-                        "FROM player_profile WHERE id = 0",
+                    "SELECT startAt, endAt, minutes, open FROM sessions WHERE id = 7",
                 ).use { cursor ->
                     assertTrue(cursor.moveToFirst())
-                    assertEquals("76561198000000000", cursor.getString(0))
-                    assertEquals(9876L, cursor.getLong(1))
-                    assertEquals(1, cursor.getInt(2))
-                    assertEquals(1, cursor.getInt(3))
-                    assertEquals(1700000050000L, cursor.getLong(4))
-                    // No inference from a synced/imported/nonempty profile: still unconfirmed.
-                    assertTrue(cursor.isNull(5))
-                    assertTrue(cursor.isNull(6))
-                    assertFalse(cursor.moveToNext())
+                    assertEquals(1700000010000L, cursor.getLong(0))
+                    assertEquals(1700005410000L, cursor.getLong(1))
+                    assertEquals(90, cursor.getInt(2))
+                    assertEquals(0, cursor.getInt(3))
                 }
                 migrated.query(
-                    "SELECT appId, backfillMinutes FROM games ORDER BY appId",
-                ).use { cursor ->
-                    assertTrue(cursor.moveToFirst())
-                    assertEquals(440L, cursor.getLong(0))
-                    assertEquals(42, cursor.getInt(1))
-                    assertTrue(cursor.moveToNext())
-                    assertEquals(441L, cursor.getLong(0))
-                    assertEquals(17, cursor.getInt(1))
-                    assertFalse(cursor.moveToNext())
-                }
-                migrated.query(
-                    "SELECT minutes, open, recoveredSharedPlay, timingInformedSteamPlay " +
-                        "FROM sessions WHERE id = 7",
+                    "SELECT minutesPlayed, goalMinutesPlayed, questMet " +
+                        "FROM daily_progress WHERE date = '2026-08-13'",
                 ).use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals(90, cursor.getInt(0))
+                    assertEquals(60, cursor.getInt(1))
+                    assertEquals(1, cursor.getInt(2))
+                }
+                migrated.query(
+                    "SELECT backfillMinutes, manualSharedMinutes FROM games WHERE appId = 440",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(42, cursor.getInt(0))
                     assertEquals(0, cursor.getInt(1))
-                    assertEquals("FULL", cursor.getString(2))
-                    assertEquals("FULL", cursor.getString(3))
-                    assertFalse(cursor.moveToNext())
                 }
+
+                // MigrationTestHelper validates the complete schema against the exported v43
+                // schema; explicit PRAGMA checks make every recovery table/key/index/FK visible.
+                migrated.assertRecoverySchema()
+                migrated.assertV42ToV43Survivors()
+                migrated.query("SELECT totalXp, level, longestStreak FROM player_profile WHERE id = 0").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1200, cursor.getInt(0))
+                    assertEquals(7, cursor.getInt(1))
+                    assertEquals(19, cursor.getInt(2))
+                }
+
+                // Only matching-account owned games with representable high-waters are seeded;
+                // the shared game and negative legacy detector value never become baselines.
                 migrated.query(
-                    "SELECT operationId, startChoice, zoneId, lastIngestedPageNumber, state " +
-                        "FROM cloud_historical_operations",
+                    "SELECT account, appId, baselineEpoch, highWaterMinutes, lastObservationAt, " +
+                        "lastObservationDate, lastObservationZone, clockState " +
+                        "FROM game_recovery_state ORDER BY appId",
                 ).use { cursor ->
                     assertTrue(cursor.moveToFirst())
-                    assertEquals("history-v42", cursor.getString(0))
-                    assertEquals("RECENT_31_DAYS", cursor.getString(1))
-                    assertEquals("UTC", cursor.getString(2))
-                    assertEquals(0, cursor.getInt(3))
-                    assertEquals("COMPLETE", cursor.getString(4))
+                    assertEquals("76561198000000000", cursor.getString(0))
+                    assertEquals(440L, cursor.getLong(1))
+                    assertEquals(1L, cursor.getLong(2))
+                    // The diff baseline, not the raw current total: no lifetime minutes imported.
+                    assertEquals(500L, cursor.getLong(3))
+                    // lastSyncedAt is trustworthy when present...
+                    assertEquals(1700000000000L, cursor.getLong(4))
+                    // ...but the historical zone/date are unknown, never invented.
+                    assertTrue(cursor.isNull(5))
+                    assertTrue(cursor.isNull(6))
+                    assertEquals("UNKNOWN", cursor.getString(7))
+                    assertTrue(cursor.moveToNext())
+                    assertEquals(443L, cursor.getLong(1))
+                    assertEquals(11L, cursor.getLong(3))
+                    assertTrue(cursor.isNull(4)) // lastSyncedAt=0 is not a trustworthy instant
                     assertFalse(cursor.moveToNext())
                 }
-                migrated.query(
-                    "SELECT state, payloadVersion, payloadJson, updatedAt " +
-                        "FROM cloud_historical_journals",
-                ).use { cursor ->
+
+                // Everything the attribution committer writes starts empty on an upgraded install.
+                listOf(
+                    "playtime_daily_snapshots",
+                    "playtime_contributions",
+                    "recovery_timed_placements",
+                    "recovery_unknown_allocations",
+                    "recovery_allocation_recipes",
+                    "recovery_journal",
+                    "recovery_local_evidence",
+                ).forEach { table ->
+                    migrated.query("SELECT COUNT(*) FROM `$table`").use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals("$table starts empty on upgrade", 0, cursor.getInt(0))
+                    }
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v42ToV43_blankIdentityAndSharedGamesSeedNoSnapshotBaseline() {
+        val databaseName = "migration-v42-blank-${System.nanoTime()}"
+        val previous = migrationTestHelper.createDatabase(databaseName, 42)
+        try {
+            // A pre-recovery install that never finished account setup has a blank identity.
+            previous.execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                    "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                    "(440, 'Owned Game', '', 570, 0, 500, 0, NULL, 1700000000000, 0, 'STEAM_OWNED', " +
+                    "NULL, NULL, NULL, 0)",
+            )
+            previous.execSQL(
+                "INSERT INTO player_profile " +
+                    "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                    "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
+                    "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
+                    "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+                    "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, " +
+                    "NULL, NULL, NULL, 0, NULL, 0)",
+            )
+        } finally {
+            previous.close()
+        }
+
+        try {
+            val migrated = migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 43, true, BacklogiumDatabase.MIGRATION_42_43,
+            )
+            try {
+                migrated.query("SELECT COUNT(*) FROM game_recovery_state").use { cursor ->
                     assertTrue(cursor.moveToFirst())
-                    assertEquals("APPLIED", cursor.getString(0))
-                    assertEquals(1, cursor.getInt(1))
-                    assertEquals("{\"appliedAt\":1700000070000}", cursor.getString(2))
-                    assertEquals(1700000070000L, cursor.getLong(3))
-                    assertFalse(cursor.moveToNext())
+                    // A blank identity seeds nothing: the next successful owned read is a genuine
+                    // first baseline, and a lifetime total is never imported as play.
+                    assertEquals(0, cursor.getInt(0))
                 }
             } finally {
                 migrated.close()
@@ -1965,12 +2032,325 @@ class MigrationTest {
         assertEquals(expected, actual)
     }
 
+    private fun SupportSQLiteDatabase.assertV42ToV43Survivors() {
+        query(
+            "SELECT source, isGoal, targetMinutes, backfillMinutes, manualSharedMinutes, " +
+                "firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games WHERE appId = 440",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("STEAM_OWNED", cursor.getString(0))
+            assertEquals(1, cursor.getInt(1))
+            assertEquals(24000, cursor.getInt(2))
+            assertEquals(42, cursor.getInt(3))
+            assertEquals(0, cursor.getInt(4))
+            assertEquals(1700000000000L, cursor.getLong(5))
+            assertEquals(1700000050000L, cursor.getLong(6))
+            assertEquals(1700000060000L, cursor.getLong(7))
+            assertFalse(cursor.moveToNext())
+        }
+        query(
+            "SELECT source, isGoal, targetMinutes, backfillMinutes, manualSharedMinutes, " +
+                "firstSeenAt, lastPlayedAt, returnedToPlayAt FROM games WHERE appId = 441",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("FAMILY_SHARED", cursor.getString(0))
+            assertEquals(1, cursor.getInt(1))
+            assertEquals(180, cursor.getInt(2))
+            assertEquals(0, cursor.getInt(3))
+            assertEquals(30, cursor.getInt(4))
+            assertEquals(1700000000001L, cursor.getLong(5))
+            assertTrue(cursor.isNull(6))
+            assertTrue(cursor.isNull(7))
+            assertFalse(cursor.moveToNext())
+        }
+        query(
+            "SELECT id, appId, startAt, endAt, minutes, open, openAppId, " +
+                "recoveredSharedPlay, timingInformedSteamPlay FROM sessions ORDER BY id",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(7L, cursor.getLong(0))
+            assertEquals(440L, cursor.getLong(1))
+            assertEquals(1700000010000L, cursor.getLong(2))
+            assertEquals(1700005410000L, cursor.getLong(3))
+            assertEquals(90, cursor.getInt(4))
+            assertEquals(0, cursor.getInt(5))
+            assertTrue(cursor.isNull(6))
+            assertEquals("PARTIAL", cursor.getString(7))
+            assertEquals("FULL", cursor.getString(8))
+            assertTrue(cursor.moveToNext())
+            assertEquals(8L, cursor.getLong(0))
+            assertEquals(441L, cursor.getLong(1))
+            assertEquals(1700000100000L, cursor.getLong(2))
+            assertTrue(cursor.isNull(3))
+            assertEquals(12, cursor.getInt(4))
+            assertEquals(1, cursor.getInt(5))
+            assertEquals(441L, cursor.getLong(6))
+            assertEquals("NONE", cursor.getString(7))
+            assertEquals("PARTIAL", cursor.getString(8))
+            assertFalse(cursor.moveToNext())
+        }
+        query(
+            "SELECT date, minutesPlayed, goalMinutesPlayed, questMet " +
+                "FROM daily_progress ORDER BY date",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("2026-08-13", cursor.getString(0))
+            assertEquals(90, cursor.getInt(1))
+            assertEquals(60, cursor.getInt(2))
+            assertEquals(1, cursor.getInt(3))
+            assertTrue(cursor.moveToNext())
+            assertEquals("2026-08-14", cursor.getString(0))
+            assertEquals(0, cursor.getInt(1))
+            assertEquals(0, cursor.getInt(2))
+            assertEquals(0, cursor.getInt(3))
+            assertFalse(cursor.moveToNext())
+        }
+        query(
+            "SELECT steamId, currentStreak, gamificationConfigVersion, playtimeBackfilled, storeRegion, " +
+                "pendingImportRecompute, lastSuccessfulWishlistReadAt, " +
+                "pendingXpIntegrityCorrection FROM player_profile WHERE id = 0",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("76561198000000000", cursor.getString(0))
+            assertEquals(3, cursor.getInt(1))
+            assertEquals(9, cursor.getInt(2))
+            assertEquals(1, cursor.getInt(3))
+            assertEquals("US", cursor.getString(4))
+            assertEquals(1, cursor.getInt(5))
+            assertEquals(1700000090000L, cursor.getLong(6))
+            assertEquals(1, cursor.getInt(7))
+            assertFalse(cursor.moveToNext())
+        }
+        query(
+            "SELECT apiName, unlocked, globalPercent, snapshotPercent, hidden, retired " +
+                "FROM achievements WHERE appId = 440 AND apiName = 'ACH_HIDDEN_RETIRED'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("ACH_HIDDEN_RETIRED", cursor.getString(0))
+            assertEquals(0, cursor.getInt(1))
+            assertEquals(7.5, cursor.getDouble(2), 0.0)
+            assertEquals(8.5, cursor.getDouble(3), 0.0)
+            assertEquals(1, cursor.getInt(4))
+            assertEquals(1, cursor.getInt(5))
+            assertFalse(cursor.moveToNext())
+        }
+        query("SELECT appId, hiddenAt, fromBulkAction FROM hidden_games").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(441L, cursor.getLong(0))
+            assertEquals(1700000070000L, cursor.getLong(1))
+            assertEquals(1, cursor.getInt(2))
+            assertFalse(cursor.moveToNext())
+        }
+    }
+
+    private fun SupportSQLiteDatabase.assertRecoverySchema() {
+        val expectedColumns = mapOf(
+            "game_recovery_state" to setOf(
+                "account", "appId", "baselineEpoch", "highWaterMinutes", "lastObservationAt",
+                "lastObservationDate", "lastObservationZone", "clockState", "updatedAt",
+            ),
+            "playtime_daily_snapshots" to setOf(
+                "account", "appId", "date", "zone", "absoluteMinutes", "observedAt", "classification",
+            ),
+            "playtime_contributions" to setOf(
+                "contributionId", "account", "appId", "baselineEpoch", "fromMinutes", "toMinutes",
+                "windowStartAt", "windowEndAt", "authorizedMinutes", "revision", "provenance", "zone",
+                "observedZone", "createdAt",
+            ),
+            "recovery_timed_placements" to setOf(
+                "placementId", "contributionId", "account", "appId", "revision", "sessionId", "minutes",
+                "creditedDate", "zone", "evidenceIdentity", "evidenceQuality", "hiddenAtCredit",
+                "goalAtCredit", "superseded", "protected", "createdAt",
+            ),
+            "recovery_unknown_allocations" to setOf(
+                "placementId", "contributionId", "account", "appId", "revision", "date", "minutes",
+                "method", "zone", "windowStartAt", "windowEndAt", "pendingDate", "hiddenAtCredit",
+                "goalAtCredit", "superseded", "protected", "createdAt",
+            ),
+            "recovery_allocation_recipes" to setOf(
+                "contributionId", "account", "appId", "revision", "method", "quotient", "remainderCount",
+                "dateStart", "dateEnd", "eligibleCount", "zone", "windowStartAt", "windowEndAt",
+                "excludedDatesCsv", "pending", "materializedMinutes", "materializedThroughDate",
+                "hiddenAtCredit", "goalAtCredit", "updatedAt",
+            ),
+            "recovery_journal" to setOf(
+                "operationId", "contributionId", "account", "appId", "priorRevision", "currentRevision",
+                "affectedDatesCsv", "replacedPlacementIdsCsv", "replacedRecipeJson", "derivedStatus",
+                "payloadJson", "createdAt", "updatedAt",
+            ),
+            "recovery_local_evidence" to setOf(
+                "account", "appId", "generation", "firstSampleAt", "lastSuccessAt", "observedUntil",
+                "continuityLossFrom", "continuityLossRecoveredAt", "windowStart", "updatedAt",
+            ),
+        )
+        expectedColumns.forEach { (table, columns) -> assertColumnNames(this, table, columns) }
+        assertPrimaryKeyColumns(this, "game_recovery_state", listOf("account", "appId"))
+        assertPrimaryKeyColumns(this, "playtime_daily_snapshots", listOf("account", "appId", "date"))
+        assertPrimaryKeyColumns(this, "playtime_contributions", listOf("contributionId"))
+        assertPrimaryKeyColumns(this, "recovery_timed_placements", listOf("placementId"))
+        assertPrimaryKeyColumns(this, "recovery_unknown_allocations", listOf("placementId"))
+        assertPrimaryKeyColumns(this, "recovery_allocation_recipes", listOf("contributionId"))
+        assertPrimaryKeyColumns(this, "recovery_journal", listOf("operationId"))
+        assertPrimaryKeyColumns(this, "recovery_local_evidence", listOf("account", "appId", "generation"))
+        assertIndexNames(this, "playtime_contributions", setOf("index_playtime_contributions_account_appId"))
+        assertIndexNames(
+            this,
+            "recovery_timed_placements",
+            setOf(
+                "index_recovery_timed_placements_contributionId",
+                "index_recovery_timed_placements_account_appId",
+                "index_recovery_timed_placements_sessionId",
+            ),
+        )
+        assertIndexNames(
+            this,
+            "recovery_unknown_allocations",
+            setOf(
+                "index_recovery_unknown_allocations_contributionId",
+                "index_recovery_unknown_allocations_account_appId",
+                "index_recovery_unknown_allocations_account_date",
+            ),
+        )
+        assertIndexNames(
+            this,
+            "recovery_journal",
+            setOf("index_recovery_journal_contributionId", "index_recovery_journal_account_derivedStatus"),
+        )
+        listOf(
+            "recovery_timed_placements",
+            "recovery_unknown_allocations",
+            "recovery_allocation_recipes",
+            "recovery_journal",
+        ).forEach { table -> assertRecoveryContributionForeignKey(this, table) }
+    }
+
+    private fun assertColumnNames(database: SupportSQLiteDatabase, table: String, expected: Set<String>) {
+        val actual = mutableSetOf<String>()
+        database.query("PRAGMA table_info(`$table`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) actual += cursor.getString(nameIndex)
+        }
+        assertEquals("$table columns", expected, actual)
+    }
+
+    private fun assertPrimaryKeyColumns(
+        database: SupportSQLiteDatabase,
+        table: String,
+        expected: List<String>,
+    ) {
+        val actual = mutableListOf<Pair<Int, String>>()
+        database.query("PRAGMA table_info(`$table`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            val primaryKeyIndex = cursor.getColumnIndexOrThrow("pk")
+            while (cursor.moveToNext()) {
+                val order = cursor.getInt(primaryKeyIndex)
+                if (order > 0) actual += order to cursor.getString(nameIndex)
+            }
+        }
+        assertEquals("$table primary key columns", expected, actual.sortedBy { it.first }.map { it.second })
+    }
+
+    private fun assertIndexNames(database: SupportSQLiteDatabase, table: String, expected: Set<String>) {
+        val actual = mutableSetOf<String>()
+        database.query("PRAGMA index_list(`$table`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) actual += cursor.getString(nameIndex)
+        }
+        assertTrue("$table is missing indices ${expected - actual}", actual.containsAll(expected))
+    }
+
+    private fun assertRecoveryContributionForeignKey(database: SupportSQLiteDatabase, table: String) {
+        database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
+            val parentTableIndex = cursor.getColumnIndexOrThrow("table")
+            val fromIndex = cursor.getColumnIndexOrThrow("from")
+            val toIndex = cursor.getColumnIndexOrThrow("to")
+            val onDeleteIndex = cursor.getColumnIndexOrThrow("on_delete")
+            assertTrue("$table contribution foreign key", cursor.moveToFirst())
+            assertEquals("playtime_contributions", cursor.getString(parentTableIndex))
+            assertEquals("contributionId", cursor.getString(fromIndex))
+            assertEquals("contributionId", cursor.getString(toIndex))
+            assertEquals("CASCADE", cursor.getString(onDeleteIndex))
+            assertFalse(cursor.moveToNext())
+        }
+    }
+
     private fun assertForeignKeyReferencesGames(database: SupportSQLiteDatabase, table: String) {
         database.query("PRAGMA foreign_key_list(`$table`)").use { cursor ->
             val tableIndex = cursor.getColumnIndexOrThrow("table")
             assertTrue(cursor.moveToFirst())
             assertEquals("games", cursor.getString(tableIndex))
         }
+    }
+
+    /** The original v1 schema has no exported JSON, so build its four baseline tables directly. */
+    private fun openRawV1Database(databaseName: String): SupportSQLiteOpenHelper {
+        val callback = object : SupportSQLiteOpenHelper.Callback(1) {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE `games` (" +
+                        "`appId` INTEGER NOT NULL, `name` TEXT NOT NULL, `iconUrl` TEXT NOT NULL, " +
+                        "`playtimeForever` INTEGER NOT NULL, `playtime2Weeks` INTEGER NOT NULL, " +
+                        "`lastPlaytime` INTEGER NOT NULL, `isGoal` INTEGER NOT NULL, " +
+                        "`targetMinutes` INTEGER, `lastSyncedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`appId`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE `sessions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER, " +
+                        "`minutes` INTEGER NOT NULL, `open` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX `index_sessions_appId` ON `sessions` (`appId`)")
+                db.execSQL(
+                    "CREATE TABLE `daily_progress` (" +
+                        "`date` TEXT NOT NULL, `minutesPlayed` INTEGER NOT NULL, " +
+                        "`goalMinutesPlayed` INTEGER NOT NULL, `questMet` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`date`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE `player_profile` (" +
+                        "`id` INTEGER NOT NULL, `steamId` TEXT NOT NULL, `steamLevel` INTEGER NOT NULL, " +
+                        "`totalXp` INTEGER NOT NULL, `level` INTEGER NOT NULL, " +
+                        "`currentStreak` INTEGER NOT NULL, `longestStreak` INTEGER NOT NULL, " +
+                        "`lastSyncAt` INTEGER NOT NULL, `lastSyncError` TEXT, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE TABLE room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)")
+                db.execSQL(
+                    "INSERT INTO room_master_table (id, identity_hash) VALUES(42, 'raw-v1-fixture')",
+                )
+            }
+
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        return FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration(context, databaseName, callback),
+        )
+    }
+
+    private fun SupportSQLiteDatabase.seedRawV1Data() {
+        execSQL(
+            "INSERT INTO games " +
+                "(appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
+                "isGoal, targetMinutes, lastSyncedAt) VALUES " +
+                "(440, 'Team Fortress 2', 'icon-440', 570, 67, 500, 1, 24000, 1700000000000), " +
+                "(441, 'Borrowed Game', 'icon-441', 0, 0, 0, 0, NULL, 1700000000001)",
+        )
+        execSQL(
+            "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open) VALUES " +
+                "(7, 440, 1700000010000, 1700005410000, 90, 0)",
+        )
+        execSQL(
+            "INSERT INTO daily_progress (date, minutesPlayed, goalMinutesPlayed, questMet) " +
+                "VALUES ('2026-08-13', 90, 60, 1)",
+        )
+        execSQL(
+            "INSERT INTO player_profile " +
+                "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
+                "lastSyncAt, lastSyncError) VALUES " +
+                "(0, '76561198000000000', 42, 1200, 7, 3, 19, 1700000000000, NULL)",
+        )
     }
 
     private fun openRawV13Database(databaseName: String): SupportSQLiteOpenHelper {
@@ -2148,6 +2528,60 @@ class MigrationTest {
         )
     }
 
+    /** Add v42-era user state which the final additive recovery migration must leave alone. */
+    private fun SupportSQLiteDatabase.seedV42ToV43Survivors() {
+        execSQL(
+            "UPDATE games SET isGoal = 1, targetMinutes = 24000, backfillMinutes = 42, " +
+                "source = 'STEAM_OWNED', " +
+                "firstSeenAt = 1700000000000, lastPlayedAt = 1700000050000, " +
+                "returnedToPlayAt = 1700000060000, manualSharedMinutes = 0 WHERE appId = 440",
+        )
+        execSQL(
+            "UPDATE games SET isGoal = 1, targetMinutes = 180, source = 'FAMILY_SHARED', " +
+                "firstSeenAt = 1700000000001, lastPlayedAt = NULL, returnedToPlayAt = NULL, " +
+                "manualSharedMinutes = 30 WHERE appId = 441",
+        )
+        execSQL(
+            "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                "lastPlaytime, isGoal, targetMinutes, lastSyncedAt, backfillMinutes, source, " +
+                "firstSeenAt, lastPlayedAt, returnedToPlayAt, manualSharedMinutes) VALUES " +
+                "(442, 'Negative Baseline', '', 0, 0, -1, 0, NULL, 1700000000002, 0, " +
+                "'STEAM_OWNED', NULL, NULL, NULL, 0), " +
+                "(443, 'Zero Sync Instant', '', 11, 0, 11, 0, NULL, 0, 0, 'STEAM_OWNED', " +
+                "NULL, NULL, NULL, 0)",
+        )
+        execSQL(
+            "UPDATE sessions SET recoveredSharedPlay = 'PARTIAL', " +
+                "timingInformedSteamPlay = 'FULL' WHERE id = 7",
+        )
+        execSQL(
+            "INSERT INTO sessions (id, appId, startAt, endAt, minutes, open, openAppId, " +
+                "recoveredSharedPlay, timingInformedSteamPlay) VALUES " +
+                "(8, 441, 1700000100000, NULL, 12, 1, 441, 'NONE', 'PARTIAL')",
+        )
+        execSQL(
+            "INSERT INTO daily_progress (date, minutesPlayed, goalMinutesPlayed, questMet) " +
+                "VALUES ('2026-08-14', 0, 0, 0)",
+        )
+        execSQL(
+            "INSERT INTO hidden_games (appId, hiddenAt, fromBulkAction) " +
+                "VALUES (441, 1700000070000, 1)",
+        )
+        execSQL(
+            "INSERT INTO achievements " +
+                "(appId, apiName, displayName, iconUrl, unlocked, unlockedAt, globalPercent, " +
+                "snapshotPercent, description, hidden, retired, fetchedAt) VALUES " +
+                "(440, 'ACH_HIDDEN_RETIRED', 'Old hidden achievement', 'achievement-hidden', " +
+                "0, NULL, 7.5, 8.5, 'Legacy hidden text', 1, 1, 1700000080000)",
+        )
+        execSQL(
+            "UPDATE player_profile SET playtimeBackfilled = 1, gamificationConfigVersion = 9, " +
+                "storeRegion = 'US', " +
+                "pendingImportRecompute = 1, lastSuccessfulWishlistReadAt = 1700000090000, " +
+                "pendingXpIntegrityCorrection = 1 WHERE id = 0",
+        )
+    }
+
     private fun SupportSQLiteDatabase.seedRepresentativeData() {
         execSQL(
             "INSERT INTO games " +
@@ -2202,6 +2636,9 @@ class MigrationTest {
     }
 
     private fun SupportSQLiteDatabase.assertRepresentativeData() {
+        assertRecoverySchema()
+        assertV42ToV43Survivors()
+
         query(
             "SELECT appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, " +
                 "isGoal, targetMinutes, lastSyncedAt, backfillMinutes FROM games WHERE appId = 440",
@@ -2376,6 +2813,47 @@ class MigrationTest {
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
             assertEquals(0, cursor.getInt(0))
+        }
+
+        // v42→v43 seeded recovery state from the matching-account owned diff baseline, honestly:
+        // zone/date stay unknown and the high-water is `lastPlaytime`, so no lifetime total is
+        // imported and the next reading only ever recovers post-baseline minutes.
+        query(
+            "SELECT account, appId, highWaterMinutes, lastObservationAt, " +
+                "lastObservationDate, lastObservationZone, clockState " +
+                "FROM game_recovery_state ORDER BY appId",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals("76561198000000000", cursor.getString(0))
+            assertEquals(440L, cursor.getLong(1))
+            assertEquals(12340, cursor.getInt(2))
+            assertFalse(
+                "A pre-recovery install never captured a local date for its baseline",
+                cursor.isNull(3),
+            )
+            assertTrue(cursor.isNull(4))
+            assertTrue(cursor.isNull(5))
+            assertEquals("UNKNOWN", cursor.getString(6))
+            assertTrue(cursor.moveToNext())
+            assertEquals(443L, cursor.getLong(1))
+            assertEquals(11, cursor.getInt(2))
+            assertTrue(cursor.isNull(3))
+            assertFalse(cursor.moveToNext())
+        }
+
+        listOf(
+            "playtime_daily_snapshots",
+            "playtime_contributions",
+            "recovery_timed_placements",
+            "recovery_unknown_allocations",
+            "recovery_allocation_recipes",
+            "recovery_journal",
+            "recovery_local_evidence",
+        ).forEach { table ->
+            query("SELECT COUNT(*) FROM `$table`").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("$table starts empty on upgrade", 0, cursor.getInt(0))
+            }
         }
     }
 }

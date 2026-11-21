@@ -47,28 +47,6 @@ data class PlayerProfile(
      * atomically with the raw data; cleared by the next completed recompute regardless of source.
      */
     val pendingImportRecompute: Boolean = false,
-    /**
-     * Provenance of the pending recompute behind [pendingImportRecompute]: the name of the
-     * [com.example.backlogium.domain.RecomputeSource] that must present the recovery
-     * (stabilize-first-run-setup, tasks 5.5/5.6). "BACKFILL" marks an explicit Steam-history
-     * import; "RESTORE" (or NULL, which predates this column and can only have been a backup
-     * merge) marks a backup restore. Both are administrative/non-earned, but the recovery and
-     * every marker-clearing derived writer must know which one it is resolving so imported
-     * historical XP is never announced as newly earned play. NULL is the legacy default and
-     * never grants or changes any behavior on its own.
-     */
-    val pendingImportRecomputeSource: String? = null,
-    /**
-     * The account whose raw transaction left the pending marker, paired with
-     * [pendingImportRecomputeSource]. Recovery refuses to recompute a marker owned by a previous
-     * account over the replacement account; the account reset clears the pair with the marker.
-     */
-    val pendingImportRecomputeSteamId: String? = null,
-    /**
-     * The opaque explicit request identity behind a BACKFILL pending marker (the consent the
-     * import was executed under), for full source/request provenance. Null for RESTORE markers.
-     */
-    val pendingImportRecomputeRequestId: String? = null,
     /** The last successful wishlist membership read; null until Steam has answered successfully. */
     val lastSuccessfulWishlistReadAt: Long? = null,
     /**
@@ -81,22 +59,6 @@ data class PlayerProfile(
      * firing a cascade of level-up events for progress earned long ago (design.md Decision 3).
      */
     val pendingXpIntegrityCorrection: Boolean = false,
-    /**
-     * Explicit, durable evidence that an accepted owned-library response established a baseline for
-     * the account named by [steamId] — including an explicitly confirmed empty library. Written
-     * together with [confirmedLibraryAt] (both transition NULL→value atomically) inside the same
-     * transaction that commits the accepted raw library (stabilize-first-run-setup). NULL is
-     * deliberately the only admissible "not confirmed" state: readiness is never inferred from a
-     * nonempty `games` table, a generic/restored [lastSyncAt], [playtimeBackfilled], or scheduler
-     * success alone. Account reset clears it with the rest of the account-owned state
-     * ([com.example.backlogium.data.local.dao.PlayerProfileDao.resetForAccountChange]).
-     */
-    val confirmedLibrarySteamId: String? = null,
-    /**
-     * Commit time (epoch millis) at which [confirmedLibrarySteamId] was durably recorded; paired
-     * with it, never meaningful alone. A later failed refresh must leave both intact.
-     */
-    val confirmedLibraryAt: Long? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 0

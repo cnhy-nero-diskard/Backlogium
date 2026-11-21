@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 43,
-    "identityHash": "f47b4028e84f7d685f36a9efa6cee419",
+    "identityHash": "fa2900d2b5e4a9442487bea9d3806d45",
     "entities": [
       {
         "tableName": "games",
@@ -246,7 +246,7 @@
       },
       {
         "tableName": "player_profile",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `steamId` TEXT NOT NULL, `steamLevel` INTEGER NOT NULL, `totalXp` INTEGER NOT NULL, `level` INTEGER NOT NULL, `currentStreak` INTEGER NOT NULL, `longestStreak` INTEGER NOT NULL, `gamificationConfigVersion` INTEGER NOT NULL, `lastSyncAt` INTEGER NOT NULL, `lastSyncError` TEXT, `playtimeBackfilled` INTEGER NOT NULL, `personaName` TEXT, `avatarUrl` TEXT, `storeRegion` TEXT, `pendingImportRecompute` INTEGER NOT NULL, `lastSuccessfulWishlistReadAt` INTEGER, `pendingXpIntegrityCorrection` INTEGER NOT NULL, `confirmedLibrarySteamId` TEXT, `confirmedLibraryAt` INTEGER, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `steamId` TEXT NOT NULL, `steamLevel` INTEGER NOT NULL, `totalXp` INTEGER NOT NULL, `level` INTEGER NOT NULL, `currentStreak` INTEGER NOT NULL, `longestStreak` INTEGER NOT NULL, `gamificationConfigVersion` INTEGER NOT NULL, `lastSyncAt` INTEGER NOT NULL, `lastSyncError` TEXT, `playtimeBackfilled` INTEGER NOT NULL, `personaName` TEXT, `avatarUrl` TEXT, `storeRegion` TEXT, `pendingImportRecompute` INTEGER NOT NULL, `lastSuccessfulWishlistReadAt` INTEGER, `pendingXpIntegrityCorrection` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -344,16 +344,6 @@
             "columnName": "pendingXpIntegrityCorrection",
             "affinity": "INTEGER",
             "notNull": true
-          },
-          {
-            "fieldPath": "confirmedLibrarySteamId",
-            "columnName": "confirmedLibrarySteamId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "confirmedLibraryAt",
-            "columnName": "confirmedLibraryAt",
-            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -2315,11 +2305,864 @@
             ]
           }
         ]
+      },
+      {
+        "tableName": "game_recovery_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `baselineEpoch` INTEGER NOT NULL, `highWaterMinutes` INTEGER NOT NULL, `lastObservationAt` INTEGER, `lastObservationDate` TEXT, `lastObservationZone` TEXT, `clockState` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`account`, `appId`))",
+        "fields": [
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baselineEpoch",
+            "columnName": "baselineEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "highWaterMinutes",
+            "columnName": "highWaterMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastObservationAt",
+            "columnName": "lastObservationAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastObservationDate",
+            "columnName": "lastObservationDate",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastObservationZone",
+            "columnName": "lastObservationZone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "clockState",
+            "columnName": "clockState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "account",
+            "appId"
+          ]
+        }
+      },
+      {
+        "tableName": "playtime_daily_snapshots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `date` TEXT NOT NULL, `zone` TEXT NOT NULL, `absoluteMinutes` INTEGER NOT NULL, `observedAt` INTEGER NOT NULL, `classification` TEXT NOT NULL, PRIMARY KEY(`account`, `appId`, `date`))",
+        "fields": [
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "date",
+            "columnName": "date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zone",
+            "columnName": "zone",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "absoluteMinutes",
+            "columnName": "absoluteMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedAt",
+            "columnName": "observedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classification",
+            "columnName": "classification",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "account",
+            "appId",
+            "date"
+          ]
+        }
+      },
+      {
+        "tableName": "playtime_contributions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contributionId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `baselineEpoch` INTEGER NOT NULL, `fromMinutes` INTEGER NOT NULL, `toMinutes` INTEGER NOT NULL, `windowStartAt` INTEGER, `windowEndAt` INTEGER NOT NULL, `authorizedMinutes` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `provenance` TEXT NOT NULL, `zone` TEXT, `observedZone` TEXT, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`contributionId`))",
+        "fields": [
+          {
+            "fieldPath": "contributionId",
+            "columnName": "contributionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baselineEpoch",
+            "columnName": "baselineEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromMinutes",
+            "columnName": "fromMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toMinutes",
+            "columnName": "toMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowStartAt",
+            "columnName": "windowStartAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windowEndAt",
+            "columnName": "windowEndAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authorizedMinutes",
+            "columnName": "authorizedMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provenance",
+            "columnName": "provenance",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zone",
+            "columnName": "zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "observedZone",
+            "columnName": "observedZone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "contributionId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_playtime_contributions_account_appId",
+            "unique": false,
+            "columnNames": [
+              "account",
+              "appId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_playtime_contributions_account_appId` ON `${TABLE_NAME}` (`account`, `appId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "recovery_timed_placements",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placementId` TEXT NOT NULL, `contributionId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `sessionId` INTEGER, `minutes` INTEGER NOT NULL, `creditedDate` TEXT NOT NULL, `zone` TEXT NOT NULL, `evidenceIdentity` TEXT, `evidenceQuality` TEXT NOT NULL, `hiddenAtCredit` INTEGER NOT NULL, `goalAtCredit` INTEGER NOT NULL, `superseded` INTEGER NOT NULL, `protected` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`placementId`), FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placementId",
+            "columnName": "placementId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contributionId",
+            "columnName": "contributionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "minutes",
+            "columnName": "minutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "creditedDate",
+            "columnName": "creditedDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zone",
+            "columnName": "zone",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evidenceIdentity",
+            "columnName": "evidenceIdentity",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "evidenceQuality",
+            "columnName": "evidenceQuality",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hiddenAtCredit",
+            "columnName": "hiddenAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "goalAtCredit",
+            "columnName": "goalAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "superseded",
+            "columnName": "superseded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "protected",
+            "columnName": "protected",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placementId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_recovery_timed_placements_contributionId",
+            "unique": false,
+            "columnNames": [
+              "contributionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_timed_placements_contributionId` ON `${TABLE_NAME}` (`contributionId`)"
+          },
+          {
+            "name": "index_recovery_timed_placements_account_appId",
+            "unique": false,
+            "columnNames": [
+              "account",
+              "appId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_timed_placements_account_appId` ON `${TABLE_NAME}` (`account`, `appId`)"
+          },
+          {
+            "name": "index_recovery_timed_placements_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_timed_placements_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "playtime_contributions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contributionId"
+            ],
+            "referencedColumns": [
+              "contributionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "recovery_unknown_allocations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`placementId` TEXT NOT NULL, `contributionId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `date` TEXT, `minutes` INTEGER NOT NULL, `method` TEXT NOT NULL, `zone` TEXT, `windowStartAt` INTEGER, `windowEndAt` INTEGER, `pendingDate` INTEGER NOT NULL, `hiddenAtCredit` INTEGER NOT NULL, `goalAtCredit` INTEGER NOT NULL, `superseded` INTEGER NOT NULL, `protected` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`placementId`), FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "placementId",
+            "columnName": "placementId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contributionId",
+            "columnName": "contributionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "date",
+            "columnName": "date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "minutes",
+            "columnName": "minutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "method",
+            "columnName": "method",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zone",
+            "columnName": "zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "windowStartAt",
+            "columnName": "windowStartAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windowEndAt",
+            "columnName": "windowEndAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "pendingDate",
+            "columnName": "pendingDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hiddenAtCredit",
+            "columnName": "hiddenAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "goalAtCredit",
+            "columnName": "goalAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "superseded",
+            "columnName": "superseded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "protected",
+            "columnName": "protected",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "placementId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_recovery_unknown_allocations_contributionId",
+            "unique": false,
+            "columnNames": [
+              "contributionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_unknown_allocations_contributionId` ON `${TABLE_NAME}` (`contributionId`)"
+          },
+          {
+            "name": "index_recovery_unknown_allocations_account_appId",
+            "unique": false,
+            "columnNames": [
+              "account",
+              "appId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_unknown_allocations_account_appId` ON `${TABLE_NAME}` (`account`, `appId`)"
+          },
+          {
+            "name": "index_recovery_unknown_allocations_account_date",
+            "unique": false,
+            "columnNames": [
+              "account",
+              "date"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_unknown_allocations_account_date` ON `${TABLE_NAME}` (`account`, `date`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "playtime_contributions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contributionId"
+            ],
+            "referencedColumns": [
+              "contributionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "recovery_allocation_recipes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contributionId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `method` TEXT NOT NULL, `quotient` INTEGER, `remainderCount` INTEGER, `dateStart` TEXT, `dateEnd` TEXT, `eligibleCount` INTEGER NOT NULL, `zone` TEXT, `windowStartAt` INTEGER, `windowEndAt` INTEGER, `excludedDatesCsv` TEXT, `pending` INTEGER NOT NULL, `materializedMinutes` INTEGER NOT NULL, `materializedThroughDate` TEXT, `hiddenAtCredit` INTEGER NOT NULL, `goalAtCredit` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`contributionId`), FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "contributionId",
+            "columnName": "contributionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "method",
+            "columnName": "method",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quotient",
+            "columnName": "quotient",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "remainderCount",
+            "columnName": "remainderCount",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "dateStart",
+            "columnName": "dateStart",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "dateEnd",
+            "columnName": "dateEnd",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "eligibleCount",
+            "columnName": "eligibleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zone",
+            "columnName": "zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "windowStartAt",
+            "columnName": "windowStartAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windowEndAt",
+            "columnName": "windowEndAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "excludedDatesCsv",
+            "columnName": "excludedDatesCsv",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "pending",
+            "columnName": "pending",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "materializedMinutes",
+            "columnName": "materializedMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "materializedThroughDate",
+            "columnName": "materializedThroughDate",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "hiddenAtCredit",
+            "columnName": "hiddenAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "goalAtCredit",
+            "columnName": "goalAtCredit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "contributionId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "playtime_contributions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contributionId"
+            ],
+            "referencedColumns": [
+              "contributionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "recovery_journal",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operationId` TEXT NOT NULL, `contributionId` TEXT NOT NULL, `account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `priorRevision` INTEGER, `currentRevision` INTEGER NOT NULL, `affectedDatesCsv` TEXT NOT NULL, `replacedPlacementIdsCsv` TEXT, `replacedRecipeJson` TEXT, `derivedStatus` TEXT NOT NULL, `payloadJson` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`operationId`), FOREIGN KEY(`contributionId`) REFERENCES `playtime_contributions`(`contributionId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contributionId",
+            "columnName": "contributionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priorRevision",
+            "columnName": "priorRevision",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "currentRevision",
+            "columnName": "currentRevision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "affectedDatesCsv",
+            "columnName": "affectedDatesCsv",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "replacedPlacementIdsCsv",
+            "columnName": "replacedPlacementIdsCsv",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "replacedRecipeJson",
+            "columnName": "replacedRecipeJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "derivedStatus",
+            "columnName": "derivedStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadJson",
+            "columnName": "payloadJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "operationId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_recovery_journal_contributionId",
+            "unique": false,
+            "columnNames": [
+              "contributionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_journal_contributionId` ON `${TABLE_NAME}` (`contributionId`)"
+          },
+          {
+            "name": "index_recovery_journal_account_derivedStatus",
+            "unique": false,
+            "columnNames": [
+              "account",
+              "derivedStatus"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recovery_journal_account_derivedStatus` ON `${TABLE_NAME}` (`account`, `derivedStatus`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "playtime_contributions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contributionId"
+            ],
+            "referencedColumns": [
+              "contributionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "recovery_local_evidence",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`account` TEXT NOT NULL, `appId` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `firstSampleAt` INTEGER, `lastSuccessAt` INTEGER, `observedUntil` INTEGER, `continuityLossFrom` INTEGER, `continuityLossRecoveredAt` INTEGER, `windowStart` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`account`, `appId`, `generation`))",
+        "fields": [
+          {
+            "fieldPath": "account",
+            "columnName": "account",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appId",
+            "columnName": "appId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstSampleAt",
+            "columnName": "firstSampleAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastSuccessAt",
+            "columnName": "lastSuccessAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "observedUntil",
+            "columnName": "observedUntil",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "continuityLossFrom",
+            "columnName": "continuityLossFrom",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "continuityLossRecoveredAt",
+            "columnName": "continuityLossRecoveredAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "windowStart",
+            "columnName": "windowStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "account",
+            "appId",
+            "generation"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f47b4028e84f7d685f36a9efa6cee419')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fa2900d2b5e4a9442487bea9d3806d45')"
     ]
   }
 }

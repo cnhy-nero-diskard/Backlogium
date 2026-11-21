@@ -8,12 +8,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import com.example.backlogium.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -59,17 +58,20 @@ fun SetupScreen(
             state = state,
             onToggle = viewModel::toggle,
             onRetry = viewModel::retry,
-            onReobserve = viewModel::reobserve,
             showRetry = true,
         )
 
         if (state.credentialsConfigured) {
+            if (state.finished && !state.editing) {
+                TextButton(onClick = viewModel::editSelection) { Text("Edit selections") }
+            }
             SetupActions(
                 state = state,
-                startLabel = stringResource(if (state.running) R.string.setup_working else R.string.setup_start_selected),
+                startLabel = if (state.running) "Running…" else "Run selected steps",
                 onStart = viewModel::start,
-                // End only the foreground wait. Admitted jobs and successful siblings survive.
-                onSkip = if (state.running) viewModel::continueLater else null,
+                // No "Skip setup" here: there is nothing to skip out of, and recording every stage
+                // skipped would erase the outcomes this screen exists to show.
+                onSkip = null,
             )
         }
 

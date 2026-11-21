@@ -86,12 +86,25 @@ class GameRepositoryGenreJoinTest {
             ),
             hiddenGamesRepository = hidden,
             steamApi = OfflineSteamApi,
-            sessionRepository = SessionRepository(db.sessionDao(), hidden),
+            sessionRepository = SessionRepository(
+                db.sessionDao(), hidden, time = OfflineTime, database = db,
+            ),
             time = OfflineTime,
         )
     }
 
     @After fun tearDown() = db.close()
+
+    @Test
+    fun recordedArrivalSurvivesTheOfflineJoinAndNullsRemainUnknown() = runTest {
+        db.gameDao().upsertAll(listOf(
+            game(1, isGoal = true).copy(firstSeenAt = 123_456L),
+            game(2).copy(firstSeenAt = null),
+        ))
+        assertEquals(mapOf(1L to 123_456L, 2L to null), repository.library.first().associate { it.appId to it.firstSeenAt })
+        assertEquals(123_456L, repository.goalGames.first().single().firstSeenAt)
+        assertEquals(null, repository.backlog.first().single().firstSeenAt)
+    }
 
     @Test
     fun cachedGenresReachEverySectionOffline_inStoreOrder() = runTest {

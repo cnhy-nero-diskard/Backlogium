@@ -17,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,6 +34,28 @@ import java.time.ZoneId
  * the request never got through.
  */
 class HltbRepositoryTest {
+    @Test
+    fun reviewSessionDeferralDoesNotChangeStoredRowsOrRepositoryQueue() = runTest {
+        val rows = listOf(
+            HltbData(appId = 1L, fetchedAt = 1_000, matchStatus = HltbMatchStatus.NEEDS_REVIEW),
+            HltbData(appId = 2L, fetchedAt = 1_000, matchStatus = HltbMatchStatus.UNMATCHED),
+        )
+        val dao = FakeHltbDataDao(rows)
+        val repository = repository(dao = dao)
+        val session = com.example.backlogium.ui.review.HltbReviewSession()
+        session.updateQueue(repository.matchCenterQueue.first().map {
+            com.example.backlogium.ui.review.MatchCenterGameUi(
+                appId = it.appId, name = "Game ${it.appId}",
+                matchStatus = it.matchStatus, candidates = it.candidates,
+            )
+        })
+        session.skip()
+        session.skip()
+        assertNull(session.state.value.toUiState().selectedGame)
+        assertEquals(rows, dao.getAll())
+        assertEquals(listOf(1L, 2L), repository.matchCenterQueue.first().map { it.appId })
+    }
+
     @Test
     fun fetchForGame_usesCacheBeforeDatasetAndNetwork() = runTest {
         val cached = HltbData(
@@ -147,9 +170,78 @@ class HltbRepositoryTest {
         assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(2L)?.origin)
         assertEquals(HltbDataOrigin.AUTOMATIC, dao.getByAppId(3L)?.origin)
 
-        repository.resolveMatch(2L, candidate("Chosen", id = 22L))
+        // The matcher may confidently resolve either candidate; seed the explicit review state
+        // this assertion is about rather than relying on the scoring of the test labels.
+        dao.upsert(
+            dao.getByAppId(2L)!!.copy(
+                hltbId = null,
+                matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+                candidatesJson = "[]",
+            ),
+        )
+        val reviewRow = dao.getByAppId(2L)!!
+        val revision = HltbMatchRevision(
+            fetchedAt = reviewRow.fetchedAt,
+            matchStatus = HltbMatchState.NEEDS_REVIEW,
+            candidatesJson = reviewRow.candidatesJson,
+        )
+        assertTrue(repository.resolveMatch(2L, candidate("Chosen", id = 22L), revision))
 
         assertEquals(HltbDataOrigin.MANUAL, dao.getByAppId(2L)?.origin)
+    }
+
+    @Test
+    fun staleCandidateResolutionDoesNotReplaceNewNeedsReviewCandidates() = runTest {
+        val oldCandidates = """[{"hltbId":11,"name":"Old Candidate"}]"""
+        val replacementCandidates = """[{"hltbId":12,"name":"New Candidate"}]"""
+        val replacement = HltbData(
+            appId = 1L,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+            candidatesJson = replacementCandidates,
+        )
+        val dao = FakeHltbDataDao(
+            initial = listOf(replacement.copy(candidatesJson = oldCandidates)),
+        )
+        val repository = repository(dao = dao)
+
+        // This is the revision embedded in the Compose frame before Room publishes the refresh.
+        val staleFrame = repository.matchCenterQueue.first().single()
+        dao.upsert(replacement)
+
+        val accepted = repository.resolveMatch(
+            appId = 1L,
+            chosen = candidate("Old Candidate", id = 11L),
+            expectedRevision = staleFrame.revision,
+        )
+
+        assertFalse(accepted)
+        assertEquals(replacement, dao.getByAppId(1L))
+    }
+
+    @Test
+    fun staleManualLinkConfirmationDoesNotReplaceNewNeedsReviewCandidates() = runTest {
+        val oldCandidates = """[{"hltbId":11,"name":"Old Candidate"}]"""
+        val replacementCandidates = """[{"hltbId":12,"name":"New Candidate"}]"""
+        val replacement = HltbData(
+            appId = 1L,
+            fetchedAt = 1_000L,
+            matchStatus = HltbMatchStatus.NEEDS_REVIEW,
+            candidatesJson = replacementCandidates,
+        )
+        val dao = FakeHltbDataDao(initial = listOf(replacement.copy(candidatesJson = oldCandidates)))
+        val repository = repository(dao = dao)
+        val staleFrame = repository.matchCenterQueue.first().single()
+        dao.upsert(replacement)
+
+        val accepted = repository.resolveMatch(
+            appId = 1L,
+            chosen = candidate("Linked Candidate", id = 99L),
+            expectedRevision = staleFrame.revision,
+        )
+
+        assertFalse(accepted)
+        assertEquals(replacement, dao.getByAppId(1L))
     }
 
     @Test
@@ -536,6 +628,35 @@ class HltbRepositoryTest {
             store.values.filter { it.matchStatus == HltbMatchStatus.NEEDS_REVIEW || it.matchStatus == HltbMatchStatus.UNMATCHED }
 
         override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+
+        override suspend fun resolveMatchIfUnchanged(
+            appId: Long,
+            expectedMatchStatus: HltbMatchStatus,
+            expectedFetchedAt: Long,
+            expectedCandidatesJson: String?,
+            hltbId: Long,
+            mainStoryMinutes: Int?,
+            mainExtraMinutes: Int?,
+            completionistMinutes: Int?,
+            allStylesMinutes: Int?,
+        ): Int {
+            val row = store[appId] ?: return 0
+            if (row.matchStatus != expectedMatchStatus ||
+                row.matchStatus !in setOf(HltbMatchStatus.NEEDS_REVIEW, HltbMatchStatus.UNMATCHED) ||
+                row.fetchedAt != expectedFetchedAt || row.candidatesJson != expectedCandidatesJson
+            ) return 0
+            store[appId] = row.copy(
+                hltbId = hltbId,
+                mainStoryMinutes = mainStoryMinutes,
+                mainExtraMinutes = mainExtraMinutes,
+                completionistMinutes = completionistMinutes,
+                allStylesMinutes = allStylesMinutes,
+                matchStatus = HltbMatchStatus.RESOLVED,
+                candidatesJson = null,
+                origin = HltbDataOrigin.MANUAL,
+            )
+            return 1
+        }
 
         private fun withDatasetRows(): List<HltbData> =
             store.values.toList() + datasetOnlyRows.filterKeys { it !in store }.values

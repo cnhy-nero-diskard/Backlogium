@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.domain.PendingLevelUp
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.ProgressMarksStore
 import com.example.backlogium.domain.ProgressTransitionCoordinator
@@ -39,8 +40,9 @@ class ProgressEventRepository @Inject constructor(
     private val profileDao: PlayerProfileDao,
     private val dailyProgressDao: DailyProgressDao,
     private val transitionCoordinator: ProgressTransitionCoordinator,
+    private val watchDao: com.example.backlogium.data.local.dao.AchievementWatchDao? = null,
 ) {
-    val pendingEvents: Flow<List<ProgressEvent>> = flow {
+    private val transitionEvents: Flow<List<ProgressEvent>> = flow {
         // A leftover pending transition from a persist() that crashed before finalizing its marks
         // must be resolved before any comparison below, or a non-earned write's Room-only half
         // would read as earned progress. Acquires the coordinator, so a persist() that is merely
@@ -60,22 +62,47 @@ class ProgressEventRepository @Inject constructor(
                         // logical versions of state, and that pair is not a valid thing to diff.
                         // Reconstruction resumes once the coordinator's owner finalizes (or recovery
                         // resolves) the transition — which re-emits here, because the marks change.
-                        if (marks.pendingTransition == null) {
-                            if (profile.level > marks.lastCelebratedLevel) {
-                                add(ProgressEvent.LevelUp(marks.lastCelebratedLevel, profile.level))
-                            }
+                        if (marks.pendingTransition == null &&
+                            marks.pendingLevelUps.isEmpty() &&
+                            profile.level > marks.lastCelebratedLevel
+                        ) {
+                            add(
+                                ProgressEvent.LevelUp(
+                                    marks.lastCelebratedLevel,
+                                    profile.level,
+                                ),
+                            )
+                        }
 
+                        if (marks.pendingTransition == null && marks.pendingStreakMilestones.isEmpty()) {
                             val highestMilestone = highestMilestoneAtOrBelow(profile.currentStreak)
                             if (highestMilestone > marks.lastCelebratedStreakMilestone) {
                                 add(ProgressEvent.StreakMilestone(highestMilestone))
                             }
                         }
 
-                        // Both durable slots below are written only by the finalize step, so during
-                        // an in-flight transition they still hold their last finalized value — a
-                        // self-consistent record of something already earned, not a half-committed
-                        // pair. Suppressing them would delay a delivery that is already owed.
+                        // Explicit durable obligations written by the finalize step (or carried over
+                        // from an earlier one): during an in-flight transition they still hold their
+                        // last finalized value — a self-consistent record of something already
+                        // earned, not a half-committed pair. Suppressing them would delay a delivery
+                        // that is already owed. Reconstruction above is suppressed whenever one of
+                        // these covers the same rise, so the two paths can never double-emit.
                         //
+                        // Independent level transitions stay independent: each pending entry is its
+                        // own owed event, delivered oldest (`from`) first and removed by its own
+                        // acknowledgement — never collapsed because a corrective baseline moved the
+                        // acknowledged mark.
+                        marks.pendingLevelUps.minByOrNull { it.from }?.let {
+                            add(ProgressEvent.LevelUp(it.from, it.to))
+                        }
+
+                        // One milestone at a time, oldest/lowest first: the rest stay pending until
+                        // this one is acknowledged, so a later milestone can never hide an earlier
+                        // one.
+                        marks.pendingStreakMilestones.minOrNull()?.let {
+                            add(ProgressEvent.StreakMilestone(it))
+                        }
+
                         // One quest at a time, oldest first: the rest stay pending until this one is
                         // acknowledged, so a later day can never hide an earlier one.
                         marks.pendingQuestDates.minOrNull()?.let {
@@ -93,12 +120,30 @@ class ProgressEventRepository @Inject constructor(
         )
     }
 
+    val pendingEvents: Flow<List<ProgressEvent>> = watchDao?.let { dao ->
+        combine(transitionEvents, dao.observePending()) { transitions, work ->
+            (transitions + work.filter { it.deliveryState == "pending" }.mapNotNull { item ->
+                item.payload?.let { payload -> runCatching {
+                    ProgressEvent.UnlockGroup(kotlinx.serialization.json.Json.decodeFromString<com.example.backlogium.domain.AchievementUnlockGroup>(payload))
+                }.getOrNull() }
+            }).inPresentationOrder()
+        }
+    } ?: transitionEvents
+
     /** Advance only the delivery mark corresponding to [event], after it has been presented. */
     suspend fun acknowledge(event: ProgressEvent) {
+        if (event is ProgressEvent.UnlockGroup) {
+            watchDao?.claim(event.group.eventId, com.example.backlogium.data.local.entity.AchievementWatchWork.FOREGROUND)
+            return
+        }
         marksStore.update { marks ->
             when (event) {
+                is ProgressEvent.UnlockGroup -> marks
                 is ProgressEvent.LevelUp -> marks.copy(
                     lastCelebratedLevel = maxOf(marks.lastCelebratedLevel, event.to),
+                    // Exactly the transition presented is removed; any other owed level-up survives
+                    // for its own delivery, and removing an absent pair is a no-op (idempotent).
+                    pendingLevelUps = marks.pendingLevelUps - PendingLevelUp(event.from, event.to),
                     initialized = true,
                 )
                 is ProgressEvent.StreakMilestone -> marks.copy(
@@ -106,6 +151,7 @@ class ProgressEventRepository @Inject constructor(
                         marks.lastCelebratedStreakMilestone,
                         event.days,
                     ),
+                    pendingStreakMilestones = marks.pendingStreakMilestones - event.days,
                     initialized = true,
                 )
                 // Exactly the date presented: any other pending date is owed its own delivery, and

@@ -60,6 +60,8 @@ import com.example.backlogium.gamification.RarityTier
 import com.example.backlogium.ui.components.EmptyState
 import com.example.backlogium.ui.components.GameHeroCapsule
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.RecoveryExplanationControl
+import com.example.backlogium.ui.components.RecoveryWindowShare
 import com.example.backlogium.ui.theme.rarityHalo
 import com.example.backlogium.ui.util.UiFormat
 import compose.icons.TablerIcons
@@ -90,6 +92,9 @@ internal const val TAG_ANALYTICS_CHART_OPTIONS = "analytics-chart-options"
 internal const val TAG_ANALYTICS_CHART = "analytics-chart"
 internal const val TAG_ANALYTICS_PREVIOUS_DAY = "analytics-previous-day"
 internal const val TAG_ANALYTICS_NEXT_DAY = "analytics-next-day"
+internal const val TAG_ANALYTICS_ESTIMATE_HELP = "analytics-estimate-help"
+internal const val TAG_ANALYTICS_CHART_ESTIMATE_HELP = "analytics-chart-estimate-help"
+internal const val TAG_ANALYTICS_PENDING_RECOVERY = "analytics-pending-recovery"
 
 @Composable
 fun AnalyticsScreen(viewModel: AnalyticsViewModel = hiltViewModel()) {
@@ -228,6 +233,9 @@ internal fun AnalyticsContent(
                 questMetDaysCount = state.questMetDaysCount,
                 windowDays = state.representedDayCount,
             )
+            if (state.pendingDateUnknownMinutes > 0) {
+                PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
+            }
             RarityBreakdownCard(
                 breakdown = state.rarityBreakdown,
                 achievements = state.rarestAchievements,
@@ -237,8 +245,13 @@ internal fun AnalyticsContent(
                 days = chartDays,
                 questThreshold = state.questThreshold,
                 gamesByDate = state.gamesByDate,
+                estimatedSharesByDate = state.estimatedSharesByDate,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            if (state.pendingDateUnknownMinutes > 0) {
+                PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
+            }
 
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
@@ -251,11 +264,13 @@ internal fun AnalyticsContent(
                 sessionCount = state.sessionInsights.sessionCount,
                 averageMinutes = state.sessionInsights.averageMinutes,
                 longestMinutes = state.sessionInsights.longestMinutes,
+                timingUnavailable = state.timingUnavailable,
             )
 
             TimeOfDayCard(
                 pattern = state.timeOfDayPattern,
                 periodLabel = windowPeriodLabel(state.window, state.windowBounds),
+                timingUnavailable = state.timingUnavailable,
             )
 
             RarityBreakdownCard(
@@ -266,6 +281,7 @@ internal fun AnalyticsContent(
             MostPlayedGamesCard(
                 games = state.topGames,
                 periodLabel = windowPeriodLabel(state.window, state.windowBounds),
+                estimatedShares = state.estimatedShares,
             )
         }
     }
@@ -676,6 +692,7 @@ private fun DailyPlaytimeChart(
     days: List<AnalyticsDay>,
     questThreshold: Int,
     gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
+    estimatedSharesByDate: Map<java.time.LocalDate, List<RecoveryWindowShare>> = emptyMap(),
     modifier: Modifier = Modifier,
 ) {
     val barColor = MaterialTheme.colorScheme.primary
@@ -727,12 +744,20 @@ private fun DailyPlaytimeChart(
             }
             description
         }
+        val estimateClause = day.estimatedMinutes.takeIf { it > 0 }?.let { estimated ->
+            stringResource(
+                R.string.analytics_recorded_estimated_accessibility,
+                UiFormat.localizedMinutes(day.minutes),
+                UiFormat.localizedMinutes(estimated),
+            )
+        }
+        val described = if (estimateClause == null) breakdown else "$estimateClause. $breakdown"
         stringResource(
             R.string.analytics_selected_day_summary,
             day.date.format(dayFormatter),
             UiFormat.localizedMinutes(day.minutes),
             goal,
-            breakdown,
+            described,
         )
     } ?: stringResource(R.string.analytics_no_day_selected)
     val chartSummary = stringResource(
@@ -962,17 +987,38 @@ private fun DailyPlaytimeChart(
                             style = MaterialTheme.typography.labelSmall,
                             color = labelColor,
                         )
+                        if (day.estimatedMinutes > 0) {
+                            Text(
+                                text = stringResource(
+                                    R.string.analytics_estimated_day_total,
+                                    UiFormat.localizedMinutes(day.minutes),
+                                    UiFormat.localizedMinutes(day.estimatedMinutes),
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = labelColor,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
                     }
-                    Text(
-                        text = UiFormat.localizedMinutes(day.minutes),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (day.minutes >= questThreshold && questThreshold > 0) {
-                            thresholdColor
-                        } else {
-                            barColor
-                        },
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = UiFormat.localizedMinutes(day.minutes),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (day.minutes >= questThreshold && questThreshold > 0) {
+                                thresholdColor
+                            } else {
+                                barColor
+                            },
+                        )
+                        if (day.estimatedMinutes > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            RecoveryExplanationControl(
+                                shares = estimatedSharesByDate[day.date].orEmpty(),
+                                modifier = Modifier.testTag(TAG_ANALYTICS_CHART_ESTIMATE_HELP),
+                            )
+                        }
+                    }
                 }
                 val games = gamesByDate[day.date].orEmpty()
                 if (games.isNotEmpty()) {
@@ -1117,8 +1163,31 @@ private fun SummaryStat(
     }
 }
 
+/**
+ * Pending date-unknown recovery, disclosed separately from the dated chart: authoritatively
+ * credited minutes that could not be assigned a date yet (for example an inverted clock window).
+ */
 @Composable
-private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String) {
+private fun PendingRecoveryRow(pendingMinutes: Int) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.analytics_pending_recovery, UiFormat.localizedMinutes(pendingMinutes)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .testTag(TAG_ANALYTICS_PENDING_RECOVERY),
+        )
+    }
+}
+
+@Composable
+private fun MostPlayedGamesCard(
+    games: List<AnalyticsGame>,
+    periodLabel: String,
+    estimatedShares: List<RecoveryWindowShare> = emptyList(),
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(R.string.analytics_most_played), style = MaterialTheme.typography.titleSmall)
@@ -1165,6 +1234,21 @@ private fun MostPlayedGamesCard(games: List<AnalyticsGame>, periodLabel: String)
                         )
                     }
                 }
+                if (games.any { it.estimatedMinutes > 0 }) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.analytics_includes_estimates),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        RecoveryExplanationControl(
+                            shares = estimatedShares,
+                            modifier = Modifier.testTag(TAG_ANALYTICS_ESTIMATE_HELP),
+                        )
+                    }
+                }
             }
         }
     }
@@ -1180,6 +1264,7 @@ private fun SessionInsightsCard(
     sessionCount: Int,
     averageMinutes: Int,
     longestMinutes: Int,
+    timingUnavailable: Boolean = false,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1194,22 +1279,33 @@ private fun SessionInsightsCard(
                 Text(stringResource(R.string.analytics_session_insights), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                SummaryStat(
-                    label = stringResource(R.string.analytics_sessions),
-                    value = UiFormat.count(sessionCount),
+            if (timingUnavailable) {
+                // Played minutes exist, but none of them came from timestamped sessions: a
+                // "0 sessions" row would suggest measurement, so the honest answer is that
+                // session timing is unavailable for this period.
+                Text(
+                    text = stringResource(R.string.analytics_session_timing_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                SummaryStat(
-                    label = stringResource(R.string.analytics_average_session),
-                    value = UiFormat.localizedMinutes(averageMinutes),
-                )
-                SummaryStat(
-                    label = stringResource(R.string.analytics_longest_session),
-                    value = UiFormat.localizedMinutes(longestMinutes),
-                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    SummaryStat(
+                        label = stringResource(R.string.analytics_sessions),
+                        value = UiFormat.count(sessionCount),
+                    )
+                    SummaryStat(
+                        label = stringResource(R.string.analytics_average_session),
+                        value = UiFormat.localizedMinutes(averageMinutes),
+                    )
+                    SummaryStat(
+                        label = stringResource(R.string.analytics_longest_session),
+                        value = UiFormat.localizedMinutes(longestMinutes),
+                    )
+                }
             }
         }
     }
@@ -1220,7 +1316,11 @@ private fun SessionInsightsCard(
  * bucket is highlighted so "I'm a night owl" reads at a glance.
  */
 @Composable
-private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
+private fun TimeOfDayCard(
+    pattern: TimeOfDayPattern,
+    periodLabel: String,
+    timingUnavailable: Boolean = false,
+) {
     val peak = pattern.peakBucket
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1235,32 +1335,40 @@ private fun TimeOfDayCard(pattern: TimeOfDayPattern, periodLabel: String) {
                 Text(stringResource(R.string.analytics_play_time_of_day), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(12.dp))
-            val buckets = listOf(
-                TimeOfDayBucket.MORNING to pattern.morningMinutes,
-                TimeOfDayBucket.AFTERNOON to pattern.afternoonMinutes,
-                TimeOfDayBucket.EVENING to pattern.eveningMinutes,
-                TimeOfDayBucket.NIGHT to pattern.nightMinutes,
-            )
-            val maxMinutes = maxOf(1, buckets.maxOf { it.second })
-            Row(modifier = Modifier.fillMaxWidth()) {
-                buckets.forEach { (label, minutes) ->
-                    TimeOfDayBar(
-                        label = label,
-                        minutes = minutes,
-                        fraction = minutes.toFloat() / maxMinutes,
-                        highlighted = label == peak,
-                        modifier = Modifier.weight(1f),
-                    )
+            if (timingUnavailable) {
+                Text(
+                    text = stringResource(R.string.analytics_time_of_day_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val buckets = listOf(
+                    TimeOfDayBucket.MORNING to pattern.morningMinutes,
+                    TimeOfDayBucket.AFTERNOON to pattern.afternoonMinutes,
+                    TimeOfDayBucket.EVENING to pattern.eveningMinutes,
+                    TimeOfDayBucket.NIGHT to pattern.nightMinutes,
+                )
+                val maxMinutes = maxOf(1, buckets.maxOf { it.second })
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    buckets.forEach { (label, minutes) ->
+                        TimeOfDayBar(
+                            label = label,
+                            minutes = minutes,
+                            fraction = minutes.toFloat() / maxMinutes,
+                            highlighted = label == peak,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = peak?.let {
+                        stringResource(R.string.analytics_peak_time, timeOfDayLabel(it))
+                    } ?: stringResource(R.string.analytics_no_tracked_play_period, periodLabel),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = peak?.let {
-                    stringResource(R.string.analytics_peak_time, timeOfDayLabel(it))
-                } ?: stringResource(R.string.analytics_no_tracked_play_period, periodLabel),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

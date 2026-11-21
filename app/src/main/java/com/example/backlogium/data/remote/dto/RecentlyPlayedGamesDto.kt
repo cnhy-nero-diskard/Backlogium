@@ -17,7 +17,13 @@ data class RecentlyPlayedGamesResponse(
 
 @Serializable
 data class RecentlyPlayedGamesResult(
-    @SerialName("total_count") val totalCount: Int = 0,
+    /**
+     * Steam's total recent-game count. Like `game_count` on the owned endpoint, this is present
+     * for a readable profile and absent from the empty envelope of a private one — so an explicit
+     * `total_count: 0` is a confirmed "played nothing recently", whereas an omitted value is
+     * unreadable. Confirmation is applied by [isConfirmedRecentEnvelope].
+     */
+    @SerialName("total_count") val totalCount: Int? = null,
     val games: List<RecentlyPlayedGameDto> = emptyList(),
 )
 
@@ -30,6 +36,14 @@ data class RecentlyPlayedGamesResult(
 data class RecentlyPlayedGameDto(
     val appid: Long,
     val name: String = "",
-    @SerialName("playtime_forever") val playtimeForever: Int = 0,
-    @SerialName("playtime_2weeks") val playtime2Weeks: Int = 0,
+    /**
+     * Steam's cumulative lifetime minutes. Omitted/malformed values must not be read as zero: see
+     * [validatedPlaytimeForever].
+     */
+    @SerialName("playtime_forever") val playtimeForever: Int? = null,
+    /**
+     * Minutes in the last two weeks; Steam omits this when the game was not played recently, which
+     * [validatedPlaytime2Weeks] reads as zero.
+     */
+    @SerialName("playtime_2weeks") val playtime2Weeks: Int? = null,
 )

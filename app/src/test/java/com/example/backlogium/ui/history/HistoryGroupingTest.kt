@@ -6,6 +6,11 @@ import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
 import com.example.backlogium.data.repo.ContributionState
 import com.example.backlogium.data.repo.SessionCloudContribution
+import com.example.backlogium.domain.PlaytimeActivity
+import com.example.backlogium.domain.PlaytimeReadProjector
+import com.example.backlogium.domain.SessionCredit
+import com.example.backlogium.domain.SessionFundedShare
+import com.example.backlogium.domain.TimedShareCredit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -147,6 +152,166 @@ class HistoryGroupingTest {
 
         assertEquals(listOf("2026-07-25"), days.map { it.date })
         assertEquals(1, days.single().games.single().sessions.size)
+    }
+
+    @Test
+    fun frozenFundedShareStaysOnItsCreditDateWhileMixedSessionRemainderFollowsDeviceZone() {
+        val startAt = java.time.Instant.parse("2026-10-16T06:30:00Z").toEpochMilli()
+        val frozenDate = LocalDate.of(2026, 10, 16)
+        val session = session(81, appId = 10, startAt = startAt, minutes = 70)
+        val activity = PlaytimeActivity.TimestampedSession(
+            appId = 10,
+            id = 81,
+            startAt = startAt,
+            endAt = startAt + 70 * 60_000L,
+            minutes = 70,
+            open = false,
+            fundedShares = listOf(
+                SessionFundedShare(
+                    contributionId = "c1",
+                    minutes = 20,
+                    creditedDate = frozenDate,
+                    frozenZone = "Asia/Tokyo",
+                    goalAtCredit = true,
+                ),
+                SessionFundedShare(
+                    contributionId = "c2",
+                    minutes = 10,
+                    creditedDate = frozenDate.plusDays(1),
+                    frozenZone = "Asia/Tokyo",
+                    goalAtCredit = true,
+                ),
+            ),
+            fundedMinutes = 30,
+            unlinkedMinutes = 40,
+        )
+        val games = listOf(game(10, "Game", isGoal = false))
+
+        val losAngelesDays = groupHistory(
+            sessions = listOf(session),
+            sessionActivities = listOf(activity),
+            games = games,
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = ZoneId.of("America/Los_Angeles"),
+            windowStartDate = "2026-10-15",
+            windowEndDate = "2026-10-17",
+        )
+        assertEquals(listOf("2026-10-17", "2026-10-16", "2026-10-15"), losAngelesDays.map { it.date })
+        assertEquals(40, losAngelesDays.single { it.date == "2026-10-15" }.minutesPlayed)
+        assertEquals(20, losAngelesDays.single { it.date == "2026-10-16" }.minutesPlayed)
+        assertEquals(10, losAngelesDays.single { it.date == "2026-10-17" }.minutesPlayed)
+        assertEquals(20, losAngelesDays.single { it.date == "2026-10-16" }.goalMinutesPlayed)
+        val hostSession = losAngelesDays.single { it.date == "2026-10-15" }.games.single().sessions.single()
+        assertEquals(70, hostSession.minutes)
+        assertEquals(40, hostSession.creditedMinutes)
+        losAngelesDays.forEach { day ->
+            assertEquals(day.minutesPlayed, day.games.sumOf { game ->
+                game.sessions.sumOf { it.creditedMinutes } + game.timedShares.sumOf { it.minutes } +
+                    game.allocations.sumOf { it.minutes }
+            })
+        }
+
+        val tokyoDays = groupHistory(
+            sessions = listOf(session),
+            sessionActivities = listOf(activity),
+            games = games,
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = ZoneId.of("Asia/Tokyo"),
+            windowStartDate = "2026-10-15",
+            windowEndDate = "2026-10-17",
+        )
+        assertEquals(60, tokyoDays.single { it.date == "2026-10-16" }.minutesPlayed)
+        assertEquals(20, tokyoDays.single { it.date == "2026-10-16" }.games.single().timedShares.sumOf { it.minutes })
+    }
+
+    @Test
+    fun fullyFundedSessionsKeepClockLeavesWithoutDoubleCountingAndRemainInCloudActivity() {
+        val hostDate = LocalDate.of(2026, 10, 15)
+        val ordinaryStart = atUtc(2026, 10, 15, 10, 0)
+        val cloudStart = atUtc(2026, 10, 15, 11, 0)
+        val ordinary = session(81, appId = 10, startAt = ordinaryStart, minutes = 20)
+            .copy(cloudContribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.NONE,
+                timingInformedSteamPlay = ContributionState.NONE,
+            ))
+        val cloudTimed = session(82, appId = 20, startAt = cloudStart, minutes = 30)
+            .copy(cloudContribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.NONE,
+                timingInformedSteamPlay = ContributionState.FULL,
+            ))
+        val credits = listOf(ordinary, cloudTimed).map { session ->
+            SessionCredit(
+                id = session.id,
+                appId = session.appId,
+                startAt = session.startAt,
+                minutes = session.minutes,
+                open = session.open,
+                endAt = session.endAt,
+            )
+        }
+        val fundedShares = listOf(
+            TimedShareCredit(
+                placementId = "ordinary-funded",
+                contributionId = "ordinary-funded",
+                appId = ordinary.appId,
+                sessionId = ordinary.id,
+                minutes = 20,
+                creditedDate = hostDate,
+                frozenZone = "UTC",
+            ),
+            TimedShareCredit(
+                placementId = "cloud-timed-funded",
+                contributionId = "cloud-timed-funded",
+                appId = cloudTimed.appId,
+                sessionId = cloudTimed.id,
+                minutes = 30,
+                creditedDate = hostDate.plusDays(1),
+                frozenZone = "UTC",
+            ),
+        )
+        val activities = PlaytimeReadProjector.sessionActivities(
+            sessions = credits,
+            timedShares = fundedShares,
+            zone = zone,
+            startDateInclusive = hostDate,
+            endDateExclusive = hostDate.plusDays(2),
+        )
+        assertEquals(listOf(0L, 0L), activities.map { it.unlinkedMinutes })
+
+        val days = groupHistory(
+            sessions = listOf(ordinary, cloudTimed),
+            games = listOf(game(10, "Ordinary"), game(20, "Cloud-timed")),
+            dailyProgress = emptyList(),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+            sessionActivities = activities,
+        )
+
+        assertEquals(listOf("2026-10-16", "2026-10-15"), days.map { it.date })
+        val hostDay = days.last()
+        val creditedDay = days.first()
+        assertEquals(20, hostDay.minutesPlayed)
+        assertEquals(30, creditedDay.minutesPlayed)
+        assertEquals(20, hostDay.games.sumOf { it.minutesPlayed })
+        assertEquals(30, creditedDay.games.sumOf { it.minutesPlayed })
+
+        val sessionLeaves = hostDay.games.flatMap { it.sessions }.associateBy { it.id }
+        assertEquals(setOf(81L, 82L), sessionLeaves.keys)
+        assertEquals(ordinaryStart, sessionLeaves.getValue(81).startAt)
+        assertEquals(20, sessionLeaves.getValue(81).minutes)
+        assertEquals(0, sessionLeaves.getValue(81).creditedMinutes)
+        assertEquals(cloudStart, sessionLeaves.getValue(82).startAt)
+        assertEquals(30, sessionLeaves.getValue(82).minutes)
+        assertEquals(0, sessionLeaves.getValue(82).creditedMinutes)
+        assertEquals(30, creditedDay.games.single().timedShares.single().minutes)
+        assertTrue(creditedDay.games.single().sessions.isEmpty())
+
+        val cloudActivity = historyCloudActivity(days, readerConfigured = true)
+        assertTrue(cloudActivity.recovered.isEmpty())
+        assertEquals(listOf(82L), cloudActivity.timed.map { it.session.id })
+        assertEquals("2026-10-15", cloudActivity.timed.single().date)
     }
 
     @Test

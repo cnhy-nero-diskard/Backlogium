@@ -16,6 +16,7 @@ import androidx.work.workDataOf
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
@@ -44,6 +45,7 @@ import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.PlaySessionEnd
 import com.example.backlogium.data.repo.PlaySessionEndPublisher
+import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.data.repo.RecentPlaytimeRepository
 import com.example.backlogium.data.repo.SessionActionWriter
 import com.example.backlogium.data.repo.SessionEndOutbox
@@ -55,6 +57,12 @@ import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.GamificationRecoveryDerivedCompute
+import com.example.backlogium.domain.RecoveryDailyCreditCoordinator
+import com.example.backlogium.domain.UnknownTimeMaterializer
+import com.example.backlogium.domain.RecoveryPlacementReconcileUseCase
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.domain.PostPlayGenerations
 import com.example.backlogium.domain.SessionDiffer
 import com.example.backlogium.domain.SyncDerivedStateWriter
@@ -163,10 +171,9 @@ class PostPlaySyncWorkerTest {
         assertEquals("one attempt, one request", 1, steamApi.callCount)
 
         val sessions = db.sessionDao().getAll()
-        assertEquals(1, sessions.size)
-        assertEquals(30, sessions.single().minutes)
-        // The session ends when the play ended, not when the attempt ran.
-        assertEquals(sessionEndAt, sessions.single().endAt)
+        assertTrue("an end-only targeted instant is date-known, not a fabricated session", sessions.isEmpty())
+        assertEquals(30L, db.playtimeRecoveryDao().contributionsForGame(credentials.steamId, APP_ID).single().authorizedMinutes)
+        assertEquals(30L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
         assertEquals(130, db.gameDao().getById(APP_ID)?.lastPlaytime)
         assertEquals(30, db.dailyProgressDao().getByDate(dateOf(lastSyncAt))?.minutesPlayed)
 
@@ -239,7 +246,8 @@ class PostPlaySyncWorkerTest {
 
         assertTrue(result is ListenableWorker.Result.Success)
         assertEquals(1, reads)
-        assertEquals(30, db.sessionDao().getAll().single().minutes)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(30L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
     }
 
     @Test
@@ -257,7 +265,8 @@ class PostPlaySyncWorkerTest {
         runAttempt(attempt = 0, placementReader = reader)
 
         assertEquals(0, reads)
-        assertEquals(shortGapStart, db.sessionDao().getAll().single().startAt)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(10L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
     }
 
     @Test
@@ -295,10 +304,9 @@ class PostPlaySyncWorkerTest {
 
         runAttempt(attempt = 0, placementReader = reader)
 
-        val session = db.sessionDao().getAll().single()
-        assertEquals(30, session.minutes)
-        assertEquals(oldStart, session.startAt)
-        assertEquals(30, db.dailyProgressDao().getByDate("2026-07-26")?.minutesPlayed)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(30L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
+        assertEquals(30, db.dailyProgressDao().getByDate("2026-07-27")?.minutesPlayed)
     }
 
     @Test
@@ -359,10 +367,8 @@ class PostPlaySyncWorkerTest {
 
         runAttempt(attempt = 0, placementReader = reader)
 
-        val session = db.sessionDao().getAll().single()
-        assertEquals(30, session.minutes)
-        assertEquals(TimingInformedSteamPlayState.NONE, session.timingInformedSteamPlay)
-        assertTrue(session.startAt != placementStart)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(30L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
         assertEquals(1L, cloudSettings.cloudReaderGeneration.first())
         assertTrue(
             "the committed post-play baseline retires the replacement reader's earlier interval",
@@ -420,18 +426,13 @@ class PostPlaySyncWorkerTest {
         }
 
         assertEquals(20, periodicCommit.playedDeltaByAppId[APP_ID])
-        val sessionsAfterPeriodic = db.sessionDao().getAll().filter { it.appId == APP_ID }
-        assertEquals(1, sessionsAfterPeriodic.size)
-        assertEquals(
-            "later minutes remain on the unaided t0-based session",
-            longGapStart,
-            sessionsAfterPeriodic.single().startAt,
-        )
-        assertEquals(50, sessionsAfterPeriodic.single().minutes)
+        assertTrue("later fallback quantity is not appended to a stale synthetic session",
+            db.sessionDao().getAll().none { it.appId == APP_ID })
+        assertEquals(50L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
     }
 
     @Test
-    fun `an increase seen by a late attempt still reports the same session end`() = runTest {
+    fun `an increase seen by a late attempt keeps its known date without inventing a session`() = runTest {
         seedLibrary(playtime = 100)
         generations.set(APP_ID, 1L)
         steamApi.answer = observation(playtimeForever = 100)
@@ -444,13 +445,8 @@ class PostPlaySyncWorkerTest {
         runAttempt(attempt = 2)
 
         assertEquals("three attempts, three requests, no fourth", 3, steamApi.callCount)
-        val session = db.sessionDao().getAll().single()
-        assertEquals(
-            "a late attempt must not record the play minutes late",
-            sessionEndAt,
-            session.endAt,
-        )
-        assertEquals(45, session.minutes)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(45L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
     }
 
     @Test
@@ -501,8 +497,8 @@ class PostPlaySyncWorkerTest {
         runAttempt(attempt = 0)
 
         assertEquals(RecentPlaytimeRepository.RECENT_GAME_COUNT, steamApi.requestedCount)
-        assertEquals(1, db.sessionDao().getAll().size)
-        assertEquals(30, db.sessionDao().getAll().single().minutes)
+        assertTrue(db.sessionDao().getAll().isEmpty())
+        assertEquals(30L, db.playtimeRecoveryDao().sumActiveDatedMinutes(credentials.steamId, APP_ID))
         assertEquals(130, db.gameDao().getById(APP_ID)?.lastPlaytime)
         assertEquals(0, pendingAttempts())
     }
@@ -689,6 +685,11 @@ class PostPlaySyncWorkerTest {
         generation: Long,
         placementReader: CloudPresencePlacementReader = CloudPresencePlacementReader { _, _, _ -> null },
     ): PostPlaySyncWorker {
+        val derivedWrites = DerivedStateWriteCoordinator()
+        val updater = GamificationUpdater(
+            db.sessionDao(), db.dailyProgressDao(), db.playerProfileDao(), db.hltbDataDao(),
+            db.achievementDao(), db.gameDao(), db.hiddenGameDao(),
+        )
         val factory = object : WorkerFactory() {
             override fun createWorker(
                 appContext: Context,
@@ -704,16 +705,8 @@ class PostPlaySyncWorkerTest {
                 committer = committer(),
                 derivedStateWriter = SyncDerivedStateWriter(
                     settings = SettingsDataStore(context),
-                    gamificationUpdater = GamificationUpdater(
-                        db.sessionDao(),
-                        db.dailyProgressDao(),
-                        db.playerProfileDao(),
-                        db.hltbDataDao(),
-                        db.achievementDao(),
-                        db.gameDao(),
-                        db.hiddenGameDao(),
-                    ),
-                    derivedStateWrites = DerivedStateWriteCoordinator(),
+                    gamificationUpdater = updater,
+                    derivedStateWrites = derivedWrites,
                 ),
                 generations = coordinator,
                 scheduler = scheduler,
@@ -723,6 +716,26 @@ class PostPlaySyncWorkerTest {
                 credentials = credentials,
                 accountChangeMarker = accountChangeMarker,
                 cloudPresencePlacementReader = placementReader,
+                unknownTimeMaterializer = UnknownTimeMaterializer(
+                    db, db.playtimeRecoveryDao(), RecoveryDailyCreditCoordinator(db.dailyProgressDao()),
+                ),
+                recoveryDerivedFinalizer = RecoveryDerivedFinalizer(
+                    db.playtimeRecoveryDao(),
+                    derivedWrites,
+                    GamificationRecoveryDerivedCompute(updater),
+                ),
+                recoveryPlacementReconciler = RecoveryPlacementReconcileUseCase(
+                    recoveryDao = db.playtimeRecoveryDao(),
+                    sessionDao = db.sessionDao(),
+                    dailyCredit = RecoveryDailyCreditCoordinator(db.dailyProgressDao()),
+                    settings = FakeSettingsRepository(),
+                    gamificationUpdater = updater,
+                    time = time,
+                    syncCoordinator = SteamSyncCoordinator(),
+                    derivedStateWrites = derivedWrites,
+                    transaction = RoomDatabaseTransactionScope(db),
+                ),
+                recoveryReadStatus = RecoveryReadStatusStore(context),
             )
         }
         return TestListenableWorkerBuilder<PostPlaySyncWorker>(
@@ -751,6 +764,7 @@ class PostPlaySyncWorkerTest {
             hiddenGameDao = db.hiddenGameDao(),
             time = time,
         ),
+        recoveryAdapter = PlaytimeRecoveryCommitAdapter(db.playtimeRecoveryDao(), db.sessionDao()),
         pendingEvidencePruner = CloudPendingEvidencePruner(
             dao = db.pendingCloudEvidenceDao(),
             credentials = credentials,
@@ -769,10 +783,15 @@ class PostPlaySyncWorkerTest {
                 playtimeForever = playtime,
                 playtime2Weeks = playtime,
                 lastPlaytime = playtime,
+                lastSyncedAt = syncAt,
             ),
         )
-        db.playerProfileDao().insertIfMissing()
-        db.playerProfileDao().updateSyncStatus(lastSyncAt = syncAt, lastSyncError = null)
+        db.playerProfileDao().upsert(
+            com.example.backlogium.data.local.entity.PlayerProfile(
+                steamId = credentials.steamId,
+                lastSyncAt = syncAt,
+            ),
+        )
     }
 
     /** Attempts sitting in WorkManager for this game — successors that were actually appended. */

@@ -30,7 +30,7 @@ class SteamAssetDownloadWorker @AssistedInject constructor(
         val startedAt = inputData.getLong(KEY_STARTED_AT, System.currentTimeMillis())
         setForeground(createForegroundInfo("Preparing Steam assets"))
         return try {
-            val counts = repository.run(mode, startedAt) { processed, total, label, counts ->
+            repository.run(mode, startedAt) { processed, total, label, counts ->
                 setProgress(workDataOf(
                     KEY_PROCESSED to processed,
                     KEY_TOTAL to total,
@@ -42,17 +42,7 @@ class SteamAssetDownloadWorker @AssistedInject constructor(
                 ))
                 setForeground(createForegroundInfo("$processed / $total Steam assets"))
             }
-            // Inventory is a snapshot, not a prerequisite on library sync. Persist its real size
-            // even when empty so setup can explain a deliberate re-run after the library arrives.
-            val total = counts.stored + counts.alreadyPresent + counts.unavailable + counts.failed
-            Result.success(workDataOf(
-                KEY_PROCESSED to total,
-                KEY_TOTAL to total,
-                KEY_STORED to counts.stored,
-                KEY_ALREADY_PRESENT to counts.alreadyPresent,
-                KEY_UNAVAILABLE to counts.unavailable,
-                KEY_FAILED to counts.failed,
-            ))
+            Result.success()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         }

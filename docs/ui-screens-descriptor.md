@@ -1,9 +1,11 @@
 # Backlogium — Screen Descriptor
 
+Status snapshot: 2026-11-12 (`origin/master` at `ffc28ff2`).
+
 Source: `app/src/main/java/com/example/backlogium/ui/**`. Android app, Material 3 (Compose),
 using a custom "Steam-native dark" identity with dynamic (wallpaper-derived) color turned
 off, so the look is identical across devices. Bottom navigation with 5 destinations (Home /
-Library / History / Analytics / Settings), plus five pushed sub-destinations reached from
+Library / History / Analytics / Settings), plus pushed sub-destinations reached from
 them: **Onboarding + guided first-run setup** (from Settings, or as a first-run takeover
   that verifies credentials and offers an opt-in setup checklist), **Game detail** (from
 Library), **HowLongToBeat review** (from Library), **Collection** (from Home), and
@@ -97,7 +99,8 @@ switching tabs (standard save/restoreState nav behavior). Home is the start dest
 
 ## Screen 1 — Home
 
-**Purpose:** at-a-glance status — level/XP, today's quest, streak, last sync.
+**Purpose:** live play status, the next player action, level/XP, today's quest,
+streak, and collection missions.
 
 **Layout:** single scrollable column, 16dp outer padding, 16dp vertical gaps between cards,
 full width.
@@ -147,7 +150,11 @@ full width.
    animation, when not in-game. A foreground service keeps this state current in the background and
    posts a matching ongoing "Playing X · Nm" notification while in-game (cleared when the game ends).
 2. **Error banner** (conditional, only when a sync error exists) — a `Card` tinted with the
-   M3 "error container" color, containing just the error message text, 16dp padding.
+   M3 "error container" color, containing the error message and Retry. Retry is
+   disabled and shows a spinner during sync; a successful sync clears the error.
+   Home also shows a retained-content updating indicator, conditional live-monitor
+   availability guidance, and earned quest feedback. A next-action slot follows
+   these notices, prioritizing an actionable Focus/collection mission while idle.
 3. **Level / XP card** — surface card, 16dp padding:
    - Large bold headline in the display font: `"Level {N}"`
    - Horizontal progress bar (linear, full width) showing XP progress within the level
@@ -164,19 +171,14 @@ full width.
    - Large line: a `Flame` icon + `"{N} day(s)"` count in the display font
    - Caption: `"Longest: {N}"`
    - When the streak reaches a multiple of 7, the `streak_milestone` Lottie plays once, inline.
-6. **Steam account card** — surface card, 16dp padding, horizontal: a `BrandSteam` icon (accent),
-   a column with title "Steam account" over `"SteamID {id}"` and a masked `"API key {•••}"`
-   caption, and a trailing "Edit" `TextButton` (`Pencil` icon) that opens the Onboarding screen
-   to change credentials. The raw API key never reaches this card — it is masked upstream.
-7. **Steam history card** — surface card, 16dp padding, title "Steam history":
-   - Before import: caption "Count your pre-install Steam playtime toward XP. One-time only." +
-     an outlined "Import Steam history" button (`Download` icon). Tapping opens a confirmation
-     dialog explaining the one-time effect (matched games capped by the taper, unmatched counted
-     in full).
-   - After import: a `CircleCheck` + "History imported" line, a caption, and a "Reset import"
-     `TextButton` (with its own confirmation dialog) that undoes the import.
-8. **Sync row** (bottom, full width, space-between) — left: `"Last sync: {date/time}"` (or
-   "Syncing…") caption text; right: a filled "Sync now" button (shows a spinner while syncing).
+6. **Collections** — player-arranged mission cards with collection navigation,
+   creation, gap planning, and reordering, below the progression cards.
+7. **Smart collections** — derived lists below the custom collections, in a fixed
+   order, when available.
+
+Account credentials and routine manual sync are under Settings → Account & sync.
+Steam history import/reset is under Settings → Data & privacy. Home's sync action
+is the conditional error retry described above.
 
 **Empty / alt state:** if Steam isn't configured, the whole screen is replaced by the
 full-screen **Onboarding** flow (see Screen 4) as a takeover — completing it flips the app to
@@ -206,23 +208,21 @@ padding, sections rendered only if they have rows:
    an X `IconButton` that clears the selection.
 1. **Search field** (`OutlinedTextField`, first item): label "Search games", leading `Search` icon,
    trailing X `IconButton` once non-empty. Filters both lists by case-insensitive name substring.
-2. **HowLongToBeat controls:** "Refresh HLTB library" `FilledTonalButton` (becomes a spinner +
-   "Refreshing…" while running) + "Force all" `OutlinedButton`, both disabled while a refresh runs,
-   over a "Review HLTB matches ({n})" `TextButton` shown only when `{n} > 0`.
-3. **Batch progress card** (only while a refresh runs): `"{done} / {total}"` (bold) beside a
-   "Stop" `TextButton` (`PlayerStop` icon), over a determinate `LinearProgressIndicator`, then a
-   fixed-height (96dp) scrolling log, newest first, of
-   `"{game} — matched | needs review | no match | lookup failed"`. **Stop** cancels the sweep;
-   there is no separate pause because a plain "Refresh HLTB library" afterwards resumes by itself —
-   everything already fetched now falls inside the freshness window. ("Force all" restarts from
-   scratch by design.) Before the first game reports —
-   and when the sweep's target set turns out empty — it reads "Starting HowLongToBeat refresh…"
-   with an indeterminate bar rather than a stalled `0 / 0`. The log covers only the period the
-   screen has been observed: returning mid-run shows correct progress with a log resuming from that
-   point.
+2. **HowLongToBeat entry points:** long-press/select games for a targeted lookup,
+   or use a per-game lookup/review action in list and grid layouts. Library Tools
+   contains display density, Select games, Refresh uncovered HLTB data, and Force
+   refresh all HLTB data. The latter two explicitly build a selection from uncovered
+   or all loaded games; they do not schedule a background library sweep. The Match
+   Center entry is available for an actionable ambiguous or unmatched queue, even
+   when the ambiguous-review count is zero.
+3. **Selection lookup progress** (only while the explicit lookup runs): completed /
+   total count, determinate progress, Stop, and a transient newest-first outcome log.
+   Before totals are available it shows an indeterminate starting state. Stop keeps
+   already fetched results; explicitly select remaining games to continue. Progress
+   does not imply an automatically resumable freshness-based library sweep.
 4. **Section header** "Focus" (bold, titleMedium) — only if the section has rows — with that list's
    own **sort control** on the right: an `ArrowsSort` icon + the active key's name, opening a
-   `DropdownMenu` of Playtime / Name / Recently played / XP contributed (the active one check-marked).
+   `DropdownMenu` of Playtime / Name / Recently played / XP contributed / Added recently (the active one check-marked).
 5. **Focus game row** (repeated), a full-width `Card` carrying `combinedClickable`, 12dp padding,
    horizontal layout over a **faint backdrop**: the game's Steam store header art
    (`.../steam/apps/{appId}/header.jpg`, derived from the appId — nothing stored), anchored to the
@@ -255,8 +255,11 @@ padding, sections rendered only if they have rows:
    - A selected row takes a `secondary` outline and `secondaryContainer` fill. Completion is marked
      by the gold pill alone — the row-level gold outline was dropped as too loud in a long list.
 6. **Section header** "Your games" — only if the section has rows, with its own independent sort
-   control (same four keys; defaults differ: Focus defaults to Name, Your games to Playtime,
-   matching the DAO ordering they replaced). Each selection persists across visits.
+   control (same five keys; defaults differ: Focus defaults to Name, Your games to Playtime,
+   matching the DAO ordering they replaced). Key and direction persist independently
+   for each list. Added recently defaults to newest first using Backlogium's recorded
+   first observation, not Steam purchase time; unknown dates stay last. Recently
+   played uses Steam's rolling two-week activity, a separate measure.
 7. **Your games row** (repeated): identical to a Focus row, except the HLTB status label appears
    only once there is something to report.
 8. **No-matches row** (only when a filter matched nothing): `"No games match \"{query}\""` + a
@@ -437,42 +440,59 @@ import, backup/restore, and local rule configuration. Everything renders from lo
 so the screen remains usable offline; when credentials are unconfigured, the account card becomes
 the route into onboarding.
 
-**Layout:** single scrollable column, 16dp padding, section headers over cards:
+**Layout:** four summary groups open pushed detail destinations. Loading uses a
+stable summary rather than an empty surface.
 
-1. **Account** — "Steam account" card with masked API key and SteamID when configured, or a connect
-   prompt when not configured. The action opens Onboarding.
-2. **Sync** — last sync state plus a "Sync now" action, which relabels to "Sync in progress" and
-   disables while a poll (scheduled or manual) is already running, since an overlapping tap is
-   absorbed rather than starting a second poll. The same card exposes the forced
-   "Full achievement refresh" action and a muted genre-enrichment status line.
-3. **Live monitor** — toggle for foreground now-playing monitoring; disabled until Steam is
-   configured.
-4. **Daily quest** — editable quest target and Focus-game scoping.
-5. **Data** — one-time Steam history import and reset controls.
-6. **Data & Backup** — backup export/import, automatic snapshot controls, retention/interval
-   settings, and snapshot restore actions.
-7. **Advanced** — editable gamification rule constants, guarded by a confirmation dialog before
-   saving.
-8. **Diagnostics** — a pushed developer-facing surface with recent sync runs, request breakdowns,
-   and recorded presence decisions.
+1. **Account & sync** — Steam account/onboarding, guided setup, manual sync,
+   full achievement refresh, and app updates, with busy states and progress.
+2. **Gameplay** — daily quest, live monitor, Focus-related rules, hidden/shared-game
+   management, and the Match Center shortcut.
+3. **Data & privacy** — Steam history import, offline assets, shared completion data
+   and contribution export, authenticated cloud history acquisition and confirmed
+   re-filing, backup export/import, and automatic snapshots.
+4. **Advanced & diagnostics** — rule constants with confirmation and the pushed
+   diagnostics surface with sync runs, request breakdowns, and presence decisions.
+
+Cloud history acquisition exposes the selected range, bounded continuation,
+completion state, and separate confirmation before applying it. Recovery activity
+retains unknown-time or estimated-date disclosures rather than implying exact
+session boundaries.
 
 ---
 
 ## Screen 7 — HowLongToBeat review (pushed from Library)
 
-**Purpose:** resolve ambiguous HowLongToBeat matches. Games whose match was uncertain after a
-refresh are listed with their candidate entries so the user can pick the right one.
+**Purpose:** resolve ambiguous (`NEEDS_REVIEW`) and unmatched (`UNMATCHED`)
+HowLongToBeat entries. Candidate selection, broader title search, and validated
+manual HLTB links allow the player to recover a match deliberately.
 
-**Layout:** LazyColumn, 16dp padding, 12dp gaps. The Library's review entry point is shown only
-when at least one game is queued. One `Card` per game needing review: bold
-game name (titleMedium), a "Choose the correct HowLongToBeat entry:" caption, then a list of
-tappable candidate rows separated by `HorizontalDivider`. Each candidate row shows the
-cover art (or the themed placeholder), candidate name (bodyLarge), and its Completionist length
-(`"Completionist: 1h 20m"` or "No Completionist length"). Tapping a candidate resolves the match
-and drops that game from the list.
+**Layout:** Match Center tracks the selected game through queue changes and
+allows explicit candidate selection or Skip for this review session. Matching or
+skipping advances to the next unprocessed game; completion does not wrap back to
+deferred titles. Review skipped/reset actions restore access within the session.
+Selection survives configuration recreation and temporary game-detail return.
+Library list/grid lookup actions and Settings → Gameplay provide entry points.
+Skipping leaves the stored match unresolved.
 
-**Empty state:** nothing to review → centered Empty State titled "Nothing to review", body
-"Games with an ambiguous HowLongToBeat match appear here after a refresh."
+**Match states and recovery actions:**
+
+- Candidate cards use an adaptive grid. Select a candidate to persist the match;
+  broader-search candidates carry a reminder to verify the game.
+- An `UNMATCHED` game with no candidates offers Try broader search, which relaxes
+  edition, subtitle, and numeral variants with at most three additional queries.
+  Searching shows progress; exhausted results suggest a manual link; failures
+  show their failure class with Retry and Dismiss.
+- Both ambiguous and unmatched entries offer manual HLTB-link input. Validation
+  errors stay beside the input. Preview link fetches the entry with loading status;
+  missing pages have a specific message, and request failures offer Retry/Clear.
+  The preview compares the Steam title with the HLTB title and completion lengths.
+  Only explicit confirmation saves it; Dismiss closes the preview without saving.
+
+**Empty / loading states:** no selected game while loading shows a spinner. An
+empty actionable queue shows Nothing to review with Done. A pass completed with
+skipped games shows the skipped-session message and Review skipped as well as
+Done. A game-scoped route finishes when that game actually leaves the repository
+queue; skipping alone does not resolve its stored match.
 
 ---
 
@@ -538,12 +558,37 @@ is a natural place to add an illustration if regenerating with more visual polis
 
 ## Notes for regenerating in Claude Design
 
-- This is a **5-destination mobile app** (phone-sized canvas) with five pushed sub-screens
-  (onboarding, game detail, HLTB review, collection, diagnostics), Material 3 look — rounded cards, a bottom tab bar,
-  no top app bar currently (could be added).
-- Card-heavy, single-column, vertically stacked info — no grids, no multi-column layouts.
+- This is a **5-destination mobile app** (Home, Library, History, Analytics, Settings)
+  with Material 3 cards and bottom navigation. Additional routes include onboarding,
+  setup, game detail, Match Center, collections and collection detail, smart
+  collections, gap planning, cloud activity, hidden games, diagnostics, and the
+  grouped Settings detail screens. Follow `BacklogiumAppRoot.kt` for route wiring.
+- The shell renders `ProfileHeader` through `Scaffold(topBar = ...)`; preserve its
+  identity/presence strip and conditional background treatment described above.
+- Many screens stack cards vertically, but Library supports list, Grid, and
+  Compact Grid densities. Match Center uses an adaptive candidate grid: one
+  column on narrow viewports and additional columns as width allows. Preserve
+  these responsive layouts rather than forcing every screen into one column.
 - Analytics adds a hand-rolled Canvas bar chart and compact time-of-day bars; other progress
   indicators remain linear, with no rings or third-party chart dependency.
 - Icons come from a single set (Tabler Icons, Compose port); there are no emoji glyphs.
 - Every screen has a "sad path": not-configured and empty-data states are first-class, not
   afterthoughts — worth designing those explicitly rather than assuming happy path only.
+
+## Discovery and recovery additions
+
+Library search includes cached wishlist title matches with wishlist labels and
+appropriate store/detail actions. Wishlist read failures remain distinct from an
+empty result. Added recently uses Backlogium's first-observed arrival date, not a
+Steam purchase date. Shared-game filters and hidden-game management keep playable
+sources and visibility explicit. Library visit context survives temporary detail
+navigation; a fresh visit starts with the default discovery state.
+
+Home prioritizes active now-playing, then actionable Focus/collection missions.
+Personal Pace and gap-plan suggestions support planning around a future title/date,
+using a reliable pace profile or an explicit one-off budget.
+
+History and Analytics include recovered activity with separate quantity and timing
+certainty. Unknown-time activity has no synthetic start/end; multi-day estimates
+retain their allocation explanation. Pending date-unknown credit remains distinct
+from dated activity, and corrective placement does not award duplicate progress.

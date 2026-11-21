@@ -95,17 +95,10 @@ internal class GatedPlayerProfileDao(
     override suspend fun updateLastSyncError(message: String) =
         delegate.updateLastSyncError(message)
 
-    override suspend fun markPendingImportRecompute(source: String, steamId: String?, requestId: String?) =
-        delegate.markPendingImportRecompute(source, steamId, requestId)
-
-    override suspend fun clearPendingImportRecomputeIfMatches(source: String?, steamId: String?, requestId: String?) =
-        delegate.clearPendingImportRecomputeIfMatches(source, steamId, requestId)
+    override suspend fun markPendingImportRecompute() = delegate.markPendingImportRecompute()
 
     override suspend fun raiseLongestStreak(longestStreak: Int) =
         delegate.raiseLongestStreak(longestStreak)
-
-    override suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long) =
-        delegate.updateLibraryConfirmation(steamId, confirmedAt)
 }
 
 /**

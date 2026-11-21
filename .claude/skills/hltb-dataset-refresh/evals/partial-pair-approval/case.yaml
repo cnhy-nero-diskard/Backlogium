@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: partial-pair-approval
+expected_outcome: |
+  Record approval only for app 40/301, leave other decisions pending, plan the approved in-scope pair and obtain any missing direct-fetch authorization without expanding scope.

@@ -18,11 +18,8 @@ interface PlayerProfileDao {
             "(id, steamId, steamLevel, totalXp, level, currentStreak, longestStreak, " +
             "gamificationConfigVersion, lastSyncAt, lastSyncError, playtimeBackfilled, " +
             "personaName, avatarUrl, storeRegion, pendingImportRecompute, " +
-            "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection, " +
-            "confirmedLibrarySteamId, confirmedLibraryAt, pendingImportRecomputeSource, " +
-            "pendingImportRecomputeSteamId, pendingImportRecomputeRequestId) VALUES " +
-            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, " +
-            "NULL, NULL, NULL)",
+            "lastSuccessfulWishlistReadAt, pendingXpIntegrityCorrection) VALUES " +
+            "(0, '', 0, 0, 1, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL, 0, NULL, 0)",
     )
     suspend fun insertIfMissing()
 
@@ -89,19 +86,16 @@ interface PlayerProfileDao {
     )
 
     /**
-     * Gamification aggregates and the configuration provenance that produced them. The pending
-     * import marker and its provenance are deliberately **not** cleared here: a completed recompute
-     * only proves its own protocol finalized once its progress-event marks succeed, so the marker
-     * survives the Room write and is cleared by
-     * [clearPendingImportRecomputeIfMatches] as the last step of a successful whole-protocol
-     * finalization (stabilize-first-run-setup, task 5.6). Clearing it here would let a crash
-     * between the Room write and the marks finalize lose the BACKFILL/RESTORE provenance recovery
-     * needs.
+     * Gamification aggregates and the configuration provenance that produced them. Also clears
+     * [com.example.backlogium.data.local.entity.PlayerProfile.pendingImportRecompute]: any
+     * completed recompute, regardless of source, proves aggregates are back in sync with
+     * whatever raw data existed when it ran (auditfix-backup-integrity).
      */
     @Query(
         "UPDATE player_profile SET totalXp = :totalXp, level = :level, " +
             "currentStreak = :currentStreak, longestStreak = MAX(longestStreak, :longestStreak), " +
-            "gamificationConfigVersion = :gamificationConfigVersion, pendingXpIntegrityCorrection = 0 " +
+            "gamificationConfigVersion = :gamificationConfigVersion, pendingImportRecompute = 0, " +
+            "pendingXpIntegrityCorrection = 0 " +
             "WHERE id = 0",
     )
     suspend fun updateGamification(
@@ -113,52 +107,13 @@ interface PlayerProfileDao {
     )
 
     /**
-     * Clears the pending recompute marker and its provenance as one atomic, field-scoped unit, only
-     * when the marker still carries exactly the given source/account/request. A newer raw
-     * transaction that replaced the marker (a re-import, or a backup merge landing while an import's
-     * recomputation was in flight) is never cleared by the older protocol's finalizer — the
-     * comparison makes the finalizer incapable of erasing a newer pending with a stale write.
-     *
-     * The `IS NULL` comparisons handle legacy markers whose provenance predates the columns.
+     * Marks that an import's raw-data transaction (backup merge or Steam-history capture) has
+     * committed and the follow-up recompute
+     * has not yet run — set as the last write inside that same transaction, so it commits
+     * atomically with the merged data (auditfix-backup-integrity).
      */
-    @Query(
-        "UPDATE player_profile SET pendingImportRecompute = 0, " +
-            "pendingImportRecomputeSource = NULL, pendingImportRecomputeSteamId = NULL, " +
-            "pendingImportRecomputeRequestId = NULL " +
-            "WHERE id = 0 AND pendingImportRecompute = 1 " +
-            "AND pendingImportRecomputeSource IS :source " +
-            "AND pendingImportRecomputeSteamId IS :steamId " +
-            "AND pendingImportRecomputeRequestId IS :requestId",
-    )
-    suspend fun clearPendingImportRecomputeIfMatches(
-        source: String?,
-        steamId: String?,
-        requestId: String?,
-    )
-
-    /**
-     * Marks that a raw-data transaction (a backup merge or an explicit history import) has
-     * committed and the follow-up recompute has not yet run — set as the last write inside that
-     * same transaction, so it commits atomically with the committed data (auditfix-backup-integrity;
-     * stabilize-first-run-setup).
-     *
-     * [source] records the recompute provenance ("RESTORE" for a backup merge, "BACKFILL" for an
-     * explicit history import) and [steamId] + [requestId] attribute it to the account/consent
-     * that produced it, so recovery and every marker-clearing derived writer present it as
-     * administrative rather than earned progress and never run a previous account's marker over
-     * the replacement account.
-     */
-    @Query(
-        "UPDATE player_profile SET pendingImportRecompute = 1, " +
-            "pendingImportRecomputeSource = :source, " +
-            "pendingImportRecomputeSteamId = :steamId, " +
-            "pendingImportRecomputeRequestId = :requestId WHERE id = 0",
-    )
-    suspend fun markPendingImportRecompute(
-        source: String,
-        steamId: String?,
-        requestId: String?,
-    )
+    @Query("UPDATE player_profile SET pendingImportRecompute = 1 WHERE id = 0")
+    suspend fun markPendingImportRecompute()
 
     /**
      * Raise the longest-streak high-water mark, never lower it.
@@ -181,31 +136,13 @@ interface PlayerProfileDao {
     @Query("UPDATE player_profile SET lastSyncError = :message WHERE id = 0")
     suspend fun updateLastSyncError(message: String)
 
-    /**
-     * Record explicit confirmed-baseline evidence for the active account, scoped to the two
-     * confirmation fields only — never a whole-profile upsert (stabilize-first-run-setup).
-     *
-     * Callers write this inside the same Room transaction that commits an accepted owned-library
-     * response (including an explicitly confirmed empty library), so a crash before that commit
-     * leaves both columns NULL and the baseline unconfirmed. A later failed refresh must not call
-     * this, preserving the existing confirmation.
-     */
-    @Query(
-        "UPDATE player_profile SET confirmedLibrarySteamId = :steamId, " +
-            "confirmedLibraryAt = :confirmedAt WHERE id = 0",
-    )
-    suspend fun updateLibraryConfirmation(steamId: String, confirmedAt: Long)
-
     /** Reset account-derived profile state while retaining the active rule configuration version. */
     @Query(
         "UPDATE player_profile SET steamId = :steamId, steamLevel = 0, totalXp = 0, level = 1, " +
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
             "storeRegion = NULL, pendingImportRecompute = 0, " +
-            "pendingImportRecomputeSource = NULL, pendingImportRecomputeSteamId = NULL, " +
-            "pendingImportRecomputeRequestId = NULL, " +
-            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0, " +
-            "confirmedLibrarySteamId = NULL, confirmedLibraryAt = NULL WHERE id = 0",
+            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0 WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

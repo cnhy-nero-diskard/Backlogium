@@ -16,18 +16,20 @@ import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.backup.SnapshotStore
 import com.example.backlogium.data.diagnostics.DiagnosticHistoryMigration
 import com.example.backlogium.data.repo.AccountChangeCoordinator
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.repo.CloudPresenceRepository
 import com.example.backlogium.data.steamassets.SteamAssetInterceptor
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.domain.DailyProgressBackfillUseCase
-import com.example.backlogium.domain.FirstRunJourneyCoordinator
 import com.example.backlogium.domain.PendingImportRecomputeUseCase
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.work.PostPlaySyncScheduler
 import com.example.backlogium.work.CloudRoutineScheduler
 import com.example.backlogium.work.PresenceServiceStarter
 import com.example.backlogium.work.SyncScheduler
 import com.example.backlogium.work.UpdateScheduler
-import com.example.backlogium.work.setup.SetupCoordinator
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -112,10 +114,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
 
     @Inject
-    lateinit var setupCoordinator: SetupCoordinator
-
-    @Inject
-    lateinit var firstRunJourney: FirstRunJourneyCoordinator
+    lateinit var setupRecovery: dagger.Lazy<com.example.backlogium.work.setup.SetupCoordinator>
 
     @Inject
     lateinit var snapshotStore: SnapshotStore
@@ -128,6 +127,24 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
 
     @Inject
     lateinit var cloudPresence: CloudPresenceRepository
+
+    @Inject
+    lateinit var playerProfileDao: PlayerProfileDao
+
+    @Inject
+    lateinit var unknownTimeMaterializer: UnknownTimeMaterializer
+
+    @Inject
+    lateinit var recoveryDerivedFinalizer: RecoveryDerivedFinalizer
+
+    @Inject
+    lateinit var achievementUnlockDispatcher: com.example.backlogium.data.achievement.AchievementUnlockDispatcher
+
+    @Inject
+    lateinit var achievementRecomputeRecovery: com.example.backlogium.data.achievement.AchievementRecomputeRecovery
+
+    @Inject
+    lateinit var timeProvider: TimeProvider
 
     @Inject
     @ApplicationScope
@@ -164,6 +181,25 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .onFailure { Timber.e(it, "Account-change recovery failed; sync remains unscheduled") }
                 .isSuccess
             if (!ready) return@launch
+            achievementRecomputeRecovery.prepareStartup()
+            achievementUnlockDispatcher.start()
+            setupRecovery.get().ensureLoaded()
+
+            // Resume recipe materialization and staged derived writes before any fresh sync can
+            // compute over their incomplete baseline. Account-change recovery above has completed;
+            // the durable profile identity scopes this offline local work even when credentials
+            // are absent or temporarily mismatched.
+            val recoveryReady = runCatching {
+                val admittedAccount = playerProfileDao.get()?.steamId?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                if (admittedAccount != null) {
+                    val now = timeProvider.nowMillis()
+                    unknownTimeMaterializer.materializeAll(admittedAccount, now)
+                    recoveryDerivedFinalizer.resumePending(admittedAccount, now)
+                }
+            }.onFailure { Timber.e(it, "Playtime recovery startup resume failed; sync remains unscheduled") }
+                .isSuccess
+            if (!recoveryReady) return@launch
 
             // Routine work must not be exposed until promotion/removal recovery has
             // succeeded: a job admitted against the pre-promotion generation before recovery
@@ -184,27 +220,10 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()
-            resolvePendingImportRecompute()
-
-            // Reconcile the first-run journey only after account-change recovery and the pending
-            // raw-import recompute have settled, so the durable marker/consent are final before the
-            // phase is repaired or an authorized request is replayed exactly once. Idempotent; a
-            // failure leaves the neutral takeover up so the onboarding surface can re-resolve on
-            // its own. Never opens a deferred/completed journey and never starts an import a phase
-            // did not authorize.
-            runCatching { firstRunJourney.startupRecovery() }
-                .onFailure { Timber.e(it, "First-run journey recovery failed; phases resolve on the next launch") }
+            if (!resolvePendingImportRecompute()) return@launch
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()
             syncScheduler.ensurePeriodicWishlistSampling()
-
-            // Reconcile saved setup work only after account-change recovery has succeeded: an
-            // admitted job from the pre-recovery generation must not be resumed against the new
-            // account. Recovery never reopens an explicitly dismissed first-run journey and never
-            // starts a polling service of its own — it resumes saved associations and admits the
-            // remaining selected cohort, then WorkManager owns the rest.
-            runCatching { setupCoordinator.reconcile() }
-                .onFailure { Timber.e(it, "Setup recovery failed; saved setup work remains for the next launch") }
         }
         ProcessLifecycleOwner.get().lifecycle.addObserver(ForegroundPresenceCheck())
     }
@@ -214,12 +233,10 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
      * follow-up recompute ran (auditfix-backup-integrity). A no-op on every launch where no merge
      * is mid-flight, which is the common case.
      */
-    private fun resolvePendingImportRecompute() {
-        scope.launch {
-            runCatching { pendingImportRecompute() }
-                .onFailure { Timber.e(it, "Pending import recompute failed") }
-        }
-    }
+    private suspend fun resolvePendingImportRecompute(): Boolean =
+        runCatching { pendingImportRecompute() }
+            .onFailure { Timber.e(it, "Pending import recompute failed") }
+            .isSuccess
 
     /**
      * One-time correction of per-day totals recorded under the superseded poll-time attribution
