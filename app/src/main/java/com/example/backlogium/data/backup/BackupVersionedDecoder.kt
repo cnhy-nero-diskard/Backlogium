@@ -24,6 +24,7 @@ internal object BackupVersionedDecoder {
         var sessionsSeen = false
         var missingContribution = false
         var hasContribution = false
+        var preferencesSeen = false
         var recoverySeen = false
         var recoveryIsObject = false
         reader.beginObject()
@@ -53,6 +54,11 @@ internal object BackupVersionedDecoder {
                 }
                 reader.endArray()
             }
+            "gamePreferences" -> {
+                require(!preferencesSeen)
+                preferencesSeen = true
+                inspectPreferences(reader)
+            }
             "recovery" -> {
                 require(!recoverySeen)
                 recoverySeen = true
@@ -68,6 +74,38 @@ internal object BackupVersionedDecoder {
         require(if (resolved == 1) !hasContribution else !missingContribution)
         require(if (resolved < 3) !recoverySeen else (recoverySeen && recoveryIsObject))
         return resolved
+    }
+
+    private fun inspectPreferences(reader: JsonReader) {
+        val appIds = mutableSetOf<Long>()
+        reader.beginArray()
+        while (reader.hasNext()) {
+            var appId: Long? = null
+            var favoriteSeen = false
+            var artworkSeen = false
+            reader.beginObject()
+            while (reader.hasNext()) when (reader.nextName()) {
+                "appId" -> {
+                    require(appId == null && reader.peek() == JsonToken.NUMBER)
+                    appId = reader.nextString().toLong()
+                    require(appId > 0 && appIds.add(appId))
+                }
+                "isFavorite" -> {
+                    require(!favoriteSeen && reader.peek() == JsonToken.BOOLEAN)
+                    reader.nextBoolean()
+                    favoriteSeen = true
+                }
+                "artwork" -> {
+                    require(!artworkSeen)
+                    artworkSeen = true
+                    inspectArtwork(reader)
+                }
+                else -> reader.skipValue()
+            }
+            reader.endObject()
+            require(appId != null && favoriteSeen)
+        }
+        reader.endArray()
     }
 
     private fun inspectContribution(reader: JsonReader) {
@@ -90,6 +128,28 @@ internal object BackupVersionedDecoder {
         }
         reader.endObject()
         require(recovered && timed)
+    }
+
+    private fun inspectArtwork(reader: JsonReader) {
+        require(reader.peek() == JsonToken.BEGIN_OBJECT)
+        var variantSeen = false
+        reader.beginObject()
+        while (reader.hasNext()) when (reader.nextName()) {
+            "variant" -> {
+                require(!variantSeen)
+                variantSeen = true
+                when (reader.peek()) {
+                    JsonToken.NULL -> reader.nextNull()
+                    JsonToken.STRING -> require(
+                        com.example.backlogium.domain.GameArtworkVariant.fromToken(reader.nextString()) != null,
+                    )
+                    else -> error("Invalid artwork variant")
+                }
+            }
+            else -> error("Invalid artwork object")
+        }
+        reader.endObject()
+        require(variantSeen)
     }
 
     private fun readState(reader: JsonReader) {

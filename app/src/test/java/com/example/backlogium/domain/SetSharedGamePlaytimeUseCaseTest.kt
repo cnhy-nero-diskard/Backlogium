@@ -1,5 +1,8 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Game
 import kotlinx.coroutines.test.runTest
@@ -20,6 +23,8 @@ import java.time.ZoneId
  */
 @RunWith(RobolectricTestRunner::class)
 class SetSharedGamePlaytimeUseCaseTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     @Test
     fun setsTheEstimateAndRecomputesXpForAFamilySharedGame() = runTest {
@@ -36,7 +41,7 @@ class SetSharedGamePlaytimeUseCaseTest {
         )
         val useCase = SetSharedGamePlaytimeUseCase(
             gameDao = gameDao,
-            settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settings = settingsFixture.create(),
             gamificationUpdater = updater,
             time = FixedTimeProvider,
             derivedStateWrites = DerivedStateWriteCoordinator(),
@@ -115,7 +120,7 @@ class SetSharedGamePlaytimeUseCaseTest {
 
     private fun useCase(gameDao: FakeGameDao) = SetSharedGamePlaytimeUseCase(
         gameDao = gameDao,
-        settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
+        settings = settingsFixture.create(),
         gamificationUpdater = GamificationUpdater(
             sessionDao = FakeSessionDao(emptyList()),
             dailyProgressDao = FakeDailyProgressDao(emptyList()),

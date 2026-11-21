@@ -1,6 +1,6 @@
 ## 1. Preference Persistence and Domain Boundary
 
-- [x] 1.1 Add the app-owned game-preference table, domain repository, and additive migration from the current schema; verify migration-chain retention and default unfavorited behavior without changing existing games or collection members.
+- [x] 1.1 Add the app-owned game-preference table, domain repository, and additive migration from the released schema through 45→46; verify migration-chain retention and default unfavorited behavior without changing existing games or collection members.
 - [x] 1.2 Integrate preferences with account reset and transactional identity guards; verify account-switch clearing, sync preservation, and shared-to-owned retention with focused repository tests.
 - [x] 1.3 Expose domain picker/member action models and safe direct mutations; verify duplicate add preserves queue position/done state, missing targets fail safely, and hidden memberships are retained.
 - [x] 1.4 Guard stale editor saves against concurrent shortcut changes; verify a conflicting save requires refresh/retry without silently dropping the shortcut member or partially committing editor fields.
@@ -21,7 +21,7 @@
 ## 4. Backup Compatibility
 
 - [x] 4.1 Export explicit favorite preference rows in manual backups and snapshots; verify true/false and absent-game preferences round-trip from one export snapshot.
-- [x] 4.2 Validate and merge optional preference records in supported versions 1/2; verify omitted legacy sections preserve local preferences, invalid/duplicate keys fail before writes, and repeated import is idempotent.
+- [x] 4.2 Validate and merge optional preference records in supported versions 1–3, including the current recovery-aware export; verify omitted legacy sections preserve local preferences, invalid/duplicate keys fail before writes, and repeated import is idempotent.
 - [x] 4.3 Preserve the existing identity warning and session-provenance rules; verify confirmed cross-account preference merge leaves configured credentials unchanged and rejected imports leave all data intact.
 
 ## 5. Presentation and Integrated Verification

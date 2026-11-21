@@ -76,6 +76,39 @@ class BackupVersionedDecoderTest {
         assertNull(decode(mixed))
     }
 
+    @Test fun preferencesRequireExactTypesAndUniquePositiveKeysInAllSupportedVersions() {
+        for (version in 1..BackupFile.CURRENT_FORMAT_VERSION) {
+            val base = if (version == 3) requireNotNull(decode(v3Text(withRecovery = true))) else legacy
+            val file = base.copy(formatVersion = version, sessions = emptyList(),
+                gamePreferences = listOf(BackupGamePreference(440, false)))
+            val encoded = json.encodeToString(BackupFile.serializer(), file)
+            assertEquals(file, decode(encoded))
+            assertNull(decode(encoded.replace("\"isFavorite\":false", "\"isFavorite\":\"false\"")))
+            assertNull(decode(encoded.replace("\"isFavorite\":false", "\"isFavorite\":0")))
+            assertNull(decode(encoded.replace("\"appId\":440,\"isFavorite\"", "\"appId\":0,\"isFavorite\"")))
+            assertNull(decode(encoded.replace("\"appId\":440,\"isFavorite\"", "\"appId\":\"440\",\"isFavorite\"")))
+            assertNull(decode(json.encodeToString(BackupFile.serializer(), file.copy(
+                gamePreferences = file.gamePreferences!! + BackupGamePreference(440, true)))))
+        }
+    }
+
+    @Test fun artworkRequiresABoundedVariantOrExplicitNullAndRejectsMalformedObjects() {
+        val file = requireNotNull(decode(v3Text(withRecovery = true))).copy(
+            gamePreferences = listOf(BackupGamePreference(440, true, BackupArtwork(null))))
+        val encoded = json.encodeToString(BackupFile.serializer(), file)
+        assertEquals(file, decode(encoded))
+        for (variant in com.example.backlogium.domain.GameArtworkVariant.entries) {
+            val selected = file.copy(gamePreferences = listOf(BackupGamePreference(440, true, BackupArtwork(variant.name))))
+            assertEquals(selected, decode(json.encodeToString(BackupFile.serializer(), selected)))
+        }
+        for (replacement in listOf("null", "{}", "{\"variant\":false}", "{\"variant\":123}",
+            "{\"variant\":\"BAD\"}", "{\"variant\":null,\"variant\":null}", "{\"variant\":null,\"url\":\"bad\"}")) {
+            assertNull(replacement, decode(encoded.replace("{\"variant\":null}", replacement)))
+        }
+        assertNull(decode(encoded.replace("\"artwork\":{\"variant\":null}",
+            "\"artwork\":{\"variant\":null},\"artwork\":{\"variant\":null}")))
+    }
+
     @Test fun v3RequiresExplicitRecoveryObjectAndKeepsSessionContributionFacts() {
         assertNotNull(decode(v3Text(withRecovery = true)))
         // A v3 file with no recovery section is not a valid v3 backup.

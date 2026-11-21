@@ -98,7 +98,7 @@ class PersonalPaceRepositoryTest {
                 "observeActiveTimedPlacementsForSessions" -> flowOf(emptyList<Any>())
                 "observeEarliestSessionStart", "observeEarliestVisibleSessionStart" -> flowOf(null)
                 "observeTrackedMinutesByGame", "observeSessionCountsByGame",
-                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame",
+                "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame", "observeLatestMeaningfulSessionInstantByGame",
                 "observeSince", "observeActiveRecoveryAllocations",
                 "observeActiveRecoveryTimedPlacements", "observeActiveRecoveryRecipes",
                 "observeActiveRecoveryContributions",

@@ -335,6 +335,7 @@ class BackupRecoveryFailureReplayTest {
 
     private fun exportMapper(db: BacklogiumDatabase) = BackupExportMapper(
         gameDao = db.gameDao(),
+        gamePreferenceDao = db.gamePreferenceDao(),
         achievementDao = db.achievementDao(),
         sessionDao = db.sessionDao(),
         dailyProgressDao = db.dailyProgressDao(),
@@ -354,6 +355,7 @@ class BackupRecoveryFailureReplayTest {
         recoveryBackupStore: RecoveryBackupStore = DaoRecoveryBackupStore(db.playtimeRecoveryDao(), db.sessionDao()),
     ) = BackupMergeEngine(
         gameDao = db.gameDao(),
+        gamePreferenceDao = db.gamePreferenceDao(),
         sessionDao = db.sessionDao(),
         dailyProgressDao = db.dailyProgressDao(),
         hltbDataDao = db.hltbDataDao(),

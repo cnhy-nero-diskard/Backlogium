@@ -1,5 +1,8 @@
 package com.example.backlogium.data.local
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import com.example.backlogium.data.repo.CloudRoutinePolicy
 import com.example.backlogium.data.repo.CloudRoutineAdmission
 import com.example.backlogium.data.repo.CloudReadFailure
@@ -17,9 +20,11 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class CloudRoutineSettingsTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
     @Test fun routineOutcomeSurvivesManualReadPolicyChangeAndRestartButNotRemoval() = runTest {
         val context = RuntimeEnvironment.getApplication()
-        val store = SettingsDataStore(context)
+        val store = settingsFixture.create()
         store.clearAccountDerivedState()
         try {
             store.initializeCloudRoutinePolicy()
@@ -28,7 +33,7 @@ class CloudRoutineSettingsTest {
             store.recordCloudReadSummary(200L, CloudReadTrigger.SETTINGS_MANUAL,
                 CloudReadSummaryOutcome.COMPLETE, null, null, false, null, null)
             store.setCloudRoutinePolicy(CloudRoutinePolicy.DAILY)
-            val reopened = SettingsDataStore(context).cloudRoutineStateFlow.first()
+            val reopened = settingsFixture.create().cloudRoutineStateFlow.first()
             assertEquals(CloudRoutinePolicy.DAILY, reopened.policy)
             assertEquals(100L, reopened.lastAdmittedAt)
             assertEquals(CloudReadSummaryOutcome.PARTIAL, reopened.lastOutcome)
@@ -44,7 +49,7 @@ class CloudRoutineSettingsTest {
     @Test
     fun readSummaryRetainsLastSuccessAndObservationAfterPartialAndFailureAcrossRestart() = runTest {
         val context = RuntimeEnvironment.getApplication()
-        val store = SettingsDataStore(context)
+        val store = settingsFixture.create()
         store.clearAccountDerivedState()
         try {
             store.recordCloudReadSummary(
@@ -55,7 +60,7 @@ class CloudRoutineSettingsTest {
                 20L, CloudReadTrigger.ROUTINE, CloudReadSummaryOutcome.FAILED,
                 CloudReadFailure.UNREACHABLE, null, null, null, null,
             )
-            val restarted = SettingsDataStore(context).cloudReadSummaryFlow.first()
+            val restarted = settingsFixture.create().cloudReadSummaryFlow.first()
             assertEquals(20L, restarted.lastAttemptAt)
             assertEquals(CloudReadSummaryOutcome.FAILED, restarted.lastOutcome)
             assertEquals(CloudReadFailure.UNREACHABLE, restarted.lastFailure)
@@ -76,7 +81,7 @@ class CloudRoutineSettingsTest {
 
     @Test
     fun concurrentTriggersFailureCooldownAndTerminalWatermarkAreShared() = runTest {
-        val store = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val store = settingsFixture.create()
         store.clearAccountDerivedState()
         try {
             store.initializeCloudRoutinePolicy()
@@ -107,7 +112,7 @@ class CloudRoutineSettingsTest {
     @Test
     fun preferenceAndAdmissionSurviveStoreRecreationWithoutResettingCursors() = runTest {
         val context = RuntimeEnvironment.getApplication()
-        val first = SettingsDataStore(context)
+        val first = settingsFixture.create()
         first.clearAccountDerivedState()
         try {
             first.setCloudReadPosition("read-cursor")
@@ -117,7 +122,7 @@ class CloudRoutineSettingsTest {
             first.setCloudRoutinePolicy(CloudRoutinePolicy.EVERY_12_HOURS)
             first.recordCloudRoutineAdmission(42L)
 
-            val restarted = SettingsDataStore(context)
+            val restarted = settingsFixture.create()
             assertEquals(CloudRoutinePolicy.EVERY_12_HOURS, restarted.initializeCloudRoutinePolicy().policy)
             assertEquals(42L, restarted.cloudRoutineStateFlow.first().lastAdmittedAt)
             assertEquals(2L, restarted.cloudRoutineStateFlow.first().orderingWatermark)
@@ -133,7 +138,7 @@ class CloudRoutineSettingsTest {
     @Test
     fun manualOnlySurvivesRestartAndReenableKeepsCooldownAndCursors() = runTest {
         val context = RuntimeEnvironment.getApplication()
-        val first = SettingsDataStore(context)
+        val first = settingsFixture.create()
         first.clearAccountDerivedState()
         try {
             first.setCloudReadPosition("read-cursor")
@@ -146,7 +151,7 @@ class CloudRoutineSettingsTest {
                 CloudRoutineAdmission.UNAVAILABLE,
                 first.admitCloudRoutine(42L + 72L * 3_600_000L),
             )
-            val restarted = SettingsDataStore(context)
+            val restarted = settingsFixture.create()
             val disabled = restarted.initializeCloudRoutinePolicy()
             assertEquals(CloudRoutinePolicy.OFF_MANUAL_ONLY, disabled.policy)
             assertEquals(42L, disabled.lastAdmittedAt)

@@ -80,14 +80,18 @@ Every game-detail entry point SHALL present labeled identity/metadata, estimates
 - **THEN** local detail content and visit state behave as specified and the existing Library visit context is preserved
 
 ### Requirement: Achievement filtering has explicit empty states
-Detail SHALL offer All, Unlocked, and Locked filters independently of sorting. Summary totals and completion SHALL describe the full available achievement set rather than the filtered subset. An empty filtered set SHALL be distinguished from missing cached achievement data or an unsuccessful refresh.
+Detail SHALL offer All, Unlocked, and Locked independently of sorting. Totals and completion SHALL describe the full set once personal progress is known. Empty filters SHALL stay distinct from missing data or a failed refresh. Catalogue-only objectives with unknown progress SHALL appear in All only. Filters SHALL preserve catalogue and progress availability disclosures.
 
 #### Scenario: No locked achievements remain
 - **WHEN** Locked is selected for a game whose cached achievements are all unlocked
 - **THEN** the list reports no locked achievements while retaining the game's full completion counts
 
+#### Scenario: Catalogue objectives have unconfirmed progress
+- **WHEN** All shows cached objectives without personal progress and the player selects Locked
+- **THEN** the screen retains the progress-availability explanation and reports that there are no confirmed locked achievements
+
 ### Requirement: Placeholder covers offer a Steam artwork chooser
-For tracked games with placeholder cover artwork, detail SHALL offer a labeled chooser previewing supported Steam variants for that app ID. Available previews SHALL be selectable, failed or offline-unavailable candidates SHALL be identified, and a stored selection SHALL remain inspectable/resettable after the placeholder is resolved. Selection SHALL apply consistently to detail and tracked-game cover cards in Library and Collections, using their existing frame geometry; avatar/game-icon thumbnails are unaffected. Reset SHALL explicitly clear the override. Wishlist-only results SHALL NOT receive this app-owned tracked-game control.
+Tracked games with placeholder covers SHALL offer a labeled chooser for supported Steam variants. It SHALL identify unavailable previews, select available ones, and let users inspect or reset a saved choice. Detail, Library, and Collections SHALL apply the same preference in their existing frames. Reset SHALL clear the choice. Icons and wishlist-only results SHALL retain their existing behavior.
 
 #### Scenario: Preview and selection
 - **WHEN** a placeholder game's Steam variant successfully previews and is selected

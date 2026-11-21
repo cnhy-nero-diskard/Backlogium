@@ -16,13 +16,13 @@ Issue #167's completed changes already implement the five-minute Library visit p
 
 Add `game_preferences`, keyed by `appId`, with an explicit `isFavorite` value. Retain false rows so an intentional clear can round-trip. Use a soft game reference, matching collection/hidden-game retention: a temporarily missing game cannot cascade-delete the preference. A preference repository exposes plain domain values and transactional mutations guarded against account reset; UI must not import entities or DAOs. No favorite field is added to Steam's insert/update payload. Shared-to-owned conversion retains the same app ID.
 
-The second change extends this table with an optional artwork variant without redefining favorites. Account reset clears it transactionally. Hide/unhide filters its presentation without deleting it. Explicit shared-game removal keeps an inert preference keyed by app ID, as it has no visible member while that game is excluded.
+The combined implementation creates the table with the second change's nullable artwork variant. The two preferences retain independent behavior. Account reset clears it transactionally. Hide/unhide filters its presentation without deleting it. Explicit shared-game removal keeps an inert preference keyed by app ID, as it has no visible member while that game is excluded.
 
 Alternative: store favorites as custom collection membership. Rejected because Favorites is derived and would gain editable membership/queue semantics. Reusing `isGoal` is also rejected because Focus already affects progression and History.
 
 ### 2. One derived snapshot, with defined local-date boundaries
 
-Extend the existing feed with favorite preferences and new smart IDs. Preserve the existing kinds' relative order and append their current rules unchanged after Favorites and Played recently. Use the latest supported Steam/session instant, including open meaningful sessions, and inject current instant/date/zone for deterministic decisions. Played recently includes local dates from `today - 13 days` through today and excludes instants later than now. Manual minutes and undated history never supply timestamps. React to the existing date/zone provider; no new network job is needed.
+Extend the existing feed with favorite preferences and new smart IDs. Preserve the existing kinds' relative order and append their current rules unchanged after Favorites and Played recently. Use the latest supported Steam/session instant within the current clock window, including open sessions with positive minutes. Reject future observations before choosing the latest candidate, so a future Steam stamp or session cannot suppress another eligible observed instant. Played recently includes local dates from `today - 13 days` through today and excludes instants later than now. Manual minutes, date-only recovery allocations, and undated history never supply session instants. React to the existing date/zone provider; no new network job is needed.
 
 Both screens use the same derived members, counts, labels, and hide settings. Keep the existing empty-list policy: an empty Favorites card is absent, with the detail heart providing the discovery entry point. Preserve Completed's achievement-first rules and disclosure.
 
@@ -38,7 +38,7 @@ Alternative: save shortcuts by rebuilding the full collection editor draft. Reje
 
 ### 4. Compatible preference backup records
 
-Add an optional `gamePreferences` section to current version-2 backups and snapshots; do not change accepted versions 1/2 or their required session provenance. A missing section means no preference updates. A present record carries app ID and explicit favorite boolean; imports replace that field only for represented app IDs. Export retained rows even when their game is absent. Validate types, positive IDs, and duplicate keys before the existing transaction. Keep warned cross-account merging and SteamID behavior unchanged.
+Add an optional `gamePreferences` section to current version-3 backups and snapshots. Accept the optional section in supported version-1 and version-2 imports as well. Preserve their session provenance rules and the recovery section required by version 3. A missing section means no preference updates. A present record carries app ID and explicit favorite boolean; imports replace that field only for represented app IDs. Export retained rows even when their game is absent. Validate types, positive IDs, and duplicate keys before the existing transaction. Keep warned cross-account merging and SteamID behavior unchanged.
 
 The second change will add a separately presence-aware artwork selection value; older favorite-only records must not clear artwork. Rejecting all older backups or bumping the format unnecessarily would break existing compatibility.
 
@@ -52,4 +52,4 @@ The second change will add a separately presence-aware artwork selection value; 
 
 ## Migration Plan
 
-Use an additive Room migration from the actual schema at apply time (currently 42), with no destructive fallback. Missing preferences mean unfavorited. Add the table to account reset, export snapshots, validation, and transactional import. Run migration-chain/retention checks and focused preference, derivation, membership, backup, and UI checks; record required screenshot baselines alongside UI changes. A rollback of application behavior must preserve the new table and backups; do not downgrade the database destructively. No deployment or spec sync is part of this proposal.
+Use the additive Room 45→46 migration from the released schema chain, which creates the preference table with both fields. Retain the released recovery, achievement-watch, and catalogue migrations on the path to 45. Missing preferences mean unfavorited. Add the table to account reset, export snapshots, validation, and transactional import. Run migration-chain/retention checks and focused preference, derivation, membership, backup, and UI checks; record required screenshot baselines alongside UI changes. A rollback of application behavior must preserve the new table and backups; do not downgrade the database destructively. No deployment or spec sync is part of this proposal.

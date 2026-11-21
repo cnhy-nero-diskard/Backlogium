@@ -39,6 +39,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.components.GameListDensityControl
+import com.example.backlogium.ui.components.DerivedCollectionCard
+import com.example.backlogium.domain.DerivedCollectionArtwork
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowBack
 import compose.icons.tablericons.DeviceGamepad
@@ -241,54 +243,18 @@ private fun CustomCollectionCard(
 }
 
 @Composable
-private fun SmartCollectionCard(
-    collection: SmartCollectionCardUi,
-    onClick: () -> Unit,
-) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = "Open ${collection.name} derived collection" },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = collection.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${collection.members.size}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Text(
-                text = collection.rule,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-        }
-    }
+private fun SmartCollectionCard(collection: SmartCollectionCardUi, onClick: () -> Unit) {
+    DerivedCollectionCard(
+        name = collection.name, rule = collection.rule, memberCount = collection.members.size,
+        artwork = collection.members.take(3).map { DerivedCollectionArtwork(it.appId, it.headerUrl) },
+        onClick = onClick, modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
-private fun CollectionEmptyCard(
-    title: String,
-    message: String,
-    actionLabel: String,
-    onAction: () -> Unit,
-) {
+private fun CollectionEmptyCard(title: String, message: String, actionLabel: String, onAction: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(message, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = onAction) { Text(actionLabel) }

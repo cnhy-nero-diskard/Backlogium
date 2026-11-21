@@ -100,6 +100,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_42_43,
         BacklogiumDatabase.MIGRATION_43_44,
         BacklogiumDatabase.MIGRATION_44_45,
+        BacklogiumDatabase.MIGRATION_45_46,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -1832,6 +1833,29 @@ class MigrationTest {
         } finally {
             context.deleteDatabase(databaseName)
         }
+    }
+
+    @Test
+    fun v45ToV46RetainsGamesAndMembersAndDefaultsToUnfavorited() {
+        val databaseName = "migration-v45-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(databaseName, 45).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (10, 'Ten', '', 120, 0, 120, 1, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO collections (id, name, mode, sort, createdAt, timeBasis, displayOrder) VALUES (1, 'Queue', 'ORDERED_QUEUE', 'MANUAL_SEQUENCE', 1, 'COMPLETIONIST', 0)")
+            execSQL("INSERT INTO collection_members (collectionId, appId, orderIndex, done) VALUES (1, 10, 0, 1)")
+            close()
+        }
+        try {
+            migrationTestHelper.runMigrationsAndValidate(databaseName, 46, true,
+                BacklogiumDatabase.MIGRATION_45_46).use { migrated ->
+                migrated.query("SELECT playtimeForever, isGoal FROM games WHERE appId = 10").use {
+                    assertTrue(it.moveToFirst()); assertEquals(120, it.getInt(0)); assertEquals(1, it.getInt(1))
+                }
+                migrated.query("SELECT orderIndex, done FROM collection_members").use {
+                    assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0)); assertEquals(1, it.getInt(1))
+                }
+                migrated.query("SELECT * FROM game_preferences").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally { context.deleteDatabase(databaseName) }
     }
 
     @Test

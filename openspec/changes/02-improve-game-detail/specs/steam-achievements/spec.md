@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Detail can explicitly refresh one game's achievements
-The system SHALL offer a named Refresh achievements action for the selected tracked app ID, independent of player-count refresh. It SHALL reuse the common coordinated achievement fetch/merge rules with bounded repeated triggers and no playtime poll or whole-library sync. It SHALL publish pending, updated, no-change, unusable/private/no-stats, and transport-failure outcomes; unsupported/private responses SHALL NOT be treated as proof that a game has no achievements. Failed or unusable responses SHALL retain last-good data. Successful changes SHALL update dependent local progression through its existing recompute rules without replacing frozen earned rarity.
+Detail SHALL offer a named per-game achievement refresh independent of player count, using the shared fetch and merge path with bounded repeats. It SHALL report pending, updated, unchanged, unusable, or failed and retain last-good data on failure. It SHALL preserve frozen rarity and use durable recompute-only work when XP inputs change, without watch delivery.
 
 #### Scenario: Successful changed response
 - **WHEN** a user-triggered refresh returns usable changed achievement data
@@ -14,10 +14,16 @@ The system SHALL offer a named Refresh achievements action for the selected trac
 #### Scenario: Private or unavailable data
 - **WHEN** Steam provides no usable player stats or the request fails
 - **THEN** detail reports the corresponding outcome with a retry path and retains the prior achievement set
+- **AND** it does not infer that the game has no achievements
+
+#### Scenario: Progress recompute is interrupted
+- **WHEN** changed achievement data commits and the app stops before derived progress is recomputed
+- **THEN** the existing recovery path resumes the recompute without delivering an achievement-watch notification
 
 #### Scenario: Concurrent request sources
 - **WHEN** detail, sync, or an active monitor request the same account/game achievements together
 - **THEN** they use the shared serialization/coalescing contract and stale data cannot overwrite a newer observation
+- **AND** manual refresh can coexist with automatic catalogue hydration without requesting playtime or starting a library sweep
 
 ### Requirement: Detail achievement refresh belongs to its initiating account and game
 A refresh SHALL capture the configured account and selected game before fetching and validate that ownership at the commit boundary. An account-change reset, pending account transition, changed identity, hidden game, or removed shared game SHALL prevent stale work from merging or publishing a result to a different detail/account. Missing credentials SHALL produce an actionable unavailable state without a request. Same-account key rotation SHALL NOT be mistaken for a different player's data.

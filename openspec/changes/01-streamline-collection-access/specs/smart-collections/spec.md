@@ -12,7 +12,7 @@ The system SHALL derive a read-only Favorites collection from favorite preferenc
 - **THEN** no fabricated member appears and the preference is retained
 
 ### Requirement: Played recently uses dated play evidence
-The system SHALL derive Played recently from the latest supported Steam last-played timestamp or meaningful observed session instant. Membership SHALL cover today and the preceding thirteen calendar days in the current local zone, exclude future timestamps, and update at local date/zone changes without requiring a sync. Lifetime minutes, manual shared-play estimates, and imported undated playtime SHALL NOT manufacture a recent-play date. A separate live-playing indicator SHALL remain distinct from recent membership.
+Played recently SHALL use the latest nonfuture Steam last-played or meaningful session instant within today and the preceding thirteen local calendar days. Membership SHALL update offline on date or zone changes. Lifetime totals, manual estimates, and undated imports SHALL NOT supply instants. Live-playing status SHALL remain distinct.
 
 #### Scenario: Shared game has recent observed play
 - **WHEN** an admitted shared game has meaningful session evidence within the fourteen-day window
@@ -21,6 +21,10 @@ The system SHALL derive Played recently from the latest supported Steam last-pla
 #### Scenario: Window boundaries
 - **WHEN** the latest supported play instant is at the start of thirteen days before today
 - **THEN** the game is included, while an instant before that boundary or after the present instant is excluded
+
+#### Scenario: Future evidence does not mask recent play
+- **WHEN** a game has a future-dated observation as well as an older supported instant within the window
+- **THEN** it remains in Played recently based on the older eligible evidence
 
 #### Scenario: Date changes offline
 - **WHEN** a date boundary moves a game's latest play outside the window while offline
@@ -31,7 +35,7 @@ The system SHALL derive Played recently from the latest supported Steam last-pla
 - **THEN** it is not classified as played recently
 
 ### Requirement: Derived cards consistently explain their membership
-The system SHALL show a clear name, membership rule, coherent cover treatment, and visible-member count for every derived card. Favorites and Played recently SHALL precede the existing Quick wins, Never started, Almost done, Dropped, and Completed order on both Home and Collections. Counts and opened contents SHALL use the same visible membership. Presentation changes SHALL preserve existing membership rules, read-only behavior, hide preferences, empty-list suppression, and placement below custom collections.
+Derived cards SHALL show a name, rule, cover treatment, and count from the same visible membership as their lists. Favorites and Played recently SHALL precede Quick wins, Never started, Almost done, Dropped, and Completed on Home and Collections. Existing rules, disclosures, read-only behavior, hide settings, empty suppression, and placement below custom collections SHALL remain.
 
 #### Scenario: Card and contents agree
 - **WHEN** a derived card is opened after a game is hidden or its membership changes

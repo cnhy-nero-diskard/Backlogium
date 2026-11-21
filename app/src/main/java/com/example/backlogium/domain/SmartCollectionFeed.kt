@@ -4,10 +4,14 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
+import com.example.backlogium.data.repo.GamePreferenceRepository
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 
 /** One derivation pass, with the inputs the presenting surfaces still need alongside it. */
 data class SmartCollectionSnapshot(
@@ -25,11 +29,13 @@ data class SmartCollectionSnapshot(
  * once, here, is what makes them the same lists rather than two implementations of the same idea.
  */
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class SmartCollectionFeed @Inject constructor(
     gameRepository: GameRepository,
     achievementRepository: AchievementRepository,
     sessionRepository: SessionRepository,
-    private val currentDate: CurrentDateProvider,
+    currentDate: CurrentDateProvider,
+    preferences: GamePreferenceRepository,
 ) {
     private data class SessionFacts(
         val trackedMinutesByGame: Map<Long, Int>,
@@ -45,12 +51,18 @@ class SmartCollectionFeed @Inject constructor(
         SessionFacts(trackedMinutes, latestSessionAt, sessionCounts)
     }
 
+    private val recentSessionFacts = currentDate.currentMoment.flatMapLatest { moment ->
+        val start = SmartCollections.recentPlayWindowStart(moment.today, moment.zone)
+        sessionRepository.latestMeaningfulSessionAtByGame(start, moment.nowMillis).map { moment to it }
+    }
+
     val snapshot: Flow<SmartCollectionSnapshot> = combine(
         gameRepository.library,
         sessionFacts,
         achievementRepository.smartCollectionSignals,
-        currentDate.currentDate,
-    ) { games, sessions, achievementsByGame, today ->
+        recentSessionFacts,
+        preferences.favoriteAppIds,
+    ) { games, sessions, achievementsByGame, (moment, recentSessions), favorites ->
         SmartCollectionSnapshot(
             games = games,
             achievementsByGame = achievementsByGame,
@@ -80,11 +92,17 @@ class SmartCollectionFeed @Inject constructor(
                             game.lastPlayedAt,
                             sessions.latestSessionAtByGame[game.appId],
                         ),
+                        recentPlayedAt = maxOfNotNull(
+                            game.lastPlayedAt?.takeIf { it <= moment.nowMillis },
+                            recentSessions[game.appId],
+                        ),
                     )
                 },
                 achievementsByGame = achievementsByGame,
-                today = today,
-                sessionZone = currentDate.zone,
+                today = moment.today,
+                sessionZone = moment.zone,
+                nowMillis = moment.nowMillis,
+                favoriteAppIds = favorites,
             ),
         )
     }

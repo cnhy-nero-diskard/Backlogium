@@ -5,6 +5,8 @@ import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -44,6 +46,7 @@ private data class ExportSnapshot(
     val collections: List<Collection>,
     val collectionMembers: List<CollectionMember>,
     val hiddenGames: List<HiddenGame>,
+    val gamePreferences: List<GamePreference>,
     /** The active account's recovery graph, read in the same transaction as everything else. */
     val recovery: BackupRecovery,
 )
@@ -84,6 +87,7 @@ class BackupExportMapper @Inject constructor(
     private val credentials: CredentialsProvider,
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+    private val gamePreferenceDao: GamePreferenceDao,
 ) {
     suspend fun buildExport(): BackupFile {
         val config = settings.ruleConfigFlow.first()
@@ -104,6 +108,7 @@ class BackupExportMapper @Inject constructor(
                 collections = collectionDao.getAll(),
                 collectionMembers = collectionDao.getAllMembers(),
                 hiddenGames = hiddenGameDao.getAll(),
+                gamePreferences = gamePreferenceDao.getAll(),
                 recovery = recoveryStore.read(account),
             )
         }
@@ -151,6 +156,9 @@ class BackupExportMapper @Inject constructor(
             collections = collections.map { it.toBackup() },
             collectionMembers = collectionMembers.map { it.toBackup() },
             hiddenGames = snapshot.hiddenGames.map { it.toBackup() },
+            gamePreferences = snapshot.gamePreferences.map {
+                BackupGamePreference(it.appId, it.isFavorite, BackupArtwork(it.artworkVariant))
+            },
             recovery = snapshot.recovery,
         )
     }

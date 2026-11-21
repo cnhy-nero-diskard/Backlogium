@@ -742,6 +742,7 @@ class RecoveryOverlappingFinalizationTest {
 
         private fun mergeEngine(coordinator: SteamSyncCoordinator) = BackupMergeEngine(
             gameDao = database.gameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
             hltbDataDao = database.hltbDataDao(),

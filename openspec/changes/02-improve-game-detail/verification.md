@@ -77,3 +77,11 @@
 - Final validation/evidence checkpoint follows these commits on `feat/streamline-collections`, pushing to its configured `origin/feat/streamline-collections` upstream.
 
 All 17 tasks are complete. The pre-existing untracked `openspec/changes/03-archive-deadline-collections/` was left untouched. This change remains active for a separate archive invocation; no archive was performed.
+
+## Integration verification after merging master
+
+Rechecked on 2026-11-21 against `master` at `098dbff3`. The automatic catalogue hydration, availability messages, and retry remain available alongside the explicit per-game player refresh. Tests verified that catalogue-only objectives appear only in All and that an interrupted manual refresh recomputes committed XP inputs through existing recovery without a watch notification. The v3 backup tests cover explicit artwork selection and reset with the recovery section present.
+
+The API 37 emulator passed all seven game-detail behavior tests. They use fixture data, including cached artwork and simulated refresh outcomes. The separate opt-in achievement device tests were skipped. App JVM tests, strict OpenSpec validation, and the visual baseline currency check passed. The integrated detail screenshots were regenerated and reviewed.
+
+The debug build, lint, and the final Roborazzi run covering both detail screenshot classes passed.

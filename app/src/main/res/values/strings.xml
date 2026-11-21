@@ -1,4 +1,8 @@
 <resources>
+    <string name="home_smart_favorites">Favorites</string>
+    <string name="home_smart_played_recently">Played recently</string>
+    <string name="home_smart_rule_favorites">Games you marked with a heart.</string>
+    <string name="home_smart_rule_played_recently">Dated play in the last 14 local calendar days.</string>
     <string name="settings_match_center_title">Match Center</string>
     <string name="settings_match_center_description">Review uncertain completion times or find a match for games with no results.</string>
     <string name="library_completion_times_for_game">Completion times for %1$s</string>
@@ -789,6 +793,7 @@
     <string name="home_no_collections_description">Group the games that matter right now — a completion goal, a deadline, or a play order.</string>
     <string name="home_derived_collections">Derived collections</string>
     <string name="home_open_derived_collection">Open %1$s derived collection</string>
+    <string name="derived_collection_read_only_count">%1$s · Read-only</string>
     <string name="home_collection_position">Position %1$d of %2$d</string>
     <string name="home_drag_to_reorder">Drag to reorder %1$s</string>
     <string name="home_move_up">Move up</string>

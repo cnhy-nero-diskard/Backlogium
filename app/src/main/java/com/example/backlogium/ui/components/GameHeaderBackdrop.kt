@@ -19,6 +19,10 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
+import coil.request.SuccessResult
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.LaunchedEffect
 
 /** Shared right-aligned Steam header-art treatment for Library and Collection game cards. */
 @Composable
@@ -73,6 +77,9 @@ internal fun SteamArtworkWithFallback(
     modifier: Modifier = Modifier,
     loading: @Composable () -> Unit,
     failure: @Composable () -> Unit,
+    allowHardware: Boolean = true,
+    onImageResolved: (SuccessResult) -> Unit = {},
+    onExhausted: () -> Unit = {},
 ) {
     val candidates = remember(urls) {
         urls.filter(String::isNotBlank).distinct()
@@ -80,18 +87,20 @@ internal fun SteamArtworkWithFallback(
     var attempt by remember(candidates) { mutableStateOf(0) }
     val currentUrl = candidates.getOrNull(attempt)
     if (currentUrl == null) {
-        failure()
+        LaunchedEffect(candidates) { onExhausted() }
+        Box(modifier) { failure() }
         return
     }
 
     SubcomposeAsyncImage(
-        model = currentUrl,
+        model = ImageRequest.Builder(LocalContext.current).data(currentUrl).allowHardware(allowHardware).build(),
         contentDescription = null,
         contentScale = contentScale,
         alignment = alignment,
         modifier = modifier,
         loading = { loading() },
         error = { failure() },
+        onSuccess = { onImageResolved(it.result) },
         onError = {
             attempt = if (attempt < candidates.lastIndex) attempt + 1 else candidates.size
         },

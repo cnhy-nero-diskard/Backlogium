@@ -131,8 +131,12 @@ fun CollectionScreen(
     onDone: () -> Unit,
     onOpenGameDetail: ((Long) -> Unit)? = null,
     viewModel: CollectionViewModel = hiltViewModel(),
+    memberActions: CollectionMemberActionsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val removal by memberActions.state.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel.collectionId) { memberActions.open(viewModel.collectionId) }
+    LaunchedEffect(removal.committed) { if (removal.committed > 0) viewModel.refreshEditor() }
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
     var showActions by remember { mutableStateOf(false) }
     var showDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
@@ -226,6 +230,9 @@ fun CollectionScreen(
                     onDeadlineChanged = viewModel::changeDeadline,
                     onDensityChanged = viewModel::setDensity,
                     onOpenGameDetail = openGameDetail,
+                    removal = removal,
+                    onRemoveMember = { appId -> memberActions.remove(appId,
+                        state.members.find { it.appId == appId }?.name ?: "Game", state.name) },
                 )
             } else {
                 CollectionForm(state = state, viewModel = viewModel)
@@ -282,6 +289,8 @@ private fun CollectionOverview(
     onDeadlineChanged: (LocalDate) -> Unit,
     onDensityChanged: (GameListDensity) -> Unit,
     onOpenGameDetail: (Long) -> Unit,
+    removal: MemberRemovalState,
+    onRemoveMember: (Long) -> Unit,
 ) {
     val accentColor = state.accent?.let {
         MaterialTheme.colorScheme.collectionAccentColor(it)
@@ -298,6 +307,11 @@ private fun CollectionOverview(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        removal.feedback?.let { feedback ->
+            item(key = "membership-feedback") {
+                Text(feedback, color = if (removal.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -427,6 +441,8 @@ private fun CollectionOverview(
                 accentColor = accentColor,
                 showQueuePosition = state.mode == CollectionMode.ORDERED_QUEUE,
                 onOpenGameDetail = onOpenGameDetail,
+                onRemoveMember = onRemoveMember,
+                removalEnabled = removal.ready && !removal.pending,
             )
         }
 
@@ -784,18 +800,25 @@ internal fun LazyListScope.collectionMemberItems(
     accentColor: Color,
     showQueuePosition: Boolean,
     onOpenGameDetail: (Long) -> Unit,
+    onRemoveMember: ((Long) -> Unit)? = null,
+    removalEnabled: Boolean = true,
 ) {
     if (!density.isGrid) {
         members.forEachIndexed { index, member ->
             item(key = "collection-member-${member.appId}") {
-                CollectionGameCard(
-                    member = member,
-                    accentColor = accentColor,
-                    position = index,
-                    showQueuePosition = showQueuePosition,
-                    density = density,
-                    onOpenGameDetail = onOpenGameDetail,
-                )
+                Column {
+                    CollectionGameCard(
+                        member = member,
+                        accentColor = accentColor,
+                        position = index,
+                        showQueuePosition = showQueuePosition,
+                        density = density,
+                        onOpenGameDetail = onOpenGameDetail,
+                    )
+                    onRemoveMember?.let { action ->
+                        CollectionMemberRemoveAction(member.name, removalEnabled) { action(member.appId) }
+                    }
+                }
             }
         }
         return
@@ -808,21 +831,34 @@ internal fun LazyListScope.collectionMemberItems(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 row.forEachIndexed { offset, member ->
-                    CollectionGameTile(
-                        member = member,
-                        accentColor = accentColor,
-                        position = rowIndex * density.columns + offset,
-                        showQueuePosition = showQueuePosition,
-                        density = density,
-                        modifier = Modifier.weight(1f),
-                        onOpenGameDetail = onOpenGameDetail,
-                    )
+                    Column(Modifier.weight(1f)) {
+                        CollectionGameTile(
+                            member = member,
+                            accentColor = accentColor,
+                            position = rowIndex * density.columns + offset,
+                            showQueuePosition = showQueuePosition,
+                            density = density,
+                            modifier = Modifier.fillMaxWidth(),
+                            onOpenGameDetail = onOpenGameDetail,
+                        )
+                        onRemoveMember?.let { action ->
+                            CollectionMemberRemoveAction(member.name, removalEnabled) { action(member.appId) }
+                        }
+                    }
                 }
                 repeat(density.columns - row.size) {
                     Spacer(Modifier.weight(1f))
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CollectionMemberRemoveAction(name: String, enabled: Boolean, onRemove: () -> Unit) {
+    TextButton(onClick = onRemove, enabled = enabled,
+        modifier = Modifier.semantics { contentDescription = "Remove $name from this collection" }) {
+        Text("Remove from this collection")
     }
 }
 
@@ -850,7 +886,7 @@ private fun CollectionGameCard(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
-                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
+                fallbackUrls = SteamIconMapper.coverUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -962,7 +998,7 @@ private fun CollectionGameTile(
             ) {
                 GameHeroCapsule(
                     heroCapsuleUrl = member.heroCapsuleUrl,
-                    fallbackUrls = SteamIconMapper.gridArtworkFallbackUrls(member.appId),
+                    fallbackUrls = SteamIconMapper.coverUrls(member.appId, portrait = true),
                     modifier = Modifier.matchParentSize(),
                     shape = heroShape,
                 )
@@ -1083,6 +1119,7 @@ data class CollectionFormActions(
     val onToggleMemberDone: (Long) -> Unit = {},
     val onAddGame: (Long) -> Unit = {},
     val onSave: () -> Unit = {},
+    val onRefresh: () -> Unit = {},
 )
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
@@ -1107,6 +1144,7 @@ private fun CollectionForm(
             onToggleMemberDone = viewModel::toggleMemberDone,
             onAddGame = viewModel::addGame,
             onSave = viewModel::save,
+            onRefresh = viewModel::refreshEditor,
         ),
     )
 }
@@ -1152,6 +1190,16 @@ fun CollectionFormContent(
             state = formListState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            state.saveError?.let { error ->
+                item(key = "save-error") {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
+                            Text("Refresh editor")
+                        }
+                    }
+                }
+            }
             item(key = "games-heading") { SectionLabel("Games") }
             if (state.members.isEmpty()) {
                 item(key = "no-members") {
@@ -1587,7 +1635,7 @@ private fun MemberRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = member.headerUrl,
-                fallbackUrls = SteamIconMapper.listBackgroundFallbackUrls(member.appId),
+                fallbackUrls = SteamIconMapper.coverUrls(member.appId),
                 modifier = Modifier.matchParentSize(),
             )
             Row(
@@ -1672,8 +1720,10 @@ private fun AddGameRow(
         Box(modifier = Modifier.fillMaxWidth()) {
             GameHeaderBackdrop(
                 headerUrl = game.headerUrl,
-                // This list can contain the whole library; avoid fanning out to several CDN
-                // fallback requests for every visible addable row.
+                // The whole-library picker keeps its original one-candidate budget unless
+                // a saved override needs to fall back to that original header.
+                fallbackUrls = if (game.artworkVariant != null)
+                    listOf(SteamIconMapper.headerUrl(game.appId)) else emptyList(),
                 modifier = Modifier.matchParentSize(),
             )
             Row(

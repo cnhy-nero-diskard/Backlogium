@@ -6,6 +6,8 @@ import com.example.backlogium.data.local.dao.AchievementCatalogueDao
 import com.example.backlogium.data.local.entity.AchievementCatalogueEntry
 import com.example.backlogium.data.local.entity.AchievementCatalogueCache
 import androidx.room.Database
+import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.entity.GamePreference
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
@@ -76,6 +78,7 @@ import com.example.backlogium.data.local.entity.SyncRun
 @Database(
     entities = [
         Game::class,
+        GamePreference::class,
         Session::class,
         DailyProgress::class,
         PlayerProfile::class,
@@ -118,11 +121,12 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 45,
+    version = 46,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class BacklogiumDatabase : RoomDatabase() {
+    abstract fun gamePreferenceDao(): GamePreferenceDao
     abstract fun dailyActivityDao(): com.example.backlogium.data.local.dao.DailyActivityDao
     abstract fun gameDao(): GameDao
     abstract fun sessionDao(): SessionDao
@@ -1323,6 +1327,17 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "`appId` INTEGER NOT NULL, `fetchedAt` INTEGER NOT NULL, PRIMARY KEY(`appId`), " +
                     "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) ON UPDATE NO ACTION ON DELETE CASCADE)")
                 db.execSQL("ALTER TABLE `achievement_watch_work` ADD COLUMN `recomputeSource` TEXT NOT NULL DEFAULT 'SYNC'")
+            }
+        }
+
+        /** v45 -> v46: add app-owned favorites and cover preferences, independent of the games table. */
+        val MIGRATION_45_46 = object : Migration(45, 46) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `game_preferences` (" +
+                        "`appId` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, " +
+                        "`artworkVariant` TEXT, PRIMARY KEY(`appId`))",
+                )
             }
         }
 

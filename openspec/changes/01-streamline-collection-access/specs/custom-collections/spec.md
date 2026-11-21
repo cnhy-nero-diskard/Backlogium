@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Favorites are persistent game preferences
-The system SHALL persist a favorite value per tracked Steam app ID as app-owned state, independent of Focus and custom membership. Setting or clearing a favorite SHALL work offline, survive ordinary sync and shared-to-owned conversion, and leave XP and Focus unchanged. Hiding or temporarily omitting a game SHALL retain its preference while excluding it from visible favorites. Changing the configured account SHALL clear the previous account's preferences through the existing account-change protocol.
+Favorites SHALL be stored per tracked Steam app ID, work offline, and survive sync and shared-to-owned conversion. Favorite writes SHALL leave Focus, XP, and custom membership intact. Hidden or temporarily absent games SHALL retain their values and stay out of visible Favorites. Account reset SHALL clear the previous account's preferences.
 
 #### Scenario: Favorite survives sync and ownership conversion
 - **WHEN** a favorited shared game becomes owned and is subsequently synchronized
@@ -16,7 +16,7 @@ The system SHALL persist a favorite value per tracked Steam app ID as app-owned 
 - **THEN** the previous account's favorite preferences are cleared with its account-owned data
 
 ### Requirement: Collection shortcuts preserve membership semantics
-The system SHALL support direct add/remove operations for custom collections without requiring a full editor save. Adding an existing member SHALL be a no-op that preserves its queue position and done mark. Removing a member SHALL affect only that collection. Shortcuts SHALL preserve retained hidden memberships and SHALL report failure without presenting an uncommitted change as successful. A full editor save whose membership baseline has changed concurrently SHALL require refresh/retry rather than silently overwriting committed shortcut changes.
+Custom collections SHALL support direct add and remove. Duplicate adds SHALL preserve order and done state. Removal SHALL affect only the selected collection, and shortcuts SHALL retain hidden memberships. Uncommitted changes SHALL report failure. An editor save with a stale membership baseline SHALL require retry without overwriting committed shortcuts or partially saving the draft.
 
 #### Scenario: Duplicate add preserves queue state
 - **WHEN** a queued game that is already marked done is added again

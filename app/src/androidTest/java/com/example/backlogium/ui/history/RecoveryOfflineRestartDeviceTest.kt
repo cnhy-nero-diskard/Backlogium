@@ -519,6 +519,7 @@ class RecoveryOfflineRestartDeviceTest {
         account: String,
     ) = BackupExportMapper(
         gameDao = database.gameDao(),
+        gamePreferenceDao = database.gamePreferenceDao(),
         achievementDao = database.achievementDao(),
         sessionDao = database.sessionDao(),
         dailyProgressDao = database.dailyProgressDao(),
@@ -540,6 +541,7 @@ class RecoveryOfflineRestartDeviceTest {
         account: String,
     ) = BackupMergeEngine(
         gameDao = database.gameDao(),
+        gamePreferenceDao = database.gamePreferenceDao(),
         sessionDao = database.sessionDao(),
         dailyProgressDao = database.dailyProgressDao(),
         hltbDataDao = database.hltbDataDao(),
