@@ -1,5 +1,26 @@
 # Acceptance coverage — stabilize-first-run-setup
 
+## Follow-up on current master
+
+The revised delta targets `master` at `a17cadb8`. The implementation and its acceptance checks are
+open in [tasks.md](tasks.md). The October runs below describe the prototype. [#188](https://github.com/cnhy-nero-diskard/Backlogium/pull/188)
+records the shipped setup fix's separate host and fake-response emulator results.
+
+| Area | Verification for the follow-up |
+| --- | --- |
+| Poll outcome and baseline evidence | Tasks 1.1–1.2 cover commit attribution, rollback, empty and unreadable responses, trusted readiness, and exactly-once concurrent credit. M1 and M6 exercise live overlap and account fencing. |
+| Setup observation and recovery | Tasks 2.1–2.3 cover exact work association, pending stages, cancellation, Continue, and remaining admissions. M1–M4 and M6–M7 exercise the integrated scheduler, device states, and Settings entry. |
+| First-run phase and durable consent | Task 3.1 covers the outstanding choice, consent replay, account replacement, and durable exit. M4–M7 exercise restart, process death, and account and surface boundaries. |
+| History credit and recovery provenance | Tasks 3.2–3.3 cover both entry points, legacy completion, rollback, other derived writers, and mixed backup recovery. Assert that 120 lifetime minutes with 60 session and 20 unknown-time credited minutes freeze a 40-minute offset, including when the unknown-time quantity awaits a date. M5 checks process death and one-time capture. |
+| Settings and onboarding presentation | Tasks 2.3 and 3.4 cover per-stage pending states, shared import readiness, and recovery without a second crediting action. M3–M4 and M7 exercise real navigation and notifications. |
+
+M1–M7 below are procedures for the integrated build. Current validation, host, visual, and device
+results for that implementation belong here as tasks 4.1–4.3 are executed.
+
+## October prototype scenario mapping and results
+
+The original 95-scenario mapping and task numbers below are historical.
+
 Test classes referenced live under
 `app/src/test/java/com/example/backlogium/...` (package `work`, `work.setup`, `data.*`, `domain`,
 `ui.*`). Method names are copied from the current source.
@@ -211,22 +232,21 @@ owned-library payload; re-apply the redaction assertion pattern already used by
 idempotence requirement.
 
 - **M1 — Concurrent real manual/periodic Steam work + live-monitor/post-play handoff, redacted
-  record.** Start a real periodic sync on device; play a game through the live-monitor and end the
-  session so a `post-play-sync-*` handoff is enqueued; then run setup with the library_sync stage
-  selected while the manual/periodic poll is running. Expected truthful exit: the stage attaches to
+  record.** Run setup with library sync selected while real manual and periodic work and live
+  monitoring are active. End the play session during the exercise and observe the
+  `post-play-sync-*` handoff. Expected outcome: the stage attaches to
   the running job as `REUSED` with no duplicate; the handoff chain keeps its own identity and is
   never cancelled by setup; the diagnostic record contains stage/work identities, scheduler states,
   and errors with the redaction rules above. Idempotent: a second start attaches the same live work,
   never stacks a second poll. (Host-side mechanics for this are already covered by
   `ConcurrentSetupCharacterizationTest` with double bodies and an ENQUEUED-only post-play chain; M1
   is the real-workload complement.)
-- **M2 — Airplane-mode/backoff and the 120 s budget never cancel.** With library_sync admitted,
-  toggle airplane mode on mid-run, let the job enter WorkManager retry backoff, and let the
-  foreground observation pass the injected 120 s monotonic budget. Expected truthful exit: the stage
-  shows waiting/retry-scheduled (never failed) the whole time; later independent stages still admit;
-  on budget expiry nothing is cancelled or failed and the live job continues; after connectivity
-  returns the retry succeeds and the stage reconciles to succeeded. Idempotent: backoff is never
-  bypassed by a duplicate request.
+- **M2 — Airplane-mode/backoff and the foreground budget.** With library sync admitted, toggle
+  airplane mode and observe waiting or retry backoff. Verify it settles the foreground wait and later
+  independent stages admit. Restore connectivity and verify that the same operation's result is
+  reconciled. Separately hold an in-screen worker running through the 120-second observation budget
+  using a controlled test response. Verify that expiry leaves the worker pending, later stages can
+  start, and no work is cancelled, duplicated, or falsely marked terminal.
 - **M3 — Notification permission denied + worker-owned progress.** Decline the runtime
   notification prompt (or deny it in app settings on a configured install) and run setup with a
   detached stage (completion_times). Expected truthful exit: the detached stage still runs, its
@@ -244,16 +264,14 @@ idempotence requirement.
   re-open) with the operation still recoverable through Settings. Idempotent: no job is enqueued
   twice. (Automated persistence-boundary coverage exists via the `reconcile*` /
   interrupted-transaction tests; they do not claim OS death.)
-- **M5 — Kill consent/import at all four boundaries; reset intent cannot reimport.** From the
+- **M5 — Interrupt consent/import at four boundaries.** From the
   history choice, tap Import and kill the process (a) before the consent/request write completes —
   cold launch must show no credits and no completed import; (b) after consent is recorded but before
   the raw commit — cold launch replays the recorded request exactly once, no double import; (c)
   after the raw commit but before derived recomputation — cold launch resumes recomputation from the
   frozen offsets, Settings shows recovery pending (never "untouched" or fully completed), and
   imported XP is not announced as earned; (d) during recomputation — the same, completing silently.
-  Then record an import **reset** intent, kill before the reset settles, cold launch, and verify the
-  reset intent is voided after replay and the same request id can never re-import. Idempotent:
-  repeated invocation adds no offsets.
+  Repeated invocation adds no offsets.
 - **M6 — Account switch with old callbacks in flight.** Start import/setup work for account A,
   then switch to account B while A's worker callbacks are still running (e.g., a poll completes
   after the switch). Expected truthful exit: the old operation is refused/superseded at the account
@@ -272,7 +290,7 @@ idempotence requirement.
 
 ---
 
-## Task 8 rows
+## Historical task 8 rows
 
 - **8.1 — verification sweep.** Every scenario above is mapped (95/95, 0 unmapped) to either an
   existing automated test or a named manual check (M1–M7). The full 8.1 command and host migration,
@@ -288,9 +306,10 @@ idempotence requirement.
   transitions, retry backoff, denied notifications, process death before/after Continue and import
   commit) cannot be run. This is an explicit blocker for 8.3 only; the named manual checks M1–M7
   are the ready-to-run device script for it once a device is attached.
-- **8.4 — strict validation and diff review.** Verified: `openspec validate stabilize-first-run-setup
-  --strict` passes. F06/F32 and overlap-map review found no achievement-watch work, new cloud
-  dependency or main-spec edits. Unmet device criteria remain explicitly identified; #158 stays open.
+- **8.4 — strict validation and diff review.** The October checklist recorded this as complete.
+  The November audit found six requirement-length warnings with OpenSpec 1.16.0 on the October
+  delta. [#188](https://github.com/cnhy-nero-diskard/Backlogium/pull/188) subsequently resolved
+  [#158](https://github.com/cnhy-nero-diskard/Backlogium/issues/158) with its own recorded evidence.
 
 ## Counts and unmapped
 

@@ -1,4 +1,9 @@
-# Concurrent setup characterization — evidence (task 1.2)
+# Concurrent setup characterization — October prototype evidence
+
+This records the original branch's experiments and original task numbers. The current follow-up
+uses [tasks 4.1 and 4.2](tasks.md#4-integrated-acceptance) for live-workload and device evidence.
+[#188](https://github.com/cnhy-nero-diskard/Backlogium/pull/188) records the separate emulator
+exercises for the implementation shipped on `master`.
 
 Date: 2026-10-02 · Change: `stabilize-first-run-setup` · Scope: **host-side, reproducible,
 concurrent-work investigation** of the *current* setup runner against a real Robolectric

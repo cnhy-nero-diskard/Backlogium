@@ -1,56 +1,48 @@
 ## MODIFIED Requirements
 
 ### Requirement: Sync failure surfacing
-The system SHALL detect and surface sync failures without discarding the last good data. It SHALL distinguish an unreadable or unconfirmed empty owned-library response from an explicitly confirmed empty owned library. A job completing without an accepted and committed library response SHALL NOT be reported as a successful library import to setup or other consumers.
+The system SHALL surface sync failures while retaining the last good data. It SHALL distinguish an explicitly confirmed empty owned library from a privacy error or an unconfirmed empty response.
 
 #### Scenario: Private profile or empty response
 - **WHEN** a poll returns an unconfirmed empty response or an authorization/privacy error
-- **THEN** the app retains the last synced data and exposes a recoverable error state indicating the profile may be private, without claiming library-sync success
+- **THEN** the app retains the last synced data and exposes a recoverable error state indicating the profile may be private
 
-#### Scenario: Confirmed empty library
-- **WHEN** Steam explicitly confirms an owned-game count of zero and that response is accepted and committed
-- **THEN** the poll is reported as a successful empty-library baseline rather than a privacy failure
+#### Scenario: Confirmed empty response
+- **WHEN** an explicitly confirmed zero-game response is accepted and committed
+- **THEN** the poll reports a successful empty baseline
 
 ## ADDED Requirements
 
 ### Requirement: Library polls expose attributable operation results
-A library poll SHALL expose whether its requested domain operation committed, was not performed with an attributable reason, or needs recovery after failure. Results SHALL be associated with the admitted operation and account rather than inferred from an unrelated poll's latest error or scheduler completion alone. Transient retry scheduling SHALL remain distinguishable from terminal failure. Existing periodic, manual, presence, and post-play scheduling and exactly-once ledger behavior SHALL remain unchanged.
+Each library poll SHALL expose whether it committed, did not perform the operation, or failed with a recoverable reason. The result SHALL belong to the exact operation and admitted account. Scheduler success alone SHALL NOT establish a library commit.
 
-#### Scenario: Worker exits without credentials
-- **WHEN** a requested library poll exits because credentials are unavailable
-- **THEN** consumers receive a not-performed reason rather than a successful library-sync result
+#### Scenario: No library commit
+- **WHEN** a poll is refused at account admission, has no credentials, or receives an unreadable library response
+- **THEN** its result explains the unsuccessful operation without borrowing another poll's result
 
-#### Scenario: Account admission refuses a poll
-- **WHEN** a poll cannot run against the active account or its persistence is refused at the account boundary
-- **THEN** that operation cannot report a committed library or update another account's setup attempt
+#### Scenario: Worker stops after committing
+- **WHEN** an accepted library transaction commits before the worker is interrupted while publishing its result
+- **THEN** recovery can attribute that commit to the exact operation and account from durable evidence
 
-#### Scenario: Two polls overlap
-- **WHEN** a setup-requested manual poll and a periodic poll overlap
-- **THEN** each attributable result describes its own operation, overlap alone is not failure, and the same playtime increase is credited only once
+#### Scenario: Parallel library polls
+- **WHEN** overlapping manual and periodic polls observe the same increase
+- **THEN** each result describes its own operation and the increase is credited once
 
 ### Requirement: Confirmed library baseline readiness is durable and account-scoped
-The system SHALL expose durable evidence that an accepted owned-library response has established a baseline for the active account. That evidence SHALL be committed with the accepted library data, SHALL cover confirmed empty libraries, and SHALL NOT be manufactured from credentials, nonempty local rows, or scheduler success alone. A later failed refresh SHALL retain an existing same-account baseline. Account reset SHALL invalidate the previous account's readiness. Restored or legacy data without sufficient evidence SHALL remain unconfirmed until a valid poll establishes it.
+The system SHALL record evidence of a confirmed owned-library baseline for the admitted account in the transaction that accepts the response, including a confirmed zero-game response. Account reset SHALL invalidate the prior account's evidence. A failed refresh SHALL preserve the last valid confirmation.
 
-#### Scenario: Initial library commit
-- **WHEN** an accepted first library response is committed
-- **THEN** its same-account baseline readiness becomes durable with that commit, without creating historical sessions
+#### Scenario: Library transaction rolls back
+- **WHEN** an initial library transaction is interrupted before commit
+- **THEN** it leaves no independent confirmation record
 
-#### Scenario: Interrupted initial commit
-- **WHEN** initial library persistence is interrupted before committing
-- **THEN** baseline readiness is not recorded separately from the library data
-
-#### Scenario: Confirmed zero-game baseline
-- **WHEN** an accepted zero-game response is committed for the active account
-- **THEN** readiness is true even though no game rows exist
-
-#### Scenario: Private response before baseline
-- **WHEN** the only initial poll is an unreadable or unconfirmed empty response
-- **THEN** history-import readiness remains unconfirmed
+#### Scenario: Legacy or restored library lacks provenance
+- **WHEN** local rows or a sync timestamp exist without trusted confirmation for the active account
+- **THEN** readiness remains unconfirmed until a valid owned-library poll commits
 
 #### Scenario: Later refresh fails
-- **WHEN** a confirmed account's later refresh fails
-- **THEN** its previously committed baseline remains usable and last-good data is retained
+- **WHEN** a refresh fails after the active account has a confirmed baseline
+- **THEN** the prior confirmation remains usable
 
-#### Scenario: Account or uncertain restored data
-- **WHEN** the account changes or restored data lacks sufficient baseline provenance
-- **THEN** readiness is not inferred from the previous account or the existence of local game rows
+#### Scenario: Account replacement
+- **WHEN** account replacement is pending or has completed
+- **THEN** the previous account's confirmation cannot grant readiness to the replacement account
