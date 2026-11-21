@@ -174,7 +174,7 @@ class HistoryAllocationGroupingTest {
     }
 
     @Test
-    fun goalTotals_fallBackToCurrentGoalSetWhenFrozenFactAbsent() {
+    fun goalTotalsDoNotFallBackToCurrentGoalSetWhenFrozenFactIsAbsent() {
         val allocation = allocation(date = "2026-07-27", minutes = 70, goalAtCredit = null, appId = 610)
         val session = session(1, 610, atUtc(2026, 7, 27, 12, 0), 30)
 
@@ -186,7 +186,7 @@ class HistoryAllocationGroupingTest {
             allocations = listOf(allocation),
         ).single()
 
-        assertEquals(100, day.goalMinutesPlayed)
+        assertEquals(0, day.goalMinutesPlayed)
     }
 
     @Test

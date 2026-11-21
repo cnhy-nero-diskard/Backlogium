@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import com.example.backlogium.data.repo.ContributionState
+import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.PlaySession
 import com.example.backlogium.data.repo.SessionCloudContribution
@@ -152,6 +153,76 @@ class HistoryScreenRegressionTest {
             "${formatHistoryDate(date.toString())} · ${UiFormat.approxTime(cloudStart)} · 30 mins",
         ).assertIsDisplayed()
         composeRule.onAllNodesWithText("Ordinary target").assertCountEquals(0)
+    }
+
+    @Test
+    fun laterFocusFlagDoesNotChangeHistoricalFocusLabelOrStoredCredit() {
+        val date = LocalDate.of(2026, 10, 15)
+        val session = playSession(
+            id = 91L,
+            appId = 10L,
+            startAt = atUtc(10),
+            minutes = 60,
+            contribution = SessionCloudContribution(
+                recoveredSharedPlay = ContributionState.NONE,
+                timingInformedSteamPlay = ContributionState.NONE,
+            ),
+        )
+        val progress = DayProgress(
+            date = date.toString(),
+            minutesPlayed = 60,
+            goalMinutesPlayed = 0,
+            questMet = false,
+        )
+
+        fun grouped(isGoal: Boolean) = groupHistory(
+            sessions = listOf(session),
+            games = listOf(LibraryGame(
+                appId = 10L,
+                name = "History target",
+                iconUrl = "",
+                playtimeForever = 0,
+                isGoal = isGoal,
+            )),
+            dailyProgress = listOf(progress),
+            achievementUnlocks = emptyList(),
+            zone = ZoneId.of("UTC"),
+        ).single()
+
+        val whenPlayed = grouped(isGoal = false)
+        val afterMarkedFocus = grouped(isGoal = true)
+        listOf(whenPlayed, afterMarkedFocus).forEach { historicalDay ->
+            assertEquals(60, historicalDay.minutesPlayed)
+            assertEquals(0, historicalDay.goalMinutesPlayed)
+            assertEquals(60L, historicalDay.activity?.storedMinutes)
+            assertEquals(0L, historicalDay.activity?.storedFocusMinutes)
+        }
+
+        val days = mutableStateOf(listOf(whenPlayed))
+        composeRule.setContent {
+            BacklogiumTheme {
+                HistoryContent(
+                    state = HistoryUiState(
+                        loading = false,
+                        configured = true,
+                        days = days.value,
+                        today = date.toString(),
+                        windowStartDate = date.toString(),
+                    ),
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        fun assertHistoricalSummary() {
+            composeRule.onNodeWithText("Visible recorded: 1 hr").performScrollTo().assertIsDisplayed()
+            composeRule.onAllNodesWithText("visible Focus play", substring = true).assertCountEquals(0)
+        }
+
+        assertHistoricalSummary()
+        days.value = listOf(afterMarkedFocus)
+        composeRule.waitForIdle()
+        assertHistoricalSummary()
     }
 
     private fun playSession(

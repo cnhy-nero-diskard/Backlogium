@@ -359,14 +359,13 @@ class HistoryGroupingTest {
         ).single()
 
         assertEquals(75, result.minutesPlayed)
-        assertEquals(45, result.goalMinutesPlayed)
+        assertEquals(0, result.goalMinutesPlayed)
+        assertEquals(999L, result.activity?.storedFocusMinutes)
         assertTrue(result.questMet)
     }
 
     @Test
-    fun goalMinutes_neverExceedsTotalMinutes_evenWhenStoredProgressDisagrees() {
-        // Regression for the History bug where "Focus games" minutes exceeded the day's total:
-        // DailyProgress.goalMinutesPlayed was bucketed by sync poll-time, not session start-day.
+    fun visibleFocusRequiresCreditTimeEvidenceAndDoesNotReplaceStoredFocus() {
         val day = "2026-07-29"
         val sessions = listOf(
             session(1, appId = 10, startAt = atUtc(2026, 7, 29, 10, 0), minutes = 153),
@@ -382,7 +381,33 @@ class HistoryGroupingTest {
         ).single()
 
         assertEquals(153, result.minutesPlayed)
-        assertEquals(153, result.goalMinutesPlayed)
+        assertEquals(0, result.goalMinutesPlayed)
+        assertEquals(255L, result.activity?.storedFocusMinutes)
+    }
+
+    @Test
+    fun historicalFocusSubtotalDoesNotFollowLaterFocusFlagChanges() {
+        val day = "2026-07-29"
+        val session = session(1, appId = 10, startAt = atUtc(2026, 7, 29, 10, 0), minutes = 60)
+        val progress = DayProgress(day, minutesPlayed = 60, goalMinutesPlayed = 0, questMet = false)
+
+        fun grouped(isGoal: Boolean) = groupHistory(
+            sessions = listOf(session),
+            games = listOf(game(10, "Game", isGoal = isGoal)),
+            dailyProgress = listOf(progress),
+            achievementUnlocks = emptyList(),
+            zone = zone,
+        ).single()
+
+        val whenPlayed = grouped(isGoal = false)
+        val afterMarkedFocus = grouped(isGoal = true)
+
+        listOf(whenPlayed, afterMarkedFocus).forEach { historicalDay ->
+            assertEquals(60, historicalDay.minutesPlayed)
+            assertEquals(0, historicalDay.goalMinutesPlayed)
+            assertEquals(60L, historicalDay.activity?.storedMinutes)
+            assertEquals(0L, historicalDay.activity?.storedFocusMinutes)
+        }
     }
 
     @Test
