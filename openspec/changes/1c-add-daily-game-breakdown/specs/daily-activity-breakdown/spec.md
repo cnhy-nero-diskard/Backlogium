@@ -5,7 +5,7 @@ Explain a local day's per-game recorded activity and its relationship to authori
 ## ADDED Requirements
 
 ### Requirement: Daily game rows follow the canonical session date
-The system SHALL provide per-game recorded minutes for a requested local date using the same session-start date attribution as History, Analytics, and daily progress. It SHALL include recorded minutes of open sessions without adding elapsed wall-clock time, exclude hidden games, and retain visible sessions whose game identity is unavailable under a fallback identity. Undated lifetime imports and manual estimates SHALL NOT become dated game rows.
+The system SHALL provide per-game recorded minutes for a requested local date using canonical dated activity. Unlinked session minutes follow local start dates. Funded timed shares and dated allocations retain their frozen credited dates. It SHALL include recorded minutes of open sessions without adding elapsed wall-clock time, exclude hidden games, and retain visible sessions whose game identity is unavailable under a fallback identity. Undated quantity SHALL stay outside dated game rows.
 
 #### Scenario: Multiple sessions for one game
 - **WHEN** two visible sessions start on the requested day for the same game
@@ -23,12 +23,20 @@ The system SHALL provide per-game recorded minutes for a requested local date us
 - **WHEN** a visible session cannot be joined to a current game identity
 - **THEN** its minutes remain in a fallback game row instead of disappearing
 
+#### Scenario: Timed and recovered activity share a date
+- **WHEN** a date includes unlinked session minutes, funded timed shares or dated recovery allocations
+- **THEN** each visible credited amount appears once under its canonical date and dated estimates retain an accessible explanation
+
+#### Scenario: Recovery after a timezone change
+- **WHEN** the device timezone changes after a recovery placement was credited
+- **THEN** frozen placements remain on their credited dates while unlinked session minutes follow the canonical local session date
+
 #### Scenario: Imported or estimated playtime
-- **WHEN** undated imported or manually estimated minutes exist without dated session evidence
+- **WHEN** undated lifetime imports, manual estimates or pending recovery minutes exist
 - **THEN** they do not receive a date or game row in the daily breakdown
 
 ### Requirement: Daily breakdown reconciles evidence and stored quest credit explicitly
-The system SHALL distinguish the visible recorded subtotal from the authoritative stored daily credited total and quest outcome. When both totals are available and differ, it SHALL expose the signed reconciliation difference as a comparison, not as an invented game's played minutes. It SHALL neither rescale visible sessions to fit credit nor infer that all differences come from hidden games, imports, or lost data. Missing credit SHALL remain unavailable rather than being derived from visible sessions. Recorded zero, absent activity, and unavailable credit SHALL remain distinguishable.
+The system SHALL distinguish the visible recorded subtotal, stored daily play total, stored Focus play total, and stored quest outcome. Reconciliation SHALL compare visible play with stored daily play. Neither scope SHALL overwrite the other. Recorded zero, absent activity, and unavailable progress SHALL remain distinguishable.
 
 #### Scenario: Totals agree
 - **WHEN** visible recorded minutes and stored credited minutes both equal 45
@@ -42,8 +50,13 @@ The system SHALL distinguish the visible recorded subtotal from the authoritativ
 - **WHEN** visible sessions sum to 50 minutes and stored credit is 30
 - **THEN** both totals remain visible with their 20-minute difference and the stored quest outcome remains authoritative
 
+#### Scenario: Focus-only quest
+- **WHEN** a date has 60 stored daily minutes and 25 stored Focus minutes
+- **THEN** all-play and Focus totals are identified separately, and a Focus-only quest uses the stored Focus amount and outcome
+- **AND** dated views do not infer historical Focus membership from current game flags
+
 #### Scenario: Progress-only record
-- **WHEN** a date has stored daily credit but no individual session evidence
+- **WHEN** a date has stored daily play but no visible dated game activity
 - **THEN** the credit remains visible and the per-game allocation is unavailable
 
 #### Scenario: Sessions without recorded credit
@@ -51,7 +64,7 @@ The system SHALL distinguish the visible recorded subtotal from the authoritativ
 - **THEN** their recorded minutes remain inspectable with unavailable credit and no invented quest outcome
 
 ### Requirement: Daily breakdown is a coherent bounded read
-The system SHALL produce each breakdown from a coherent snapshot of the requested date, visible session evidence, identity visibility, and stored daily credit. It SHALL load only the date-bounded session detail needed for that breakdown and remain usable offline. Opening, expanding, or refreshing local presentation SHALL NOT write progress, award XP, enqueue sync, or make external requests. During recomputation it SHALL retain the prior coherent snapshot with an updating state or show an initial loading state.
+The system SHALL read visible canonical activity, identity visibility, and stored progress from one coherent, date-bounded local snapshot. Inspection SHALL cause no activity writes, XP awards, external requests or sync jobs. During recomputation it SHALL retain a prior coherent snapshot with an updating state or show initial loading.
 
 #### Scenario: Correction is being committed
 - **WHEN** session placement and daily credit change together

@@ -46,3 +46,7 @@ Keep existing older-window bounds and fully-loaded calculation; this change does
 ## Migration Plan
 
 Apply after `1c`, capture the baseline, integrate the bounded projection, then refine copy/semantics/layout. No persistence migration or activity writes are expected. Rollback restores presentation while leaving session/credit evidence untouched. Verify source/domain behavior and device interaction, including existing cloud reveal and earlier loading. `3c`/`4c` remain an independent Analytics path.
+
+### Preserve the current recovery presentation
+
+Retain the timestamped session tree, canonical funded shares and dated allocations already supplied by playtime recovery. Use the same bounded snapshot for the day and game totals, stored all-play and Focus minutes, and the paging floor. An allocation-only day is inspectable play evidence. A progress-only day still retains its stored outcome. Legacy session remainders follow the local start date; funded placements keep their credited dates. Estimated plays keep their accessible explanations, and pending undated quantity keeps its separate recovery status.

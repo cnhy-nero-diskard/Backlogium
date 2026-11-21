@@ -47,3 +47,7 @@ Alternative: an always-expanded card or a separate screen. Rejected for this sco
 ## Migration Plan
 
 Implement the read model first, then Home state and disclosure. No database migration is expected; schema/query changes must be proposed explicitly if implementation discovers otherwise. Rollback removes the read projection and disclosure without changing persisted activity. Validate local/domain behavior, compile and lint, then inspect affected device renders and accessibility. Implement `1c` before `2c`; the Analytics path (`3c` then `4c`) can proceed independently.
+
+### Integrate with current playtime recovery
+
+Use the existing canonical dated activity projection in the bounded Room snapshot. Count unlinked session minutes, funded timed shares and dated allocations once on their applicable dates. Carry estimated-place disclosures through the day and game rows, and leave undated quantity outside the breakdown. Reconcile visible activity against stored all-play minutes; retain stored Focus minutes and the authoritative outcome separately. Today's quest amount follows its selected mode. A current Focus flag is only a filter for legacy activity, with funded activity using its recorded eligibility.

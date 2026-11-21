@@ -15,3 +15,9 @@
 - [x] 3.1 Run relevant History/domain/repository tests and `./gradlew.bat :app:compileDebugKotlin :app:lintDebug`; verify inspection changes no stored activity, quest outcome, XP, or external request count.
 - [x] 3.2 Compare the revised device/emulator states with the baseline in both themes and larger font scale; verify named expand/collapse and navigation actions are understandable through assistive technology and record remaining limitations.
 - [x] 3.3 Reconcile shared UI models and requirement names with drafts #176/#177, then run `openspec.cmd validate 2c-clarify-history-session-presentation --strict` and `git diff --check`; verify unlock-only History and XP remain owned by their existing proposal.
+
+## 4. Reconcile with current master
+
+- [ ] 4.1 Integrate canonical activity and the shared daily breakdown with History. Keep recovery disclosures, frozen-date totals, allocation-aware paging, cloud reveal and account-safe navigation.
+- [ ] 4.2 Verify mixed and allocation-only dates, frozen dates across zone changes, Focus-only credit, and paging on the integrated branch.
+- [ ] 4.3 Re-record and verify affected Roborazzi baselines, rerun strict OpenSpec validation, and document current acceptance evidence.

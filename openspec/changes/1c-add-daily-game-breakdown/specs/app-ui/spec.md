@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Today's quest expands into an evidence-aware game breakdown
-Home SHALL offer an initially collapsed per-game minute breakdown inside Today's quest while preserving the compact collapsed card. The expanded content SHALL identify its date, visible recorded subtotal, authoritative credited total when available, and any reconciliation or unavailable allocation required by the daily-activity-breakdown capability. It SHALL not change the quest result or imply that recorded session minutes are exact elapsed play.
+Home SHALL offer an initially collapsed per-game minute breakdown inside Today's quest while preserving the compact collapsed card. The expanded content SHALL identify its date, visible recorded subtotal, stored daily and Focus totals when available, and any reconciliation or unavailable allocation required by the daily-activity-breakdown capability. It SHALL not change the quest result or imply that recorded session minutes are exact elapsed play.
 
 #### Scenario: Breakdown expanded
 - **WHEN** the player expands Today's quest on a multi-game day
@@ -12,11 +12,11 @@ Home SHALL offer an initially collapsed per-game minute breakdown inside Today's
 - **THEN** Home shows a compact no-recorded-activity state rather than fabricating games
 
 #### Scenario: Per-game allocation unavailable
-- **WHEN** recorded credit exists without per-game session evidence
+- **WHEN** stored progress exists without visible dated game activity
 - **THEN** the expanded card explains the unavailable allocation and retains the authoritative quest total
 
 ### Requirement: Daily breakdown actions remain accessible and account safe
-The expansion control SHALL announce its purpose and expanded state, and visible game rows SHALL offer named detail actions with accessible touch targets. Missing or no-longer-visible games SHALL receive a clear unavailable-navigation state rather than opening an unrelated game. Home SHALL use localized dates, quantities, durations, and textual qualifiers that remain readable with larger fonts and in both themes. Date changes SHALL collapse the new day's breakdown; changing accounts SHALL discard the old account's expanded content and rows.
+The expansion control SHALL announce its purpose and state. Visible game rows SHALL offer named detail actions with accessible touch targets. Home SHALL use localized text that remains readable with larger fonts and in both themes. The breakdown SHALL be keyed by account and date.
 
 #### Scenario: Detail navigation and return
 - **WHEN** the player opens a visible game from the expanded breakdown and returns on the same account and date
