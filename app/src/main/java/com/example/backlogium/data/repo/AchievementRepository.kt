@@ -26,6 +26,8 @@ import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import com.example.backlogium.data.achievement.AchievementFreshness
 import com.example.backlogium.data.achievement.AchievementMerge
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.local.dao.AchievementCounts
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.AchievementRarity
@@ -65,8 +67,8 @@ import javax.inject.Singleton
  *
  * [globalPercent] is the live percent, refreshed every sync and present regardless of unlock
  * state. It is **not** an alternative input to tier/XP — those stay pinned to [rarityPercent] —
- * but it is the only rarity signal a *locked* achievement has, so display and sorting fall back
- * to it for those rows (enhance-game-detail). [unlockedAt] is null while locked.
+ * and is labeled separately and used for rarity ordering on all rows. [unlockedAt] is null
+ * while locked.
  */
 data class GameAchievement(
     val apiName: String,
@@ -129,7 +131,15 @@ data class AchievementLibraryFetch(
 /** Outcome of [AchievementRepository.refreshOne] — a tier-independent, single-game fetch. */
 sealed interface SingleGameRefresh {
     /** Steam returned player achievement data (possibly empty) and it was persisted. */
-    data class Persisted(val total: Int, val unlocked: Int) : SingleGameRefresh
+    data class Persisted(
+        val total: Int,
+        val unlocked: Int,
+        val changed: Boolean = false,
+        val xpInputsChanged: Boolean = false,
+    ) : SingleGameRefresh
+
+    /** The initiating account or game is no longer eligible at the commit boundary. */
+    data object Discarded : SingleGameRefresh
 
     /** The fetched player data was rejected because its write was invalidated or superseded. */
     data object Stale : SingleGameRefresh
@@ -171,6 +181,7 @@ class AchievementRepository @Inject constructor(
     private val observationStore: AchievementObservationStore? = null,
     private val network: AchievementNetwork? = null,
     private val diagnostics: SyncRunRecorder? = null,
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
 
     /**
@@ -274,8 +285,7 @@ class AchievementRepository @Inject constructor(
                         val before = achievementDao.getForGame(appId)
                         applyRefresh(refresh)
                         val after = achievementDao.getForGame(appId)
-                        fun inputs(rows: List<Achievement>) = rows.filter { it.unlocked && !it.retired }.associate { it.apiName to it.snapshotPercent }
-                        if (inputs(before) != inputs(after)) {
+                        if (before.xpInputs() != after.xpInputs()) {
                             val id = canonicalObservationId(account, appId, "detail", listOf(refresh.fetchedAt.toString()))
                             store.database.achievementWatchDao().insert(AchievementWatchWork(
                                 id, account, appId, "detail", refresh.fetchedAt, true,
@@ -477,8 +487,10 @@ class AchievementRepository @Inject constructor(
 
     /** Apply already-fetched achievement payloads. The caller may surround this with a Room transaction. */
     suspend fun applyRefreshes(refreshes: List<AchievementRefresh>) {
-        mergeMutex.withLock {
-            for (refresh in refreshes) applyRefresh(refresh)
+        transaction.run {
+            mergeMutex.withLock {
+                for (refresh in refreshes) applyRefresh(refresh)
+            }
         }
     }
 
@@ -499,6 +511,7 @@ class AchievementRepository @Inject constructor(
         steamId: String,
         appId: Long,
         scope: SyncRunRecorder.RunScope? = null,
+        commit: (suspend (suspend () -> SingleGameRefresh) -> SingleGameRefresh)? = null,
     ): SingleGameRefresh {
         if (hiddenGamesRepository.isHidden(appId)) return SingleGameRefresh.NoUsableData
         val metadata = gameAchievementSyncDao.get(appId)
@@ -516,19 +529,37 @@ class AchievementRepository @Inject constructor(
             return SingleGameRefresh.Unavailable
         } ?: return SingleGameRefresh.NoUsableData
 
-        val store = observationStore
-        val applied = if (store != null) {
-            store.commit(steamId, appId, { true }) { mergeMutex.withLock { applyRefresh(refresh) } }
-        } else {
-            mergeMutex.withLock { applyRefresh(refresh) }
+        val noPlayerData = if (refresh.playerUnavailable) SingleGameRefresh.Unavailable else SingleGameRefresh.NoUsableData
+        val merge: suspend () -> SingleGameRefresh = {
+            mergeMutex.withLock {
+                val incoming = refresh.achievements
+                if (incoming == null) {
+                    applyRefresh(refresh) // A usable catalogue can arrive without personal progress.
+                    return@withLock noPlayerData
+                }
+                val before = achievementDao.getForGame(appId)
+                val beforeHasAchievements = gameAchievementSyncDao.get(appId)?.hasAchievements
+                val catalogue = observationStore?.database?.achievementCatalogueDao()?.takeIf { refresh.schemaLoaded }
+                val beforeCatalogue = catalogue?.entries(appId)?.sortedBy { it.apiName }
+                if (!applyRefresh(refresh)) return@withLock SingleGameRefresh.Stale
+                val after = achievementDao.getForGame(appId)
+                SingleGameRefresh.Persisted(
+                    total = incoming.size,
+                    unlocked = incoming.count { it.achieved != 0 },
+                    changed = before.canonicalContent() != after.canonicalContent() ||
+                        beforeHasAchievements != gameAchievementSyncDao.get(appId)?.hasAchievements ||
+                        beforeCatalogue != catalogue?.entries(appId)?.sortedBy { it.apiName },
+                    xpInputsChanged = before.xpInputs() != after.xpInputs(),
+                )
+            }
         }
-        if (refresh.achievements != null && applied != true) return SingleGameRefresh.Stale
-        if (refresh.achievements == null) return if (refresh.playerUnavailable) SingleGameRefresh.Unavailable else SingleGameRefresh.NoUsableData
-        val achievements = refresh.achievements.orEmpty()
-        return SingleGameRefresh.Persisted(
-            total = achievements.size,
-            unlocked = achievements.count { it.achieved != 0 },
-        )
+        val store = observationStore
+        return when {
+            commit != null -> commit(merge)
+            store != null -> store.commit(steamId, appId, { true }, block = merge)
+                ?: if (refresh.achievements == null) noPlayerData else SingleGameRefresh.Stale
+            else -> transaction.run { merge() }
+        }
     }
 
     /** A write-free read shared with sync/manual/detail work. Never advances a watch baseline. */
@@ -576,9 +607,7 @@ class AchievementRepository @Inject constructor(
                 val newlyObserved = if (baseline == null) emptySet() else unlocked - baseline
                 applyRefresh(refresh.copy(fullReconciliation = false))
                 val after = achievementDao.getForGame(refresh.appId)
-                fun xpInputs(rows: List<Achievement>) = rows.filter { it.unlocked && !it.retired }
-                    .associate { it.apiName to it.snapshotPercent }
-                val changedXp = xpInputs(previous) != xpInputs(after)
+                val changedXp = previous.xpInputs() != after.xpInputs()
                 val eventId = canonicalObservationId(account, refresh.appId, epoch,
                     if (newlyObserved.isEmpty()) listOf("observation", refresh.fetchedAt.toString()) else newlyObserved.sorted())
                 val group = if (newlyObserved.isEmpty()) null else AchievementUnlockGroup(
@@ -974,6 +1003,12 @@ class AchievementRepository @Inject constructor(
         const val SCHEMA_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000
     }
 }
+
+/** Compare committed content, including schema/tombstones, excluding freshness timestamps. */
+private fun List<Achievement>.canonicalContent() = map { it.copy(fetchedAt = 0) }.sortedBy { it.apiName }
+
+private fun List<Achievement>.xpInputs() =
+    filter { it.unlocked && !it.retired }.associate { it.apiName to it.snapshotPercent }
 
 private fun AchievementCounts.toDomain() = AchievementCountSummary(
     appId = appId,

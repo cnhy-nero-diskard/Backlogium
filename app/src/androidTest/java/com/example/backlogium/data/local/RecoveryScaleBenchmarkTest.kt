@@ -574,6 +574,7 @@ class RecoveryScaleBenchmarkTest {
         ).apply { transactionDurationObserver = metrics::recordScopedTransactionDuration }
         val engine = BackupMergeEngine(
             gameDao = database.gameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
             hltbDataDao = database.hltbDataDao(),
@@ -619,6 +620,7 @@ class RecoveryScaleBenchmarkTest {
         metrics: SqlMetrics,
     ) = BackupExportMapper(
         gameDao = database.gameDao(),
+        gamePreferenceDao = database.gamePreferenceDao(),
         achievementDao = database.achievementDao(),
         sessionDao = database.sessionDao(),
         dailyProgressDao = database.dailyProgressDao(),

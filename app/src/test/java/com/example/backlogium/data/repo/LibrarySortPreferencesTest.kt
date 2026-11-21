@@ -1,5 +1,8 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.domain.LibrarySortDirection
 import com.example.backlogium.domain.LibrarySortKey
@@ -14,8 +17,10 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class LibrarySortPreferencesTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
     @Test fun addedRecentlySortAndDirectionPersistIndependentlyForBothSections() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
         assertEquals(LibrarySortPrefs(), repository.librarySort.first())
         try {

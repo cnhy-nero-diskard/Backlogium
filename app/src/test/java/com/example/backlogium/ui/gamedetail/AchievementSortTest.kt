@@ -4,14 +4,7 @@ import com.example.backlogium.gamification.RarityTier
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * The achievement list's two orderings (enhance-game-detail).
- *
- * The rule worth pinning down is that locked achievements group *after* unlocked ones in both
- * modes. Locked rows have no unlock date at all, and their percent answers a different question
- * ("how rare is this" rather than "how rare was mine"), so interleaving them by a null-ish key
- * produces an order that reads as arbitrary — the kind of thing a user reports as a bug.
- */
+/** One mixed list ordered by known date or current global rarity. */
 class AchievementSortTest {
 
     @Test
@@ -53,9 +46,8 @@ class AchievementSortTest {
     }
 
     @Test
-    fun byRarity_lockedGroupAfterUnlocked_evenWhenRarer() {
-        // The locked one is by far the rarest achievement here; it still sorts after every
-        // unlocked row rather than leading the list.
+    fun byRarity_lockedAndUnlockedInterleaveByCurrentRate() {
+        // A locked rare achievement precedes both unlocked rows.
         val sorted = listOf(
             unlocked("unlocked-common", percent = 50.0),
             locked("locked-ultra-rare", percent = 0.1),
@@ -63,7 +55,7 @@ class AchievementSortTest {
         ).sortedWith(AchievementSort.RARITY.comparator())
 
         assertEquals(
-            listOf("unlocked-rare", "unlocked-common", "locked-ultra-rare"),
+            listOf("locked-ultra-rare", "unlocked-rare", "unlocked-common"),
             sorted.names(),
         )
     }
@@ -79,7 +71,7 @@ class AchievementSortTest {
     }
 
     @Test
-    fun byRarity_unknownPercentSortsLastWithinItsGroup() {
+    fun byRarity_unknownPercentSortsLast() {
         val sorted = listOf(
             unlocked("unknown", percent = null),
             unlocked("known", percent = 30.0),
@@ -89,7 +81,7 @@ class AchievementSortTest {
     }
 
     @Test
-    fun byDate_missingDateSortsLastWithinItsGroup() {
+    fun byDate_missingDateSortsLast() {
         // An unlocked row with no stored timestamp: possible for older data, and it must not
         // displace rows that do have one.
         val sorted = listOf(
@@ -135,6 +127,14 @@ class AchievementSortTest {
             emptyList<String>(),
             emptyList<AchievementUi>().sortedWith(AchievementSort.RARITY.comparator()).names(),
         )
+    }
+
+    @Test fun unknownKeysUseIdentityTieAcrossUnlockStates() {
+        val rows = listOf(unlocked("Same", at = null, percent = null).copy(apiName = "z"),
+            locked("Same").copy(apiName = "a"))
+        for (sort in AchievementSort.entries) {
+            assertEquals(listOf("a", "z"), rows.sortedWith(sort.comparator()).map { it.apiName })
+        }
     }
 
     private fun List<AchievementUi>.names() = map { it.displayName }

@@ -93,6 +93,7 @@ class BackupMergeEngineTest {
         val engine = BackupMergeEngine(
             gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
             collectionDao, excludedDao, hiddenGameDao, gamificationUpdater, time,
+            gamePreferenceDao = FakeGamePreferenceDao(),
         )
         return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao, hiddenGameDao)
     }
@@ -1266,6 +1267,13 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
     override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
+    override fun observeLatestMeaningfulSessionInstantByGame(fromInclusive: Long, throughInclusive: Long): Flow<List<GameSessionInstant>> = flowOf(
+        store.filter { it.minutes > 0 && (it.endAt ?: it.startAt) in fromInclusive..throughInclusive }
+            .groupBy { it.appId }.map { (appId, sessions) ->
+            GameSessionInstant(appId, sessions.maxOf { it.endAt ?: it.startAt })
+        },
+    )
+
     override fun observeLatestSessionInstantByGame(): Flow<List<GameSessionInstant>> = flowOf(
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) },
     )

@@ -22,6 +22,7 @@ import com.example.backlogium.domain.VisibilityChangeEffect
 import com.example.backlogium.domain.GameXpInput
 import com.example.backlogium.domain.LibraryXp
 import com.example.backlogium.domain.SetSharedGamePlaytimeUseCase
+import com.example.backlogium.domain.RefreshGameAchievementsUseCase
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RarityStanding
@@ -53,7 +54,7 @@ enum class AchievementSort {
     /** Most recently unlocked first. The default: "what did I just get" is the common question. */
     DATE_ACHIEVED,
 
-    /** Rarest first, by the same percent each row displays. */
+    /** Rarest first, by the labeled current percentage. */
     RARITY,
 }
 
@@ -65,15 +66,13 @@ data class AchievementUi(
     val unlocked: Boolean,
     val tier: RarityTier?,
     val xp: Int,
-    /**
-     * The share of players who have this, as a percent. Deliberately the *same* number the rarity
-     * sort keys on and — for unlocked rows — the one that earned the tier beside it, so the row can
-     * never read "6% of players · Legendary". Null when neither percent is known.
-     */
+    /** Current global unlock percentage, used for mixed rarity ordering. */
     val unlockPercent: Double?,
     val unlockedAt: Long?,
     val description: String?,
     val hidden: Boolean,
+    /** Frozen first-unlock observation; only this value determines earned tier and XP. */
+    val earnedPercent: Double? = null,
     val progressKnown: Boolean = true,
 ) {
     /**
@@ -192,13 +191,18 @@ data class GameDetailUiState(
     val rarityStanding: RarityStanding.Result? = null,
     val achievements: List<AchievementUi> = emptyList(),
     val sort: AchievementSort = AchievementSort.DATE_ACHIEVED,
+    val filter: AchievementFilter = AchievementFilter.ALL,
     val isRefreshingPlayerCount: Boolean = false,
+    val achievementRefresh: AchievementRefreshActionState = AchievementRefreshActionState(),
     val catalogue: AchievementCatalogueState = AchievementCatalogueState(),
     val hydration: AchievementHydrationState = AchievementHydrationState.Idle,
+    val hasAchievementRows: Boolean = achievements.isNotEmpty() || summary.achievementsTotal > 0,
+    val hasUnknownAchievementProgress: Boolean = achievements.any { !it.progressKnown },
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
-        get() = achievements.isNotEmpty() && achievements.all { it.progressKnown && it.unlocked }
+        get() = !hasUnknownAchievementProgress && summary.achievementsTotal > 0 &&
+            summary.achievementsUnlocked == summary.achievementsTotal
 }
 
 /**
@@ -219,6 +223,7 @@ class GameDetailViewModel @Inject constructor(
     cloudPresence: CloudPresenceRepository,
     private val hiddenGamesRepository: HiddenGamesRepository,
     private val gameVisibility: GameVisibilityUseCase,
+    refreshAchievements: RefreshGameAchievementsUseCase,
 ) : ViewModel() {
 
     private val appIdState = MutableStateFlow<Long?>(savedStateHandle["appId"])
@@ -229,7 +234,8 @@ class GameDetailViewModel @Inject constructor(
         }
 
     /** Transient: a lens on the list, reset every visit rather than persisted as a preference. */
-    private val sort = MutableStateFlow(AchievementSort.DATE_ACHIEVED)
+    private val visit = DetailVisitState(savedStateHandle)
+    private val achievementAction = AchievementRefreshController(viewModelScope, refreshAchievements::invoke)
 
     /**
      * Polled every 30 seconds while this screen is open, not part of [content] — [content]
@@ -302,14 +308,15 @@ class GameDetailViewModel @Inject constructor(
     private val hideState = combine(hidePreviewing, hideEffect) { previewing, effect ->
         previewing to effect
     }
+    private val actionState = combine(hideState, achievementAction.state) { hide, refresh -> hide to refresh }
 
     val uiState: StateFlow<GameDetailUiState> = combine(
         content,
-        sort,
+        visit.lens,
         activePlayers,
         refreshingPlayerCount,
-        hideState,
-    ) { content, sort, activePlayers, isRefreshingPlayerCount, hide ->
+        actionState,
+    ) { content, lens, activePlayers, isRefreshingPlayerCount, actions ->
         val rows = content.achievements.map { it.toUi(content.config) }
         GameDetailUiState(
             loading = false,
@@ -317,11 +324,15 @@ class GameDetailViewModel @Inject constructor(
             gameName = content.game?.name ?: "",
             summary = content.toSummary(rows, activePlayers),
             rarityStanding = content.toRarityStanding(),
-            achievements = rows.sortedWith(sort.comparator()),
-            sort = sort,
+            achievements = rows.visibleThrough(lens),
+            hasAchievementRows = rows.isNotEmpty(),
+            hasUnknownAchievementProgress = rows.any { !it.progressKnown },
+            sort = lens.sort,
+            filter = lens.filter,
             isRefreshingPlayerCount = isRefreshingPlayerCount,
-            hidePreviewing = hide.first,
-            hideEffect = hide.second,
+            hidePreviewing = actions.first.first,
+            hideEffect = actions.first.second,
+            achievementRefresh = actions.second,
         )
     }.combine(catalogue) { state, catalogue -> state.copy(catalogue = catalogue) }
         .combine(hydration) { state, hydration -> state.copy(hydration = hydration) }
@@ -403,7 +414,21 @@ class GameDetailViewModel @Inject constructor(
     }
 
     fun setSort(value: AchievementSort) {
-        sort.value = value
+        visit.setSort(value)
+    }
+
+    fun setFilter(value: AchievementFilter) = visit.setFilter(value)
+    internal fun beginVisit(token: String) {
+        visit.open(token)
+        appIdState.value?.let { achievementAction.show(it, token) }
+    }
+
+    fun refreshAchievements() = achievementAction.refresh()
+
+    internal fun endPresentation() {
+        stopPolling()
+        stopBrowsing()
+        achievementAction.leave()
     }
 
     /**
@@ -607,9 +632,7 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
  * Resolves the engine's tier/XP for one achievement. Presentation only — the rarity percent that
  * feeds tier and XP is the repository's frozen snapshot, so neither follows the live global percent.
  *
- * The *displayed* percent is a separate concern: it falls back to the live percent for locked rows,
- * which have no snapshot. Since that fallback is also the rarity sort's key, what a row shows, what
- * it sorts by, and what earned its XP are one number.
+ * Current rates and frozen earned observations are labeled separately.
  */
 internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
     val percent = rarityPercent
@@ -632,7 +655,8 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
         } else {
             0
         },
-        unlockPercent = displayPercent,
+        unlockPercent = globalPercent,
+        earnedPercent = rarityPercent.takeIf { unlocked },
         unlockedAt = unlockedAt,
         description = description,
         hidden = hidden,
@@ -640,31 +664,17 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
     )
 }
 
-/**
- * The percent a row shows and sorts by: the frozen snapshot when there is one, else the live global
- * percent. Unlocked rows therefore show the number that produced their tier, and locked rows — which
- * never have a snapshot — still show how rare the achievement is.
- */
-private val GameAchievement.displayPercent: Double?
-    get() = rarityPercent ?: globalPercent
-
-/**
- * Ordering for the chosen sort. Locked achievements group after unlocked ones in both modes: in
- * date order they have no date at all, and in rarity order their percent answers a different
- * question ("how rare is this" rather than "how rare was mine"), so interleaving them would produce
- * an order that looks arbitrary. A null key sorts last within its own group.
- */
+/** Mixed ordering: unknown keys last, then stable display-name and API-name ties. */
 internal fun AchievementSort.comparator(): Comparator<AchievementUi> {
-    val lockedLast = compareByDescending<AchievementUi> { it.unlocked }
     return when (this) {
         // Most recent first.
-        AchievementSort.DATE_ACHIEVED -> lockedLast
-            .thenByDescending { it.unlockedAt ?: Long.MIN_VALUE }
+        AchievementSort.DATE_ACHIEVED -> compareByDescending<AchievementUi> { it.unlockedAt ?: Long.MIN_VALUE }
             .thenBy { it.displayName }
+            .thenBy { it.apiName }
 
         // Rarest first — the *lowest* percent is the rarest.
-        AchievementSort.RARITY -> lockedLast
-            .thenBy { it.unlockPercent ?: Double.MAX_VALUE }
+        AchievementSort.RARITY -> compareBy<AchievementUi> { it.unlockPercent ?: Double.MAX_VALUE }
             .thenBy { it.displayName }
+            .thenBy { it.apiName }
     }
 }

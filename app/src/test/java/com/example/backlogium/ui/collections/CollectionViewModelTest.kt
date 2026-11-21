@@ -568,6 +568,7 @@ class CollectionViewModelTest {
             "observeTrackedMinutesByGame",
             "observeFirstSessionStartByGame",
             "observeLatestSessionInstantByGame",
+            "observeLatestMeaningfulSessionInstantByGame",
             "observeSessionCountsByGame",
             "observeClosedSince",
             "observeAllOpenSessions",

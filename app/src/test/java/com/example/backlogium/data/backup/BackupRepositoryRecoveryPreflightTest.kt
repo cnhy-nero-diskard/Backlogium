@@ -349,6 +349,7 @@ class BackupRepositoryRecoveryPreflightTest {
         val transaction = RoomDatabaseTransactionScope(database)
         val exportMapper = BackupExportMapper(
             gameDao = database.gameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             achievementDao = database.achievementDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
@@ -374,6 +375,7 @@ class BackupRepositoryRecoveryPreflightTest {
         )
         val mergeEngine = BackupMergeEngine(
             gameDao = database.gameDao(),
+            gamePreferenceDao = database.gamePreferenceDao(),
             sessionDao = database.sessionDao(),
             dailyProgressDao = database.dailyProgressDao(),
             hltbDataDao = database.hltbDataDao(),

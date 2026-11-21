@@ -1,5 +1,8 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import androidx.room.Room
 import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
@@ -76,6 +79,8 @@ import java.time.ZoneOffset
 
 @RunWith(RobolectricTestRunner::class)
 class FamilySharedGameRepositoryTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     @Test
     fun `track again restores the shared game row and removes its exclusion`() = runTest {
@@ -248,7 +253,7 @@ class FamilySharedGameRepositoryTest {
         gameDao = database.gameDao(),
         excludedDao = excludedDao,
         profileDao = database.playerProfileDao(),
-        settings = SettingsDataStore(RuntimeEnvironment.getApplication()),
+        settings = settingsFixture.create(),
         store = SteamStoreAppDataSource(noOpProxy(SteamStoreApi::class.java)),
         genres = GameGenreRepository(
             cacheDao = noOpProxy(GameGenreCacheDao::class.java),
@@ -324,7 +329,7 @@ class FamilySharedGameRepositoryTest {
     @Test
     fun `importManually reports not a game when it was previously verified not to be one`() = runTest {
         val appId = 730L
-        val settings = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val settings = settingsFixture.create()
         settings.markSharedGameNotAGame(appId)
 
         val result = repository(settings = settings).importManually("730", "key", "76561198000000000")
@@ -524,7 +529,7 @@ class FamilySharedGameRepositoryTest {
     private fun repository(
         gameDao: GameDao = FakeGameDao(emptyList()),
         excludedDao: ExcludedSharedGameDao = FakeExcludedSharedGameDao(),
-        settings: SettingsDataStore = SettingsDataStore(RuntimeEnvironment.getApplication()),
+        settings: SettingsDataStore = settingsFixture.create(),
         steamApi: SteamApi = noOpProxy(SteamApi::class.java),
         storeApi: SteamStoreApi = noOpProxy(SteamStoreApi::class.java),
         achievementDao: FakeAchievementDao = FakeAchievementDao(),

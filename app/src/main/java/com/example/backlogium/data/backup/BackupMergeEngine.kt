@@ -5,6 +5,8 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -73,6 +75,7 @@ class BackupMergeEngine @Inject constructor(
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+    private val gamePreferenceDao: GamePreferenceDao,
     /**
      * The recovery graph's read/write seam (recover-missed-playtime, design.md Decision 10).
      * Defaulted to the no-op store so a test that does not exercise recovery stays constructible;
@@ -126,6 +129,7 @@ class BackupMergeEngine @Inject constructor(
      * outside it (see [recomputeAfterMerge]).
      */
     internal suspend fun mergeRawWithLockHeld(file: BackupFile): RecoveryMergeSummary {
+        require(BackupValidator.preferenceProblems(file).isEmpty()) { "Invalid game preferences" }
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
@@ -146,6 +150,13 @@ class BackupMergeEngine @Inject constructor(
             // synthetic coming back from an older backup; they travel in the journal's free JSON.
             val tombstonedSessions = sessionTombstones(file.recovery?.replacements.orEmpty()) +
                 sessionTombstones(localRecovery?.replacements.orEmpty())
+            file.gamePreferences?.forEach { incoming ->
+                val prior = gamePreferenceDao.get(incoming.appId) ?: GamePreference(incoming.appId, false)
+                gamePreferenceDao.upsert(prior.copy(
+                    isFavorite = incoming.isFavorite,
+                    artworkVariant = if (incoming.artwork != null) incoming.artwork.variant else prior.artworkVariant,
+                ))
+            }
             file.excludedSharedGames.forEach { mergeExcludedSharedGame(it) }
             // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
             // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.

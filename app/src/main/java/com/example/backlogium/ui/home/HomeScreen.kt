@@ -110,6 +110,7 @@ import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.ProgressEvent
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.components.GameIcon
+import com.example.backlogium.ui.components.DerivedCollectionCard
 import com.example.backlogium.ui.components.RecencyBadge
 import com.example.backlogium.ui.components.accessibilityLabel
 import com.example.backlogium.ui.theme.collectionAccentColor
@@ -1096,6 +1097,8 @@ internal fun CollectionsSection(
 
 @Composable
 private fun smartCollectionName(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> stringResource(R.string.home_smart_favorites)
+    SmartCollectionId.PLAYED_RECENTLY -> stringResource(R.string.home_smart_played_recently)
     SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_quick_wins)
     SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_never_started)
     SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_almost_done)
@@ -1105,6 +1108,8 @@ private fun smartCollectionName(id: SmartCollectionId): String = when (id) {
 
 @Composable
 private fun smartCollectionRule(id: SmartCollectionId): String = when (id) {
+    SmartCollectionId.FAVORITES -> stringResource(R.string.home_smart_rule_favorites)
+    SmartCollectionId.PLAYED_RECENTLY -> stringResource(R.string.home_smart_rule_played_recently)
     SmartCollectionId.QUICK_WINS -> stringResource(R.string.home_smart_rule_quick_wins)
     SmartCollectionId.NEVER_STARTED -> stringResource(R.string.home_smart_rule_never_started)
     SmartCollectionId.ALMOST_DONE -> stringResource(R.string.home_smart_rule_almost_done)
@@ -1172,44 +1177,10 @@ private fun SmartCollectionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val name = smartCollectionName(card.id)
-    val rule = smartCollectionRule(card.id)
-    val openDescription = stringResource(
-        R.string.home_open_derived_collection,
-        name,
+    DerivedCollectionCard(
+        name = smartCollectionName(card.id), rule = smartCollectionRule(card.id),
+        memberCount = card.memberCount, artwork = card.artwork, onClick = onClick, modifier = modifier,
     )
-    Card(
-        onClick = onClick,
-        modifier = modifier.semantics {
-            contentDescription = openDescription
-        },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = UiFormat.count(card.memberCount),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Text(
-                text = rule,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /** One collection's mission card: its name plus its mode-specific banner, accented by palette. */

@@ -1,5 +1,8 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.test.SettingsDataStoreRule
+import org.junit.Rule
+
 import com.example.backlogium.data.local.LiveSessionState
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.Session
@@ -20,6 +23,8 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class SettingsRepositoryTest {
+    @get:Rule val settingsFixture = SettingsDataStoreRule()
+
 
     @Test
     fun achievementWatchPreferencesPersistIndependentlyOfMonitorAndAlerts() = runTest {
@@ -36,7 +41,7 @@ class SettingsRepositoryTest {
 
     @Test
     fun liveMonitorEnabled_defaultsOff_andRepositoryForwardsItsWrite() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
 
         assertFalse(dataStore.liveMonitorEnabledFlow.first())
@@ -50,7 +55,7 @@ class SettingsRepositoryTest {
 
     @Test
     fun densityPreferences_defaultToList_andPersistIndependently() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
 
         assertEquals(GameListDensity.LIST, repository.libraryDensity.first())
@@ -67,7 +72,7 @@ class SettingsRepositoryTest {
     fun clearSharedGameAnnouncement_reachesDataStore_throughTheProductionRepository() = runTest {
         // Regression: DataStoreSettingsRepository previously left this call on the interface's
         // no-op default, so dismissal from the production repository never reached DataStore.
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
         dataStore.setSharedGameAnnouncement(appId = 10L, name = "Game A", announcedAt = 1_000L)
 
@@ -81,7 +86,7 @@ class SettingsRepositoryTest {
         // Regression: a single mutable slot let a second admission silently overwrite the first
         // game's cue before it was ever seen, which is exactly what "must never be silent" rules
         // out.
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
 
         dataStore.setSharedGameAnnouncement(appId = 10L, name = "Game A", announcedAt = 1_000L)
@@ -100,7 +105,7 @@ class SettingsRepositoryTest {
 
     @Test
     fun sessionEndIsDurableAndClearsLiveSessionInTheSameRepositoryOperation() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
         val sessionEnd = PlaySessionEnd(appId = 10L, endedAt = 2_000L, steamId = "account-a")
 
@@ -117,7 +122,7 @@ class SettingsRepositoryTest {
 
     @Test
     fun cloudPresenceRefilingBackup_roundTripsAndGuardPersists() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
         val original = Session(
             id = 7L,
@@ -165,7 +170,7 @@ class SettingsRepositoryTest {
 
     @Test
     fun smartCollectionVisibility_defaultsVisible_andPersistsAcrossRepositoryInstances() = runTest {
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)
 
         assertTrue(repository.smartCollectionVisibility.first().isVisible(
@@ -179,7 +184,7 @@ class SettingsRepositoryTest {
         )
 
         val reopenedRepository = DataStoreSettingsRepository(
-            SettingsDataStore(RuntimeEnvironment.getApplication()),
+            settingsFixture.create(),
         )
         assertFalse(reopenedRepository.smartCollectionVisibility.first().isVisible(
             com.example.backlogium.domain.SmartCollectionId.DROPPED,
@@ -194,7 +199,7 @@ class SettingsRepositoryTest {
         // Regression: toggling used to read the shared hidden-id set and then write a whole
         // replacement, so two near-concurrent switches from the manage dialog could both read
         // the same old set and the slower write would silently discard the other toggle.
-        val dataStore = SettingsDataStore(RuntimeEnvironment.getApplication())
+        val dataStore = settingsFixture.create()
         val repository: SettingsRepository = DataStoreSettingsRepository(dataStore)
 
         try {

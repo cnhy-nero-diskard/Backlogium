@@ -199,6 +199,12 @@ class SessionRepository @Inject constructor(
     val latestSessionAtByGame: Flow<Map<Long, Long>> = sessionDao.observeLatestSessionInstantByGame()
         .map { rows -> rows.associate { it.appId to it.at } }
 
+    /** Latest positive session evidence in the requested clock window, excluding hidden games. */
+    fun latestMeaningfulSessionAtByGame(fromInclusive: Long, throughInclusive: Long): Flow<Map<Long, Long>> =
+        sessionDao.observeLatestMeaningfulSessionInstantByGame(fromInclusive, throughInclusive)
+            .map { rows -> rows.associate { it.appId to it.at } }
+            .visibleKeys()
+
     /** Synthesized session count per game, keyed by appId. Buckets never increment these. */
     val sessionCountByGame: Flow<Map<Long, Int>> = sessionDao.observeSessionCountsByGame()
         .map { rows -> rows.associate { it.appId to it.sessions } }
@@ -746,7 +752,7 @@ class SessionRepository @Inject constructor(
         return combine(placementFlows) { chunks -> chunks.flatMap { it } }
     }
 
-    private fun Flow<Map<Long, Int>>.visibleKeys(): Flow<Map<Long, Int>> =
+    private fun <T> Flow<Map<Long, T>>.visibleKeys(): Flow<Map<Long, T>> =
         combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
             if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
         }
