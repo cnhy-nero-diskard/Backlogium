@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Favorite preferences survive compatible backup merges
-Manual backups and automatic snapshots SHALL carry app-owned favorite preferences keyed by Steam app ID, including explicit false values and retained preferences for temporarily absent games. Import SHALL restore explicit values without changing Focus or duplicating membership. Older backups that omit favorite preferences SHALL leave existing preferences unchanged and give newly introduced games the default unfavorited state. Preference data SHALL follow the existing validation, all-or-nothing import, and warned cross-account merge rules; configured-account changes remain a separate reset operation.
+Manual backups and snapshots SHALL include favorite preferences keyed by app ID, including explicit clears and absent-game records. Import SHALL merge explicit favorites without changing Focus or collection memberships. Omitted preferences SHALL preserve local values and leave new games unfavorited. Preflight validation, atomic merge, and warned cross-account import SHALL apply. Changing accounts remains a separate reset.
 
 #### Scenario: Set and cleared favorites round-trip
 - **WHEN** a backup with explicit true and false favorite values is exported and restored

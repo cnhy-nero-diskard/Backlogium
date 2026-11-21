@@ -288,7 +288,8 @@ class GameDetailBehaviorTest {
         scroll("No genre metadata cached.").assertIsDisplayed()
         scroll("Never played").assertIsDisplayed()
         capture("missing-data")
-        scroll("No achievements to show for this game yet.").assertIsDisplayed()
+        scroll("Achievement data is unavailable.").assertIsDisplayed()
+        scroll("Retry achievements").assertIsDisplayed()
         scroll("View on Steam").assertIsDisplayed()
     }
 

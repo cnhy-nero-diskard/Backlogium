@@ -35,4 +35,13 @@ class DetailVisitStateTest {
             achievements = emptyList(), filter = AchievementFilter.LOCKED)
         assertTrue(complete.allUnlocked)
     }
+    @Test fun catalogueOnlyObjectiveAppearsOnlyInAll() {
+        val objective = GameAchievement("objective", "Objective", null, false, null, 1.0, progressKnown = false)
+            .toUi(RuleConfig())
+        val rows = listOf(objective)
+        assertEquals(rows, rows.visibleThrough(AchievementLens()))
+        assertEquals(emptyList<AchievementUi>(), rows.visibleThrough(AchievementLens(filter = AchievementFilter.LOCKED)))
+        assertEquals(emptyList<AchievementUi>(), rows.visibleThrough(AchievementLens(filter = AchievementFilter.UNLOCKED)))
+    }
+
 }

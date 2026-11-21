@@ -38,6 +38,6 @@ internal class DetailVisitState(private val saved: SavedStateHandle) {
 internal fun List<AchievementUi>.visibleThrough(lens: AchievementLens): List<AchievementUi> =
     filter { row -> when (lens.filter) {
         AchievementFilter.ALL -> true
-        AchievementFilter.UNLOCKED -> row.unlocked
-        AchievementFilter.LOCKED -> !row.unlocked
+        AchievementFilter.UNLOCKED -> row.progressKnown && row.unlocked
+        AchievementFilter.LOCKED -> row.progressKnown && !row.unlocked
     } }.sortedWith(lens.sort.comparator())

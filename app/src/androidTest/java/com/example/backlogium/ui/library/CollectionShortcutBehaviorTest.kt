@@ -19,6 +19,7 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.repo.AccountDataWriteGuard
 import com.example.backlogium.data.repo.CollectionMembershipRepository
 import com.example.backlogium.data.repo.GamePreferenceRepository
@@ -62,6 +63,15 @@ class CollectionShortcutBehaviorTest {
         memberships = CollectionMembershipRepository(db, identity)
     }
     @After fun close() { scope.cancel(); db.close() }
+
+    @Test fun recentEvidenceExcludesFutureAndZeroMinuteSessionsBeforeSelectingLatest() = runBlocking {
+        val sessions = db.sessionDao()
+        sessions.insert(Session(appId = 10, startAt = 100, endAt = 200, minutes = 2, open = false))
+        sessions.insert(Session(appId = 10, startAt = 300, endAt = 400, minutes = 0, open = false))
+        sessions.insert(Session(appId = 10, startAt = 500, endAt = 600, minutes = 2, open = false))
+        val eligible = sessions.observeLatestMeaningfulSessionInstantByGame(100, 500).first()
+        assertEquals(200L, eligible.single().at)
+    }
 
     @Test fun libraryPickerAddsOnceAndWishlistHasNoMenuInEveryDensity() {
         val picker = CollectionPickerViewModel(memberships)
@@ -151,7 +161,6 @@ class CollectionShortcutBehaviorTest {
         val density = mutableStateOf(GameListDensity.LIST)
         val derived = mutableStateOf(false)
         var opened: Long? = null
-        var removed = false
         compose.setContent {
             BacklogiumTheme {
                 val members by db.collectionDao().observeMembers(collectionId).collectAsState(initial = emptyList())
@@ -159,13 +168,14 @@ class CollectionShortcutBehaviorTest {
                 LazyColumn(Modifier.fillMaxSize()) {
                     collectionMemberItems(members.map { CollectionMemberUi(it.appId, "Portal", "") }, density.value,
                         accent, true, { opened = it },
-                        onRemoveMember = if (derived.value) null else { appId -> scope.launch {
-                            memberships.remove(collectionId, appId, "fixture"); removed = true
-                        }; Unit })
+                        onRemoveMember = if (derived.value) null else { appId ->
+                            scope.launch { memberships.remove(collectionId, appId, "fixture") }
+                        })
                 }
             }
         }
-        compose.waitUntil { compose.onAllNodesWithContentDescription("Open Portal details").fetchSemanticsNodes().isNotEmpty() }
+        val details = compose.onAllNodesWithContentDescription("Open Portal details")
+        compose.waitUntil(timeoutMillis = 5_000) { details.fetchSemanticsNodes().isNotEmpty() }
         for (value in GameListDensity.entries) {
             compose.runOnIdle { density.value = value }
             compose.onNodeWithContentDescription("Open Portal details").performClick()
@@ -177,8 +187,8 @@ class CollectionShortcutBehaviorTest {
         compose.onNodeWithContentDescription("Remove Portal from this collection").assertDoesNotExist()
         compose.runOnIdle { derived.value = false }
         compose.onNodeWithContentDescription("Remove Portal from this collection").performClick()
-        compose.waitUntil { removed }
-        compose.onNodeWithContentDescription("Open Portal details").assertDoesNotExist()
+        compose.waitUntil(timeoutMillis = 5_000) { details.fetchSemanticsNodes().isEmpty() }
+        runBlocking { assertTrue(db.collectionDao().getMembers(collectionId).isEmpty()) }
     }
 
     private fun capture(name: String) {

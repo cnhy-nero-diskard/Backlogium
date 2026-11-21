@@ -12,10 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Everything a setup surface needs to render, derived from the registry plus stored state.
@@ -71,9 +70,11 @@ class SetupCoordinator @Inject constructor(
      * are already stored and nothing else distinguishes that install from a long-configured one.
      */
     override val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
+    override val firstRunPhase: Flow<FirstRunPhase?> = store.firstRunPhaseFlow
+    override suspend fun advanceToHistory() = store.advanceToHistory()
 
-    /** Serializes runs so two surfaces cannot drive the loop at the same time. */
-    private val runLock = Mutex()
+    /** Claim before launch so duplicate taps cannot queue a second run behind this one. */
+    private val runClaimed = AtomicBoolean(false)
     private var loadJob: Job? = null
 
     /**
@@ -132,65 +133,88 @@ class SetupCoordinator @Inject constructor(
      * the rest skipped there would erase the outcomes the Settings list exists to show.
      */
     fun start(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean = true) {
+        if (loadJob?.isActive == true || !runClaimed.compareAndSet(false, true)) return
         scope.launch {
-            runLock.withLock {
-                val stages = source.stages
-                // An unavailable stage cannot be selected in any surface, but a stale selection
-                // handed in from a recreated one must not slip past that.
-                val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
-                val runIds = toRun.map { it.id }.toSet()
-                val previous = _state.value.outcomes
-
-                stages.forEach { stage ->
-                    if (stage.id in runIds || recordUnselectedAsSkipped) {
-                        store.writeOptIn(stage.id, stage.id in runIds)
-                    }
-                }
-                if (toRun.isNotEmpty()) {
-                    // Establish the durable recovery point before the first enqueue can happen.
-                    // Every stage in the run is reset here, not just the first: recovery skips a
-                    // selected stage that already holds a terminal outcome, so a stage left
-                    // `Succeeded` by an earlier run would be mistaken for one this run finished.
-                    store.beginRun(toRun.first().id, runIds)
-                } else {
-                    store.clearActiveStage()
-                }
-                _state.update { current ->
-                    current.copy(
-                        loaded = true,
-                        running = runIds.isNotEmpty(),
-                        selected = runIds,
-                        finished = false,
-                        currentStageId = null,
-                        progress = null,
-                        // A stage in this run starts from a clean slate rather than showing a
-                        // previous verdict; one outside it keeps whatever it last recorded, unless
-                        // this run is the decision that it was skipped.
-                        outcomes = stages.associate { stage ->
-                            stage.id to when {
-                                stage.id in runIds -> SetupOutcome.NeverRun
-                                recordUnselectedAsSkipped -> SetupOutcome.Skipped
-                                else -> previous[stage.id] ?: SetupOutcome.NeverRun
-                            }
-                        },
-                        inScreenSettled = toRun.none {
-                            it.execution == SetupStageExecution.IN_SCREEN
-                        },
-                    )
-                }
-                if (recordUnselectedAsSkipped) {
-                    stages.filterNot { it.id in runIds }
-                        .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
-                }
-
-                toRun.forEach { stage -> runStage(stage, remaining = toRun) }
-                completeRun()
+            try {
+                run(selectedIds, recordUnselectedAsSkipped)
+            } finally {
+                runClaimed.set(false)
             }
         }
     }
 
-    /** Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable. */
-    fun skipAll() = start(emptySet(), recordUnselectedAsSkipped = true)
+    /**
+     * Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable.
+     * Returns true only after that decision is durable; false means another load/run owns setup.
+     */
+    suspend fun skipAll(): Boolean {
+        // The surface only calls this for a loaded, idle checklist. Let the load coroutine finish
+        // its final bookkeeping before claiming the run; an active recovery is exposed as running
+        // and is handled as Continue by the surface instead.
+        if (!_state.value.loaded || _state.value.running) return false
+        loadJob?.takeIf { it.isActive }?.join()
+        if (_state.value.running || !runClaimed.compareAndSet(false, true)) return false
+        try {
+            run(emptySet(), recordUnselectedAsSkipped = true)
+            return true
+        } finally {
+            runClaimed.set(false)
+        }
+    }
+
+    private suspend fun run(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean) {
+        val stages = source.stages
+        // An unavailable stage cannot be selected in any surface, but a stale selection
+        // handed in from a recreated one must not slip past that.
+        val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
+        val runIds = toRun.map { it.id }.toSet()
+        val previous = _state.value.outcomes
+
+        stages.forEach { stage ->
+            if (stage.id in runIds || recordUnselectedAsSkipped) {
+                store.writeOptIn(stage.id, stage.id in runIds)
+            }
+        }
+        if (toRun.isNotEmpty()) {
+            // Establish the durable recovery point before the first enqueue can happen.
+            // Every stage in the run is reset here, not just the first: recovery skips a
+            // selected stage that already holds a terminal outcome, so a stage left
+            // `Succeeded` by an earlier run would be mistaken for one this run finished.
+            store.beginRun(toRun.first().id, runIds)
+        } else {
+            store.clearActiveStage()
+        }
+        _state.update { current ->
+            current.copy(
+                loaded = true,
+                running = runIds.isNotEmpty(),
+                selected = runIds,
+                finished = false,
+                currentStageId = null,
+                progress = null,
+                // A stage in this run starts from a clean slate rather than showing a
+                // previous verdict; one outside it keeps whatever it last recorded, unless
+                // this run is the decision that it was skipped.
+                outcomes = stages.associate { stage ->
+                    stage.id to when {
+                        stage.id in runIds -> SetupOutcome.NeverRun
+                        recordUnselectedAsSkipped -> SetupOutcome.Skipped
+                        else -> previous[stage.id] ?: SetupOutcome.NeverRun
+                    }
+                },
+                inScreenSettled = toRun.none {
+                    it.execution == SetupStageExecution.IN_SCREEN
+                },
+            )
+        }
+        if (recordUnselectedAsSkipped) {
+            stages.filterNot { it.id in runIds }
+                .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
+        }
+
+        toRun.forEach { stage -> runStage(stage, remaining = toRun) }
+        completeRun()
+    }
 
     /**
      * Claim the first-run takeover, as credentials are persisted on a first configuration. Suspends
@@ -199,11 +223,7 @@ class SetupCoordinator @Inject constructor(
      */
     override suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
 
-    /**
-     * Release the takeover when the user leaves the first-run setup surface. Idempotent, and
-     * ordinarily redundant: a completed run has already released it. It is what covers leaving
-     * mid-run — "Skip setup" while stages are still going — where no completion is coming soon.
-     */
+    /** Resolve the first-run takeover after Import/Skip without cancelling outstanding setup work. */
     override suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
 
     /**
@@ -214,7 +234,8 @@ class SetupCoordinator @Inject constructor(
         active: ActiveSetupStage,
         selectedStages: List<SetupStage>,
     ) {
-        runLock.withLock {
+        if (!runClaimed.compareAndSet(false, true)) return
+        try {
             val activeIndex = selectedStages.indexOfFirst { it.id == active.stageId }
             if (activeIndex < 0) {
                 store.clearActiveStage()
@@ -246,6 +267,8 @@ class SetupCoordinator @Inject constructor(
                 }
             }
             completeRun()
+        } finally {
+            runClaimed.set(false)
         }
     }
 
@@ -337,13 +360,10 @@ class SetupCoordinator @Inject constructor(
     }
 
     private suspend fun completeRun() {
-        // Released here and not only when the surface is dismissed. A run that has reached its
-        // summary owes the user nothing further, and keeping the claim past that point made the
-        // resumed surface actively harmful: a cold launch after a completed run reopened the
-        // checklist with no run in flight, so the only exit offered was "Skip setup" — which
-        // records every stage skipped and would have overwritten the outcomes that had just
-        // succeeded. Death *during* a run, which is what the claim exists for, still keeps it.
-        store.setFirstRunSetupActive(false)
+        // A completed setup owes only the optional history decision, not another checklist. Keep
+        // that decision durable even if the process ends before the user taps Continue. This is
+        // a no-op for a Settings run or when the first-run flow has already been dismissed.
+        store.advanceToHistory()
         store.clearActiveStage()
         store.markCompleted()
         _state.update {

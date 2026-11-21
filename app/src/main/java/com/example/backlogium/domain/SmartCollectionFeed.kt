@@ -7,8 +7,11 @@ import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.GamePreferenceRepository
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 
 /** One derivation pass, with the inputs the presenting surfaces still need alongside it. */
 data class SmartCollectionSnapshot(
@@ -26,36 +29,40 @@ data class SmartCollectionSnapshot(
  * once, here, is what makes them the same lists rather than two implementations of the same idea.
  */
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class SmartCollectionFeed @Inject constructor(
     gameRepository: GameRepository,
     achievementRepository: AchievementRepository,
     sessionRepository: SessionRepository,
-    private val currentDate: CurrentDateProvider,
+    currentDate: CurrentDateProvider,
     preferences: GamePreferenceRepository,
 ) {
     private data class SessionFacts(
         val trackedMinutesByGame: Map<Long, Int>,
         val latestSessionAtByGame: Map<Long, Long>,
         val sessionCountByGame: Map<Long, Int>,
-        val latestMeaningfulSessionAtByGame: Map<Long, Long>,
     )
 
     private val sessionFacts: Flow<SessionFacts> = combine(
         sessionRepository.trackedMinutesByGame,
         sessionRepository.latestSessionAtByGame,
         sessionRepository.sessionCountByGame,
-        sessionRepository.latestMeaningfulSessionAtByGame,
-    ) { trackedMinutes, latestSessionAt, sessionCounts, meaningful ->
-        SessionFacts(trackedMinutes, latestSessionAt, sessionCounts, meaningful)
+    ) { trackedMinutes, latestSessionAt, sessionCounts ->
+        SessionFacts(trackedMinutes, latestSessionAt, sessionCounts)
+    }
+
+    private val recentSessionFacts = currentDate.currentMoment.flatMapLatest { moment ->
+        val start = SmartCollections.recentPlayWindowStart(moment.today, moment.zone)
+        sessionRepository.latestMeaningfulSessionAtByGame(start, moment.nowMillis).map { moment to it }
     }
 
     val snapshot: Flow<SmartCollectionSnapshot> = combine(
         gameRepository.library,
         sessionFacts,
         achievementRepository.smartCollectionSignals,
-        currentDate.currentMoment,
+        recentSessionFacts,
         preferences.favoriteAppIds,
-    ) { games, sessions, achievementsByGame, moment, favorites ->
+    ) { games, sessions, achievementsByGame, (moment, recentSessions), favorites ->
         SmartCollectionSnapshot(
             games = games,
             achievementsByGame = achievementsByGame,
@@ -85,8 +92,10 @@ class SmartCollectionFeed @Inject constructor(
                             game.lastPlayedAt,
                             sessions.latestSessionAtByGame[game.appId],
                         ),
-                        recentPlayedAt = maxOfNotNull(game.lastPlayedAt,
-                            sessions.latestMeaningfulSessionAtByGame[game.appId]),
+                        recentPlayedAt = maxOfNotNull(
+                            game.lastPlayedAt?.takeIf { it <= moment.nowMillis },
+                            recentSessions[game.appId],
+                        ),
                     )
                 },
                 achievementsByGame = achievementsByGame,

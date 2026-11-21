@@ -6,6 +6,7 @@ import com.example.backlogium.data.hltb.HltbCandidate
 import com.example.backlogium.data.repo.BroaderResult
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.HltbMatchState
+import com.example.backlogium.data.repo.HltbMatchRevision
 import com.example.backlogium.data.repo.HltbRepository
 import com.example.backlogium.data.repo.ManualLinkPreviewResult
 import com.example.backlogium.data.hltb.HltbFailureClass
@@ -41,6 +42,7 @@ data class MatchCenterGameUi(
     val heroCapsuleUrl: String = "",
     val matchStatus: HltbMatchState,
     val candidates: List<HltbCandidate>,
+    val revision: HltbMatchRevision = HltbMatchRevision(0L, matchStatus, null),
 )
 
 // Per-game broader-search transient state
@@ -60,6 +62,7 @@ data class ManualLinkUiState(
     val notFound: Boolean = false,
     val failed: Boolean = false,
     val failureClass: HltbFailureClass? = null,
+    val revision: HltbMatchRevision? = null,
 )
 
 /**
@@ -196,6 +199,7 @@ class HltbReviewViewModel @Inject constructor(
                     heroCapsuleUrl = game?.heroCapsuleUrl ?: "",
                     matchStatus = entry.matchStatus,
                     candidates = entry.candidates,
+                    revision = entry.revision,
                 )
             }
         }.onEach(reviewSession::updateQueue).launchIn(viewModelScope)
@@ -252,9 +256,10 @@ class HltbReviewViewModel @Inject constructor(
      * finishes on (see [isScopedAppMissing]) — so the active screen pops from state, never from a
      * callback captured in this scope that could outlive the composition that created it.
      */
-    fun resolve(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
-        hltbRepository.resolveMatch(appId, candidate)
-        // The queue emission advances the session after persistence; no optimistic removal.
+    fun resolve(appId: Long, candidate: HltbCandidate, expectedRevision: HltbMatchRevision) = viewModelScope.launch {
+        // Never advance optimistically: the queue keeps this game when a stale revision is rejected
+        // and follows whichever row state Room currently exposes.
+        hltbRepository.resolveMatch(appId, candidate, expectedRevision)
     }
 
     fun startBroaderSearch(appId: Long, originalName: String) {
@@ -284,23 +289,44 @@ class HltbReviewViewModel @Inject constructor(
         broaderStates.update { it - appId }
     }
 
-    fun updateManualLinkInput(appId: Long, input: String) {
+    fun updateManualLinkInput(appId: Long, input: String, expectedRevision: HltbMatchRevision) {
         manualLinkStates.update { map ->
             val existing = map[appId] ?: ManualLinkUiState()
-            map + (appId to existing.copy(input = input, validationError = null, notFound = false, failed = false, preview = null))
+            map + (appId to existing.copy(
+                input = input,
+                validationError = null,
+                notFound = false,
+                failed = false,
+                preview = null,
+                revision = expectedRevision,
+            ))
         }
     }
 
-    fun previewManualLink(appId: Long) {
+    fun previewManualLink(appId: Long, expectedRevision: HltbMatchRevision) {
         if (manualLinkJobs[appId]?.isActive == true) return
-        val state = manualLinkStates.value[appId] ?: ManualLinkUiState()
+        val state = manualLinkStates.value[appId]
+            ?.takeIf { it.revision == expectedRevision }
+            ?: ManualLinkUiState(revision = expectedRevision)
         if (state.loading) return
-        val input = state.input.trim()
+        val currentState = state.copy(revision = expectedRevision)
+        val input = currentState.input.trim()
         if (input.isEmpty()) {
-            manualLinkStates.update { it + (appId to state.copy(validationError = "Enter an HLTB link")) }
+            manualLinkStates.update {
+                it + (appId to currentState.copy(validationError = "Enter an HLTB link"))
+            }
             return
         }
-        manualLinkStates.update { it + (appId to state.copy(loading = true, validationError = null, notFound = false, failed = false, preview = null)) }
+        manualLinkStates.update {
+            it + (appId to currentState.copy(
+                loading = true,
+                validationError = null,
+                notFound = false,
+                failed = false,
+                preview = null,
+                revision = expectedRevision,
+            ))
+        }
         val job = viewModelScope.launch {
             // Resolve into the *latest* entry, never the snapshot taken before launch, and drop a
             // result whose submitted input was since edited (clearing loading so the new input
@@ -321,6 +347,7 @@ class HltbReviewViewModel @Inject constructor(
             }
             manualLinkStates.update { map ->
                 val current = map[appId] ?: return@update map
+                if (current.revision != expectedRevision) return@update map
                 val next = if (current.input.trim() == input) resolved(current) else current.copy(loading = false)
                 map + (appId to next)
             }
@@ -345,11 +372,21 @@ class HltbReviewViewModel @Inject constructor(
     }
 
     /** See [resolve] for how completion is signaled: from the queue-driven state, post-persist. */
-    fun confirmManualLink(appId: Long) = viewModelScope.launch {
-        val preview = manualLinkStates.value[appId]?.preview ?: return@launch
-        hltbRepository.resolveMatch(appId, preview)
-        clearManualLink(appId)
-        // Also clear broader state for that game if present
-        clearBroaderState(appId)
+    fun confirmManualLink(
+        appId: Long,
+        preview: HltbCandidate,
+        expectedRevision: HltbMatchRevision,
+    ) = viewModelScope.launch {
+        val current = manualLinkStates.value[appId] ?: return@launch
+        if (current.preview != preview || current.revision != expectedRevision) return@launch
+        val accepted = hltbRepository.resolveMatch(appId, preview, expectedRevision)
+        manualLinkStates.update { map ->
+            val latest = map[appId] ?: return@update map
+            if (latest.preview == preview && latest.revision == expectedRevision) map - appId else map
+        }
+        if (accepted) {
+            // Also clear broader state for that game if present.
+            clearBroaderState(appId)
+        }
     }
 }

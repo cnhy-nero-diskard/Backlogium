@@ -50,11 +50,15 @@ data class SetupStage(
  */
 enum class SetupStageExecution { IN_SCREEN, DETACHED }
 
-/** Progress reported by a running stage. Indeterminate until the work knows its own total. */
+enum class SetupStageActivity { WAITING, RUNNING, RETRY_BACKOFF }
+
+/** Progress and scheduling state; a queued job has no meaningful processed total. */
 data class SetupStageProgress(
     val processed: Int,
     val total: Int,
     val label: String = "",
+    val activity: SetupStageActivity = SetupStageActivity.RUNNING,
+    val attemptCount: Int = 0,
 ) {
     /**
      * True only once the underlying work has published a total. A stage whose work never reports

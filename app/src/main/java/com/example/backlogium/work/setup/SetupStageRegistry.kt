@@ -48,6 +48,7 @@ class SetupStageRegistry @Inject constructor(
                 progressOf = { null },
                 failureReason = "Couldn't reach Steam. It will try again on its own; " +
                     "you can also re-run this from Settings.",
+                successOutcome = ::librarySetupOutcome,
             ),
         ),
         SetupStage(
@@ -112,3 +113,7 @@ class SetupStageRegistry @Inject constructor(
         const val STAGE_COMPLETION_TIMES = "completion_times"
     }
 }
+
+internal fun librarySetupOutcome(data: androidx.work.Data): SetupOutcome =
+    data.getString(SteamSyncWorker.KEY_SETUP_FAILURE)
+        ?.let { SetupOutcome.Failed(it) } ?: SetupOutcome.Succeeded

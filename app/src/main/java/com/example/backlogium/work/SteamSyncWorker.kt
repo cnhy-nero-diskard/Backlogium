@@ -5,12 +5,14 @@ import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncOutcome
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -23,6 +25,10 @@ import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.data.remote.dto.lastPlayedAtMillis
+import com.example.backlogium.data.remote.dto.isConfirmedOwnedEnvelope
+import com.example.backlogium.data.remote.dto.validatedOwnedGames
+import com.example.backlogium.data.remote.dto.validatedPlaytime2Weeks
+import com.example.backlogium.data.remote.dto.validatedPlaytimeForever
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.domain.GamificationUpdater
@@ -31,6 +37,9 @@ import com.example.backlogium.domain.CloudReaderIdentity
 import com.example.backlogium.domain.LibraryRecency
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.PlaytimeObservationCommitter
+import com.example.backlogium.domain.RecoveryDerivedFinalizer
+import com.example.backlogium.domain.RecoveryPlacementReconcileUseCase
+import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlayerIdentity
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.SessionDiffer
@@ -139,12 +148,17 @@ internal fun isLibraryBaseline(existingGameCount: Int, lastSyncAt: Long): Boolea
     existingGameCount == 0 && lastSyncAt <= 0L
 
 /**
- * Steam uses an empty response envelope for profiles whose libraries cannot be read. Only its
- * explicit `game_count: 0` confirms that an empty list is a successful library snapshot; persisting
- * that snapshot establishes the durable baseline for the first later acquisition.
+ * Whether an owned-games response may be persisted as a library snapshot.
+ *
+ * Steam answers a private/unreadable profile with an empty `response` envelope and no `game_count`;
+ * only a present nonnegative count confirms the endpoint answered a library question. An empty list
+ * is therefore a successful snapshot only when that count is explicitly zero. A positive count with
+ * no games, a zero count with games present, and a negative or absent count are all contradictory
+ * or unconfirmed and must leave last-good data in place. Per-game omissions are handled separately:
+ * an absent game never becomes a zero reading merely because the library envelope was confirmed.
  */
 internal fun shouldPersistOwnedGamesPoll(gameCount: Int?, gamesAreEmpty: Boolean): Boolean =
-    !gamesAreEmpty || gameCount == 0
+    isConfirmedOwnedEnvelope(gameCount, gamesAreEmpty)
 
 /**
  * Runs one Steam poll: fetch -> diff into sessions -> persist -> recompute gamification.
@@ -178,11 +192,23 @@ class SteamSyncWorker @AssistedInject constructor(
     private val committer: PlaytimeObservationCommitter,
     private val cloudPresencePlacementReader: CloudPresencePlacementReader,
     private val sharedGameConverter: SharedGameConverter,
+    private val unknownTimeMaterializer: UnknownTimeMaterializer,
+    private val recoveryDerivedFinalizer: RecoveryDerivedFinalizer,
+    private val recoveryPlacementReconciler: RecoveryPlacementReconcileUseCase,
+    private val recoveryReadStatus: RecoveryReadStatusStore,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
         val lastSyncAt: Long,
         val diff: SessionDiffer.DiffResult,
+        val consultPlacement: Boolean,
+    )
+
+    private data class RawCommitResult(
+        val arrivedAppIds: Set<Long>,
+        val finalizationOperationId: String?,
+        val creditedIncreaseAppIds: Set<Long>,
+        val baselineEstablishedAppIds: Set<Long>,
     )
 
     override suspend fun doWork(): Result {
@@ -193,7 +219,7 @@ class SteamSyncWorker @AssistedInject constructor(
             coordinator = syncCoordinator,
             accountChangePending = { accountChangeMarker.pendingSteamId() != null },
             work = { doWorkUnlocked() },
-        ) ?: Result.success()
+        ) ?: setupSkipped("An account change is still in progress. Retry when it finishes.")
     }
 
     private suspend fun doWorkUnlocked(): Result {
@@ -209,7 +235,7 @@ class SteamSyncWorker @AssistedInject constructor(
             if (creds == null) {
                 recordErrorIfAccountActive(null, "Steam not configured")
                 outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
-                return Result.success()
+                return setupSkipped("Connect your Steam account before syncing your library.")
             }
             val apiKey = creds.apiKey
             val steamId = creds.steamId
@@ -221,7 +247,21 @@ class SteamSyncWorker @AssistedInject constructor(
                     "Stored library belongs to a different Steam account; confirm the account change first",
                 )
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
-                return Result.success()
+                return setupSkipped("The stored library belongs to a different Steam account.")
+            }
+            val recoveryReady = syncCoordinator.withLock {
+                if (!isAccountActive(steamId)) {
+                    false
+                } else {
+                    val resumeAt = time.nowMillis()
+                    unknownTimeMaterializer.materializeAll(steamId, resumeAt)
+                    recoveryDerivedFinalizer.resumePending(steamId, resumeAt)
+                    true
+                }
+            }
+            if (!recoveryReady) {
+                outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
+                return setupSkipped("The Steam account changed before the sync could finish.")
             }
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
@@ -248,7 +288,18 @@ class SteamSyncWorker @AssistedInject constructor(
                     Unit
                 },
                 fetchOwnedGames = {
-                    steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+                    try {
+                        steamApi.getOwnedGames(apiKey, steamId, scope = scope)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        syncCoordinator.withLock {
+                            if (isAccountActive(steamId)) {
+                                recoveryReadStatus.unavailable(steamId, time.nowMillis())
+                            }
+                        }
+                        throw failure
+                    }
                 },
             ).getOrThrow()
             val games = owned.response.games
@@ -261,17 +312,26 @@ class SteamSyncWorker @AssistedInject constructor(
                     steamId,
                     "No games returned — your Steam profile may be private",
                 )
+                syncCoordinator.withLock {
+                    if (isAccountActive(steamId)) recoveryReadStatus.unavailable(steamId, time.nowMillis())
+                }
                 outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
-                return Result.success()
+                return setupSkipped("Steam did not return a readable library. Check your profile privacy, then retry.")
             }
+
+            // Per-game trust, applied once at the envelope boundary: positive identity, a usable
+            // cumulative total, and no conflicting duplicate app rows. Rows that fail (an omitted
+            // playtime field, a duplicate that disagrees) keep their stored baseline and metadata;
+            // the confirmed library as a whole still syncs.
+            val trustedGames = games.validatedOwnedGames()
 
             val steamLevel = runCatching {
                 steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            if (!persistPoll(games, apiKey, steamId, steamLevel, summary, scope)) {
+            if (!persistPoll(trustedGames, apiKey, steamId, steamLevel, summary, scope)) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
-                return Result.success()
+                return setupSkipped("The Steam account changed before the sync could finish.")
             }
             examined = games.size
             updated = games.size
@@ -313,7 +373,13 @@ class SteamSyncWorker @AssistedInject constructor(
     ): Boolean {
         val now = time.nowMillis()
         val today = time.today()
-        val polls = games.map { SessionDiffer.PollGame(it.appid, it.playtimeForever) }
+        // Only games Steam actually reported a cumulative total for may enter the diff. An absent
+        // or negative `playtime_forever` is not a reading of zero: excluding it here keeps the
+        // game's stored baseline at last-good instead of flattening it, and the same filter is
+        // applied to the committed observations below.
+        val polls = games.mapNotNull { dto ->
+            dto.validatedPlaytimeForever?.let { SessionDiffer.PollGame(dto.appid, it) }
+        }
         val configAtCompute = settings.ruleConfigWithVersionFlow.first()
         val (preview, trackedByAppId, sharedGames) = syncCoordinator.withLock {
             Triple(
@@ -323,10 +389,7 @@ class SteamSyncWorker @AssistedInject constructor(
             )
         }
         val provisionalDiff = preview.diff
-        val placementSnapshot = if (
-            provisionalDiff.playedDeltaByAppId.isNotEmpty() &&
-            CloudPresencePlaytimePlacement.shouldConsult(preview.lastSyncAt, now)
-        ) {
+        val placementSnapshot = if (preview.consultPlacement) {
             cloudPresencePlacementReader.readOrNull(CloudReadTrigger.SYNC, preview.lastSyncAt, now)
         } else {
             null
@@ -347,11 +410,12 @@ class SteamSyncWorker @AssistedInject constructor(
         // AchievementFreshness never excludes a shared game from missing-data eligibility on the
         // strength of zero tracked minutes alone (fix-shared-game-achievement-visibility).
 
-        val achievementScope = games.map {
+        val achievementScope = games.mapNotNull { dto ->
+            val playtimeForever = dto.validatedPlaytimeForever ?: return@mapNotNull null
             com.example.backlogium.data.achievement.AchievementFreshness.OwnedGame(
-                appId = it.appid,
-                playtimeForever = it.playtimeForever.toLong(),
-                playtime2Weeks = it.playtime2Weeks.toLong(),
+                appId = dto.appid,
+                playtimeForever = playtimeForever.toLong(),
+                playtime2Weeks = (dto.validatedPlaytime2Weeks ?: 0).toLong(),
                 source = com.example.backlogium.domain.GameSource.STEAM_OWNED,
             )
         } + sharedGames.map { shared ->
@@ -376,66 +440,91 @@ class SteamSyncWorker @AssistedInject constructor(
             never = achievementFetch.selection.never.size,
         )
 
-        val arrivedAppIds = withContext(NonCancellable) {
+        // The account/sync barrier spans both commits. Releasing it between raw Room persistence
+        // and the durable corrective/earned stages lets another worker commit fresh play or
+        // achievements first; a corrective recompute can then silently reseed marks past that
+        // not-yet-finalized earned transition. Steam/network acquisition remains above and outside
+        // this critical section.
+        return withContext(NonCancellable) {
             syncCoordinator.withLock {
-                if (!isAccountActive(steamId)) {
-                    null
-                } else {
-                    committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
-                        database.withTransaction {
-                            commitRawPoll(
-                                games = games,
-                                steamId = steamId,
-                                steamLevel = steamLevel,
-                                summary = summary,
-                                now = now,
-                                placement = validatedPlacement,
-                                pruningIdentity = pruningIdentity,
-                                achievementFetch = achievementFetch,
-                                scope = scope,
+                if (!isAccountActive(steamId)) return@withLock false
+
+                // The startup pass precedes network acquisition, so an operation can become
+                // pending while this worker is fetching. Drain that journal immediately before
+                // authorizing another raw observation as well; the held barrier prevents a stale
+                // corrective stage from reading the new operation's inputs.
+                unknownTimeMaterializer.materializeAll(steamId, now)
+                recoveryDerivedFinalizer.resumePending(steamId, now)
+
+                val rawCommit = committer.withValidatedPlacement(placement) { validatedPlacement, pruningIdentity ->
+                    val lateEvidence = committer.recoveryEvidenceForReconciliation(
+                        account = steamId,
+                        placement = validatedPlacement,
+                        activeReaderIdentity = pruningIdentity,
+                        observedAt = now,
+                    )
+                    if (lateEvidence.isNotEmpty()) {
+                        games.map { it.appid }.distinct().forEach { appId ->
+                            recoveryPlacementReconciler.reconcileDelayedEvidenceWhileLocked(
+                                account = steamId,
+                                appId = appId,
+                                evidence = lateEvidence,
+                                activeReaderIdentity = pruningIdentity,
                             )
                         }
                     }
-                }
-            }
-        } ?: return false
-
-        // The arrivals the commit itself stamped, carried out rather than queried again: a second
-        // read would have to guess which of the games now carrying a `firstSeenAt` this poll wrote.
-        // Written after the transaction, never inside it — DataStore is a separate store, and this
-        // codebase does not wrap cross-store writes in a Room transaction. A poll that stamped
-        // nothing leaves the existing announcement exactly as it stood.
-        // The raw transaction is durable now. Keep the account-change barrier around the
-        // account-owned follow-up writes so a reset either precedes them or clears them after.
-        val finalized = withContext(NonCancellable) {
-            syncCoordinator.withLock {
-                if (!isAccountActive(steamId)) {
-                    false
-                } else {
-                    if (arrivedAppIds.isNotEmpty()) {
-                        runCatching { settings.setAcquiredGames(arrivedAppIds, now) }
+                    database.withTransaction {
+                        commitRawPoll(
+                            games = games,
+                            steamId = steamId,
+                            steamLevel = steamLevel,
+                            summary = summary,
+                            now = now,
+                            placement = validatedPlacement,
+                            pruningIdentity = pruningIdentity,
+                            achievementFetch = achievementFetch,
+                            ruleConfig = configAtCompute.config,
+                            ruleConfigVersion = configAtCompute.version,
+                            scope = scope,
+                        )
                     }
-
-                    // Store metadata is a separately scheduled best-effort concern: never await it
-                    // or make an otherwise-valid owned-games poll fail because the public Store is
-                    // unavailable. The two chains are enqueued independently and guarded
-                    // independently, so neither can prevent the other from being scheduled.
-                    runCatching { genreEnrichmentScheduler.ensureEnqueued() }
-                    runCatching { reviewEnrichmentScheduler.ensureEnqueued() }
-
-                    // Derived values deliberately follow through the existing cross-store
-                    // write-ahead protocol, after a version check against the configuration read
-                    // before compute. If rules moved, the stale candidate is refused and recomputed
-                    // under the current version instead of being silently stamped as current.
-                    persistDerived(today, configAtCompute)
-                    // Best-effort: a snapshot-write failure must never fail an otherwise-successful
-                    // poll.
-                    runCatching { backupRepository.writeAutoSnapshotIfDue() }
-                    true
                 }
+
+                // The arrivals the commit itself stamped, carried out rather than queried again: a
+                // second read would have to guess which games now carrying `firstSeenAt` this poll
+                // wrote. These are separate-store writes, but remain behind the same account
+                // barrier as the Room commit and finalization.
+                if (rawCommit.arrivedAppIds.isNotEmpty()) {
+                    runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
+                }
+                runCatching {
+                    recoveryReadStatus.successfulRead(
+                        account = steamId,
+                        observedAt = now,
+                        creditedIncreaseAppIds = rawCommit.creditedIncreaseAppIds,
+                        baselineEstablishedAppIds = rawCommit.baselineEstablishedAppIds,
+                    )
+                }
+
+                // Store metadata is a separately scheduled best-effort concern: never await it or
+                // make an otherwise-valid owned-games poll fail because the public Store is
+                // unavailable. The two chains remain independent.
+                runCatching { genreEnrichmentScheduler.ensureEnqueued() }
+                runCatching { reviewEnrichmentScheduler.ensureEnqueued() }
+
+                // Complete durable recipe pages and every journal produced by this operation
+                // before another raw observation can change the inputs. The normal earned-only
+                // path is persisted here too, still under the account/sync barrier.
+                unknownTimeMaterializer.materializeAll(steamId, now)
+                recoveryDerivedFinalizer.resumePending(steamId, now)
+                if (rawCommit.finalizationOperationId == null) {
+                    persistDerived(today, configAtCompute)
+                }
+                // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
+                runCatching { backupRepository.writeAutoSnapshotIfDue() }
+                true
             }
         }
-        return finalized
     }
 
     private suspend fun isAccountActive(expectedSteamId: String?): Boolean =
@@ -463,16 +552,15 @@ class SteamSyncWorker @AssistedInject constructor(
         now: Long,
     ): DiffPreview {
         val profile = profileDao.get()
+        val lastSyncAt = profile?.lastSyncAt ?: 0L
         val existingGames = gameDao.ownedGamesForDiffing().associateBy { it.appId }
         val openSessionsByAppId = sessionDao.getAllOpenSessions().associateBy { it.appId }
+        val diff = diffAgainst(polls, existingGames, openSessionsByAppId, lastSyncAt, now)
         return DiffPreview(
-            lastSyncAt = profile?.lastSyncAt ?: 0L,
-            diff = diffAgainst(
-                polls = polls,
-                existingGames = existingGames,
-                openSessionsByAppId = openSessionsByAppId,
-                lastSyncAt = profile?.lastSyncAt ?: 0L,
-                now = now,
+            lastSyncAt = lastSyncAt,
+            diff = diff,
+            consultPlacement = committer.shouldConsultPeriodicPlacement(
+                polls, lastSyncAt, now, diff.playedDeltaByAppId.isNotEmpty(),
             ),
         )
     }
@@ -492,9 +580,25 @@ class SteamSyncWorker @AssistedInject constructor(
         placement: CloudPresencePlaytimePlacement.Input?,
         pruningIdentity: CloudReaderIdentity?,
         achievementFetch: AchievementLibraryFetch,
+        ruleConfig: com.example.backlogium.gamification.RuleConfig,
+        ruleConfigVersion: Long,
         scope: SyncRunRecorder.RunScope,
-    ): Set<Long> {
+    ): RawCommitResult {
         val profileBefore = profileDao.get()
+        // Admit the identity in this same raw transaction before any account-scoped baseline
+        // writes. The outer credential/account fence still owns admission; rollback is atomic.
+        if (profileBefore == null) profileDao.insertIfMissing()
+        val identityBeforeCommit = profileDao.get() ?: PlayerProfile()
+        val admittedIdentity = mergePlayerIdentity(
+            summary,
+            PlayerIdentity(identityBeforeCommit.personaName, identityBeforeCommit.avatarUrl,
+                identityBeforeCommit.storeRegion),
+        )
+        profileDao.updateSteamIdentity(
+            steamId = steamId, steamLevel = steamLevel,
+            personaName = admittedIdentity.personaName, avatarUrl = admittedIdentity.avatarUrl,
+            storeRegion = admittedIdentity.storeRegion,
+        )
         // A shared game the player has since bought converts before the diff reads its baseline,
         // so the poll that first reports it as owned already sees the fresh baseline and produces
         // no session from a lifetime total that was earned while borrowing.
@@ -523,24 +627,39 @@ class SteamSyncWorker @AssistedInject constructor(
         val sessionInstantBefore = sessionDao.latestSessionInstantByGame()
             .associate { it.appId to it.at }
         val committed = committer.commit(
-            observed = games.map { dto ->
+            observed = games.mapNotNull { dto ->
+                // Same trust filter as the diff preview in persistPoll: a game whose cumulative
+                // field Steam omitted or malformed is left at last-good, never committed as a zero.
+                val playtimeForever = dto.validatedPlaytimeForever ?: return@mapNotNull null
                 PlaytimeObservationCommitter.ObservedGame(
                     appId = dto.appid,
                     name = dto.name,
                     iconUrl = SteamIconMapper.iconUrl(dto.appid, dto.imgIconUrl),
-                    playtimeForever = dto.playtimeForever,
-                    playtime2Weeks = dto.playtime2Weeks,
+                    playtimeForever = playtimeForever,
+                    // An absent recent-window field is genuine "not played recently" (zero); a
+                    // negative one is malformed and keeps the stored recent-play metadata instead.
+                    playtime2Weeks = dto.validatedPlaytime2Weeks
+                        ?: existingGames[dto.appid]?.playtime2Weeks
+                        ?: 0,
                 )
             },
             observedPlayAt = now,
             syncedAt = now,
             placement = placement,
             pruningIdentity = pruningIdentity,
+            expectedAccount = steamId,
+            ruleConfig = ruleConfig,
+            ruleConfigVersion = ruleConfigVersion,
+            earnedAchievements = achievementRepository.freshUnlockSnapshots(achievementFetch.refreshes),
         )
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 
         val arrivedAppIds = mutableSetOf<Long>()
+        // Recency is only stamped for games whose cumulative reading was trusted above: a game
+        // Steam reported nothing usable for was never committed, so stamping an arrival or recency
+        // on it would announce a row that does not exist and could never be diffed.
         games.forEach { dto ->
+            if (dto.validatedPlaytimeForever == null) return@forEach
             val reportedPlayAt = dto.lastPlayedAtMillis
             val recency = recencyPollWrite(
                 isBaseline = isLibraryBaseline,
@@ -589,7 +708,14 @@ class SteamSyncWorker @AssistedInject constructor(
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
 
-        return arrivedAppIds
+        return RawCommitResult(
+            arrivedAppIds = arrivedAppIds,
+            finalizationOperationId = committed.finalizationOperationId,
+            creditedIncreaseAppIds = committed.playedDeltaByAppId
+                .filterValues { it > 0 }
+                .keys,
+            baselineEstablishedAppIds = committed.baselineEstablishedAppIds,
+        )
     }
 
     private fun diffAgainst(
@@ -644,7 +770,11 @@ class SteamSyncWorker @AssistedInject constructor(
         profileDao.updateLastSyncError(message)
     }
 
+    private fun setupSkipped(reason: String): Result =
+        Result.success(workDataOf(KEY_SETUP_FAILURE to reason))
+
     companion object {
+        const val KEY_SETUP_FAILURE = "setup_failure"
         const val UNIQUE_PERIODIC_NAME = "steam_sync_periodic"
         const val ONE_TIME_NAME = "steam_sync_now"
         /** Input key carrying the scheduler trigger; retries never overwrite it. */

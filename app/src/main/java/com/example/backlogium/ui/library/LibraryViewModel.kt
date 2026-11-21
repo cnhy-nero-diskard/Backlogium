@@ -520,7 +520,7 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun resolveMatch(appId: Long, candidate: HltbCandidate) = viewModelScope.launch {
-        hltbRepository.resolveMatch(appId, candidate)
+        hltbRepository.replaceMatch(appId, candidate)
     }
 
     fun changeMatch(appId: Long, name: String) {
@@ -618,7 +618,7 @@ class LibraryViewModel @Inject constructor(
 
     fun confirmPickerManualLink(appId: Long) = viewModelScope.launch {
         val preview = pickerManualLinkStates.value[appId]?.preview ?: return@launch
-        hltbRepository.resolveMatch(appId, preview)
+        hltbRepository.replaceMatch(appId, preview)
         clearPicker(appId)
     }
 

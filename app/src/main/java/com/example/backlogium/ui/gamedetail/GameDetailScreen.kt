@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.example.backlogium.domain.AchievementHydrationState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -140,6 +141,7 @@ fun GameDetailScreen(
         appId?.let(viewModel::setAppId)
         viewModel.beginVisit(visitToken)
         viewModel.startPolling()
+        viewModel.startBrowsing()
     }
     LaunchedEffect(viewModel, onRemoved) {
         viewModel.removedSharedGameEvents.collect { onRemoved() }
@@ -165,7 +167,9 @@ fun GameDetailScreen(
             onFavorite = favoriteViewModel::toggle, onArtwork = artworkViewModel::select,
             onRemoveSharedGame = viewModel::removeSharedGame, onSetManualPlaytime = viewModel::setManualPlaytime,
             onHide = viewModel::requestHide, onSort = viewModel::setSort, onFilter = viewModel::setFilter,
-            onRefreshAchievements = viewModel::refreshAchievements, onRefreshPlayerCount = viewModel::refreshPlayerCount,
+            onRefreshAchievements = viewModel::refreshAchievements,
+            onRetryAchievementCatalogue = viewModel::retryAchievements,
+            onRefreshPlayerCount = viewModel::refreshPlayerCount,
         ), onAccentColorChanged)
 }
 
@@ -178,6 +182,7 @@ internal data class GameDetailActions(
     val onSort: (AchievementSort) -> Unit = {},
     val onFilter: (AchievementFilter) -> Unit = {},
     val onRefreshAchievements: () -> Unit = {},
+    val onRetryAchievementCatalogue: () -> Unit = {},
     val onRefreshPlayerCount: () -> Unit = {},
 )
 
@@ -206,17 +211,46 @@ internal fun GameDetailContent(
     LaunchedEffect(presentation, accentColor) {
         if (!overlay) onAccentColorChanged(accentColor)
     }
-    Box(Modifier.fillMaxSize().then(if (overlay) {
-        Modifier.background(MaterialTheme.colorScheme.background)
-            .then(accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier)
-    } else Modifier)) {
-        val body: @Composable () -> Unit = {
-            GameDetailList(state.copy(summary = state.summary.copy(headerUrl = urls.first())), appId,
-                urls.drop(1), favoriteState, artworkState, placeholder, actions, resolved)
-        }
-        if (overlay) body() else {
-            PullToRefreshBox(isRefreshing = state.isRefreshingPlayerCount,
-                onRefresh = actions.onRefreshPlayerCount, modifier = Modifier.fillMaxSize()) { body() }
+    GameDetailPresentationLayout(
+        presentation = presentation,
+        accentColor = accentColor,
+        isRefreshing = state.isRefreshingPlayerCount,
+        onRefresh = actions.onRefreshPlayerCount,
+    ) {
+        GameDetailList(
+            state.copy(summary = state.summary.copy(headerUrl = urls.first())),
+            appId, urls.drop(1), favoriteState, artworkState, placeholder, actions, resolved,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GameDetailPresentationLayout(
+    presentation: GameDetailPresentation,
+    accentColor: Color?,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val overlay = presentation == GameDetailPresentation.COLLECTION_OVERLAY
+    Box(
+        modifier = Modifier.fillMaxSize().then(
+            if (overlay) {
+                Modifier.background(MaterialTheme.colorScheme.background).then(
+                    accentColor?.let { Modifier.background(gameDetailWash(it)) } ?: Modifier,
+                )
+            } else Modifier,
+        ),
+    ) {
+        if (overlay) {
+            content()
+        } else {
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) { content() }
         }
     }
 }
@@ -262,9 +296,8 @@ private fun GameDetailList(
             item { GameCompletedBanner() }
         }
         item { AchievementRefreshControl(state.achievementRefresh, actions.onRefreshAchievements) }
-        if (!state.loading && state.summary.achievementsTotal == 0) {
-            item { NoAchievementsNotice() }
-        } else if (state.summary.achievementsTotal > 0) {
+        item { AchievementAvailability(state, actions.onRetryAchievementCatalogue) }
+        if (state.hasAchievementRows) {
             item {
                 AchievementFilterControl(state.filter, actions.onFilter)
                 AchievementSortControl(
@@ -275,7 +308,12 @@ private fun GameDetailList(
             if (state.achievements.isEmpty()) {
                 item {
                     Text(
-                        if (state.filter == AchievementFilter.LOCKED) "No locked achievements." else "No unlocked achievements yet.",
+                        when {
+                            state.filter == AchievementFilter.LOCKED && state.hasUnknownAchievementProgress ->
+                                "No confirmed locked achievements."
+                            state.filter == AchievementFilter.LOCKED -> "No locked achievements."
+                            else -> "No unlocked achievements yet."
+                        },
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
                 }
@@ -904,13 +942,31 @@ private val AchievementSort.label: String
  * still stands, so the screen explains the absence rather than looking broken.
  */
 @Composable
-private fun NoAchievementsNotice() {
-    Text(
-        text = "No achievements to show for this game yet.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 16.dp),
-    )
+internal fun AchievementAvailability(state: GameDetailUiState, onRetry: () -> Unit) {
+    val cached = state.hasAchievementRows
+    val message = when {
+        state.hydration is AchievementHydrationState.Loading ->
+            if (cached) "Showing cached achievements. Refreshing…" else "Loading achievements…"
+        state.hydration is AchievementHydrationState.Unavailable -> {
+            val offline = state.hydration.offline
+            if (cached) "Showing cached achievements. ${if (offline) "You’re offline." else "Fresh data is unavailable."}"
+            else if (offline) "Achievements unavailable while offline." else "Achievements unavailable. Try again."
+        }
+        state.catalogue.confirmedEmpty -> "This game has no achievements."
+        state.hasUnknownAchievementProgress -> "Cached objectives. Personal achievement progress is unavailable."
+        cached && state.catalogue.fetchedAt != null -> "Achievements cached for offline browsing."
+        !cached && !state.loading -> "Achievement data is unavailable."
+        else -> null
+    }
+    if (message != null) {
+        Column(Modifier.padding(vertical = 16.dp)) {
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.hydration is AchievementHydrationState.Unavailable ||
+                (!cached && !state.catalogue.confirmedEmpty && state.hydration !is AchievementHydrationState.Loading)) {
+                TextButton(onClick = onRetry) { Text("Retry achievements") }
+            }
+        }
+    }
 }
 
 /**
@@ -1156,6 +1212,7 @@ private fun AchievementDescription(achievement: AchievementUi) {
 internal fun achievementStatusLabel(achievement: AchievementUi): String {
     val rate = achievement.unlockPercent?.let { "Current: ${formatPercent(it)}%" }
     val earned = achievement.earnedPercent?.let { "Earned rarity: ${formatPercent(it)}%" }
+    if (!achievement.progressKnown) return listOfNotNull("Progress unavailable", rate).joinToString(" · ")
     if (!achievement.unlocked) {
         return listOfNotNull("Locked", rate).joinToString(" · ")
     }

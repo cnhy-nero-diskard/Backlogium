@@ -55,6 +55,7 @@ class LibraryDiscoveryTest {
                 actions = LibraryContentActions(
                     onOpenGameDetail = { openedDetail = it }, onOpenStore = { openedStore = it },
                     onSetWishlistExpanded = { expansions++ }, onToggleSelection = { selectionCalls++ },
+                    onClearFilters = { library.value = library.value.copy(filters = LibraryFilters()) },
                     onSetFocusSort = { library.value = library.value.copy(focusSort = it, focusSortDirection = it.defaultDirection); resort() },
                     onSetLibrarySort = { library.value = library.value.copy(librarySort = it, librarySortDirection = it.defaultDirection); resort() },
                     onSetFocusSortDirection = { library.value = library.value.copy(focusSortDirection = it); resort() },
@@ -124,6 +125,44 @@ class LibraryDiscoveryTest {
         }
     }
 
+    @Test fun retainedWishlistAnchorWaitsForCachedWishlistBeforeCapturingFallback() {
+        val retainedVisit = LibraryVisitState()
+        val retainedAnchor = LibraryScrollAnchor(gameId = 3, index = 2)
+        retainedVisit.captureScroll(retainedAnchor, retainedVisit.generation.value)
+        library.value = LibraryUiState(
+            loading = false,
+            configured = true,
+            libraryEmpty = false,
+            filters = LibraryFilters("Portal"),
+            backlog = listOf(BacklogGameUi(1, "Portal owned", "", playtimeForever = 1)),
+        )
+        wishlist.value = WishlistUiState()
+
+        compose.setContent {
+            BacklogiumTheme {
+                LibraryContent(
+                    state = library.value,
+                    wishlistState = wishlist.value,
+                    visit = retainedVisit,
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(retainedAnchor, retainedVisit.scrollAnchor) }
+
+        compose.runOnIdle {
+            wishlist.value = WishlistUiState(
+                configured = true,
+                availability = WishlistAvailability.AVAILABLE,
+                entries = listOf(entry(2, "Portal early"), entry(3, "Portal wanted")),
+            )
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Portal wanted").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(3L, retainedVisit.scrollAnchor?.gameId) }
+    }
+
     @Test fun ownedOnlyFiltersExcludeWishlistResultsInAllDensities() {
         showLibrary()
         for (density in GameListDensity.entries) {
@@ -136,6 +175,37 @@ class LibraryDiscoveryTest {
                 compose.onNodeWithContentDescription("Open Portal wanted on Steam").assertDoesNotExist()
             }
         }
+    }
+
+    @Test fun retainedOwnedFilterRemainsClearableWhenLibraryBecomesEmpty() {
+        compose.runOnIdle {
+            library.value = LibraryUiState(
+                loading = false,
+                libraryEmpty = false,
+                filters = LibraryFilters(familySharedOnly = true),
+                backlog = listOf(
+                    BacklogGameUi(1, "Portal shared", "", playtimeForever = 1, isFamilyShared = true),
+                ),
+            )
+        }
+        showLibrary()
+        compose.onNodeWithText("Portal shared").assertIsDisplayed()
+
+        compose.runOnIdle {
+            library.value = library.value.copy(
+                backlog = emptyList(),
+                allGames = emptyList(),
+                libraryEmpty = true,
+            )
+        }
+
+        compose.onNodeWithText("Search games or genres").assertIsDisplayed()
+        compose.onNodeWithText("Family Shared").assertIsDisplayed()
+        compose.onNodeWithText("Wishlist").assertDoesNotExist()
+        compose.onNodeWithText("Clear all").performClick()
+
+        compose.runOnIdle { assertEquals(LibraryFilters(), library.value.filters) }
+        compose.onNodeWithText("Wishlist").assertIsDisplayed()
     }
 
     @Test fun addedRecentlyControlsExplainObservationAndKeepSectionDirectionsIndependent() {

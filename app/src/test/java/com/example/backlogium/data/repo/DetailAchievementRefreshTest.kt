@@ -4,11 +4,11 @@ import com.example.backlogium.test.SettingsDataStoreRule
 import org.junit.Rule
 
 import androidx.room.Room
+import com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
-import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HiddenGame
@@ -38,6 +38,8 @@ class DetailAchievementRefreshTest {
     private lateinit var marker: AccountChangeMarkerStore
     private lateinit var action: RefreshGameAchievementsUseCase
     private lateinit var repository: AchievementRepository
+    private lateinit var recovery: AchievementRecomputeRecovery
+    private var interruptRecompute = false
     private lateinit var api: Api
     private var configured: CredentialsState.Configured? = CredentialsState.Configured("fixture", "a")
     private val time = Clock()
@@ -59,13 +61,22 @@ class DetailAchievementRefreshTest {
         }
         repository = AchievementRepository(api, db.achievementDao(), syncDao, db.gameDao(),
             HiddenGamesRepository(db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time), time,
-            RoomDatabaseTransactionScope(db))
+            transaction = RoomDatabaseTransactionScope(db))
         val updater = GamificationUpdater(db.sessionDao(), db.dailyProgressDao(), db.playerProfileDao(),
             db.hltbDataDao(), db.achievementDao(), db.gameDao(), db.hiddenGameDao())
-        action = RefreshGameAchievementsUseCase(repository, db, object : CredentialsProvider {
+        val credentials = object : CredentialsProvider {
             override suspend fun currentCredentials() = configured
-        }, marker, SteamSyncCoordinator(), DerivedStateWriteCoordinator(), updater,
-            DataStoreSettingsRepository(settingsFixture.create()), time)
+        }
+        val sync = SteamSyncCoordinator()
+        val dataStoreSettings = DataStoreSettingsRepository(settingsFixture.create())
+        val settings = object : SettingsRepository by dataStoreSettings {
+            override suspend fun readRuleConfigWithVersion(): VersionedRuleConfig {
+                check(!interruptRecompute) { "Test interruption after raw commit" }
+                return dataStoreSettings.readRuleConfigWithVersion()
+            }
+        }
+        recovery = AchievementRecomputeRecovery(db, settings, updater, time, sync, DerivedStateWriteCoordinator(), marker)
+        action = RefreshGameAchievementsUseCase(repository, db, credentials, marker, sync, recovery, time)
     }
 
     @After fun close() { db.close() }
@@ -75,6 +86,9 @@ class DetailAchievementRefreshTest {
         assertEquals(AchievementRefreshOutcome.UPDATED, action(10))
         val xp = db.playerProfileDao().get()!!.totalXp
         assertTrue(xp > 0)
+        val work = db.achievementWatchDao().getAll("a").single()
+        assertFalse(work.recomputeNeeded)
+        assertNull(work.payload)
         time.now++
         assertEquals(AchievementRefreshOutcome.NO_CHANGE, action(10))
         time.now += AchievementRepository.SCHEMA_WINDOW_MILLIS + 1
@@ -87,6 +101,19 @@ class DetailAchievementRefreshTest {
         assertEquals(0.8, db.achievementDao().getForGame(10).single().snapshotPercent!!, 0.0)
         assertEquals(xp, db.playerProfileDao().get()!!.totalXp)
         assertTrue(db.sessionDao().getAll().isEmpty())
+    }
+
+    @Test fun interruptedRecomputeResumesWithoutWatchDelivery() = runBlocking {
+        interruptRecompute = true
+        assertEquals(AchievementRefreshOutcome.FAILED, action(10))
+        assertTrue(db.achievementDao().getForGame(10).single().unlocked)
+        assertEquals(0L, db.playerProfileDao().get()!!.totalXp)
+        assertNull(db.achievementWatchDao().needingRecompute().single().payload)
+
+        interruptRecompute = false
+        recovery.resume()
+        assertTrue(db.playerProfileDao().get()!!.totalXp > 0)
+        assertTrue(db.achievementWatchDao().needingRecompute().isEmpty())
     }
 
     @Test fun missingCredentialsAndPendingResetNeverReachNetwork() = runBlocking {

@@ -1249,17 +1249,27 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
 
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(store.filter { it.startAt >= cutoff && !it.open })
+    override fun observeAllOpenSessions(): Flow<List<Session>> = flowOf(store.filter { it.open })
     override suspend fun getAll(): List<Session> = store.sortedBy { it.startAt }
+    override suspend fun sessionsByIds(sessionIds: List<Long>): List<Session> =
+        store.filter { it.id in sessionIds.toSet() }
+    override suspend fun sessionsBetweenSnapshot(startInclusive: Long, endExclusive: Long): List<Session> =
+        store.filter { it.startAt >= startInclusive && it.startAt < endExclusive }
+    override suspend fun closedSessionsSinceSnapshot(cutoff: Long): List<Session> =
+        store.filter { it.startAt >= cutoff && !it.open }
+    override suspend fun allOpenSessionsSnapshot(): List<Session> = store.filter { it.open }
     override suspend fun deleteAll() = store.clear()
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
+    override suspend fun earliestVisibleSessionStartSnapshot(): Long? = store.minOfOrNull { it.startAt }
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )
     override suspend fun latestSessionInstantByGame(): List<GameSessionInstant> =
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.maxOf { it.endAt ?: it.startAt }) }
-    override fun observeLatestMeaningfulSessionInstantByGame(): Flow<List<GameSessionInstant>> = flowOf(
-        store.filter { it.minutes > 0 }.groupBy { it.appId }.map { (appId, sessions) ->
+    override fun observeLatestMeaningfulSessionInstantByGame(fromInclusive: Long, throughInclusive: Long): Flow<List<GameSessionInstant>> = flowOf(
+        store.filter { it.minutes > 0 && (it.endAt ?: it.startAt) in fromInclusive..throughInclusive }
+            .groupBy { it.appId }.map { (appId, sessions) ->
             GameSessionInstant(appId, sessions.maxOf { it.endAt ?: it.startAt })
         },
     )
@@ -1291,6 +1301,50 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     )
 
     override fun observeSessionCountsByGame(): Flow<List<GameSessionCounts>> = flowOf(emptyList())
+
+    override fun observeActiveRecoveryAllocations(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryAllocationsSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> =
+        emptyList()
+    override fun observeActiveRecoveryTimedPlacements(): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryTimedPlacementsSnapshot(): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> =
+        emptyList()
+    override fun observeRecoveryProjectionInvalidation(): Flow<Long> = flowOf(0L)
+    override suspend fun hiddenAppIdsSnapshot(): List<Long> = emptyList()
+    override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryContributions(): Flow<List<com.example.backlogium.data.local.entity.PlaytimeContribution>> =
+        flowOf(emptyList())
+    override fun observeDatedAllocationsBetween(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun datedAllocationsBetweenSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> = emptyList()
+    override fun observeTimedPlacementsByDate(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun timedPlacementsByDateSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>> =
+        flowOf(emptyList())
+    override suspend fun hostSessionsForDatesSnapshot(fromDate: String, toDateExclusive: String): List<Session> =
+        emptyList()
+    override fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeTimedPlacementsForSessionsSnapshot(
+        sessionIds: List<Long>,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeEarliestDatedAllocationDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestDatedAllocationDateSnapshot(): String? = null
+    override fun observeEarliestTimedShareDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestTimedShareDateSnapshot(): String? = null
+    override suspend fun activeRecoveryRecipesSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe> =
+        emptyList()
+    override suspend fun activeRecoveryContributionsSnapshot(): List<com.example.backlogium.data.local.entity.PlaytimeContribution> =
+        emptyList()
 }
 
 private class FakeDailyProgressDao(private val store: MutableMap<String, DailyProgress>) : DailyProgressDao {
@@ -1315,6 +1369,14 @@ private class FakeDailyProgressDao(private val store: MutableMap<String, DailyPr
         store[date] = day.copy(
             minutesPlayed = minutesPlayed,
             goalMinutesPlayed = goalMinutesPlayed,
+        )
+    }
+
+    override suspend fun applyMinutesDelta(date: String, minutesDelta: Int, goalDelta: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(
+            minutesPlayed = day.minutesPlayed + minutesDelta,
+            goalMinutesPlayed = day.goalMinutesPlayed + goalDelta,
         )
     }
 
@@ -1352,6 +1414,17 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
     override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun getMatchCenter(): List<HltbData> = emptyList()
     override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+    override suspend fun resolveMatchIfUnchanged(
+        appId: Long,
+        expectedMatchStatus: HltbMatchStatus,
+        expectedFetchedAt: Long,
+        expectedCandidatesJson: String?,
+        hltbId: Long,
+        mainStoryMinutes: Int?,
+        mainExtraMinutes: Int?,
+        completionistMinutes: Int?,
+        allStylesMinutes: Int?,
+    ): Int = 0
 }
 
 private class FakeAchievementDao(private val store: MutableList<Achievement>) : AchievementDao {

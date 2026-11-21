@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Artwork preferences retain explicit selection and reset
-Backups and automatic snapshots SHALL carry a tracked game's selected supported Steam artwork variant or an explicit reset, independently of its favorite value. An older backup or favorite-only record without an artwork preference SHALL leave the current selection unchanged. An explicit selection/reset SHALL replace only that field for the represented app ID. No arbitrary URLs, image files, credentials, or inferred favorite changes SHALL be added by this preference. Imports SHALL validate all preference values before the existing all-or-nothing merge and retain warned cross-account behavior.
+Backups and snapshots SHALL carry a supported Steam cover variant or explicit reset independently of the favorite value. Omitted artwork SHALL preserve local selection while an explicit choice SHALL replace it. Imports SHALL validate before the atomic, warned merge. Artwork records SHALL contain no arbitrary URLs, image files, credentials, or implied favorite change.
 
 #### Scenario: Chosen variant round-trips
 - **WHEN** a backup containing a selected variant is restored
 - **THEN** the same variant remains preferred and the fallback chain handles its current availability
 
 #### Scenario: Reset round-trips
-- **WHEN** an explicit reset is imported for a game with a local override
-- **THEN** the override is cleared without changing its favorite preference
+- **WHEN** a backup with an explicit artwork reset and the same favorite value as the local game is imported
+- **THEN** the override is cleared and the favorite value is preserved
 
 #### Scenario: Favorite-only backup is imported
 - **WHEN** a supported older record contains favorite data but no artwork field

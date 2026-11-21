@@ -1440,6 +1440,8 @@ class CloudPresenceRepositoryTest {
         val repository = repository(api, store, records, steamId = ACCOUNT)
 
         assertEquals(CloudReadResult.Unconfigured, repository.read())
+        assertEquals(CloudReadResult.Unconfigured, repository.readRemainingHistory(CloudReadTrigger.SYNC))
+        assertEquals(CloudReadResult.Unconfigured, repository.readRemainingHistory(CloudReadTrigger.POST_PLAY))
         assertTrue(api.requests.isEmpty())
         assertTrue(records.records.value.isEmpty())
     }

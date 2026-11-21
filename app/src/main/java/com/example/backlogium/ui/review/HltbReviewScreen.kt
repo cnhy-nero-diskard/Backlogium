@@ -36,9 +36,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.R
 import com.example.backlogium.data.hltb.HltbCandidate
+import com.example.backlogium.data.repo.HltbMatchRevision
+import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.ui.components.HltbCandidateCard
 import com.example.backlogium.ui.components.HltbLengthsRow
 
@@ -72,13 +73,13 @@ fun HltbReviewScreen(
             onNext = viewModel::selectNext,
             onSkip = viewModel::skip,
             onReviewSkipped = viewModel::reviewSkipped,
-            onResolve = { appId, candidate -> viewModel.resolve(appId, candidate) },
+            onResolve = { appId, candidate, revision -> viewModel.resolve(appId, candidate, revision) },
             onBroaderSearch = viewModel::startBroaderSearch,
             onClearBroader = viewModel::clearBroaderState,
-            onManualInput = viewModel::updateManualLinkInput,
-            onPreview = viewModel::previewManualLink,
+            onManualInput = { appId, input, revision -> viewModel.updateManualLinkInput(appId, input, revision) },
+            onPreview = { appId, revision -> viewModel.previewManualLink(appId, revision) },
             onDismissPreview = viewModel::dismissManualLinkPreview,
-            onConfirm = { viewModel.confirmManualLink(it) },
+            onConfirm = { appId, candidate, revision -> viewModel.confirmManualLink(appId, candidate, revision) },
             onClearManual = viewModel::clearManualLink,
         ),
     )
@@ -89,13 +90,13 @@ internal data class HltbReviewActions(
     val onNext: (Long) -> Unit = {},
     val onSkip: (Long) -> Unit = {},
     val onReviewSkipped: () -> Unit = {},
-    val onResolve: (Long, HltbCandidate) -> Unit = { _, _ -> },
+    val onResolve: (Long, HltbCandidate, HltbMatchRevision) -> Unit = { _, _, _ -> },
     val onBroaderSearch: (Long, String) -> Unit = { _, _ -> },
     val onClearBroader: (Long) -> Unit = {},
-    val onManualInput: (Long, String) -> Unit = { _, _ -> },
-    val onPreview: (Long) -> Unit = {},
+    val onManualInput: (Long, String, HltbMatchRevision) -> Unit = { _, _, _ -> },
+    val onPreview: (Long, HltbMatchRevision) -> Unit = { _, _ -> },
     val onDismissPreview: (Long) -> Unit = {},
-    val onConfirm: (Long) -> Unit = {},
+    val onConfirm: (Long, HltbCandidate, HltbMatchRevision) -> Unit = { _, _, _ -> },
     val onClearManual: (Long) -> Unit = {},
 )
 
@@ -143,7 +144,8 @@ internal fun HltbReviewContent(
     }
 
     val broaderState = state.broaderStates[selected.appId] ?: BroaderSearchUiState()
-    val manualState = state.manualLinkStates[selected.appId] ?: ManualLinkUiState()
+    val manualState = state.manualLinkStates[selected.appId]
+        ?.takeIf { it.revision == selected.revision } ?: ManualLinkUiState()
 
     Column(
         modifier = Modifier
@@ -203,7 +205,7 @@ internal fun HltbReviewContent(
                 onSelect = { candidate ->
                     // Completion/navigation is queue-driven (see the scoped check above): once
                     // the persist lands, the game leaves the queue and the route finishes.
-                    actions.onResolve(selected.appId, candidate)
+                    actions.onResolve(selected.appId, candidate, selected.revision)
                 },
             )
             if (selected.candidates.any { it.source == com.example.backlogium.data.hltb.HltbCandidateSource.BROADER_SEARCH }) {
@@ -226,11 +228,13 @@ internal fun HltbReviewContent(
         ManualHltbLinkSection(
             gameName = selected.name,
             state = manualState,
-            onInputChange = { actions.onManualInput(selected.appId, it) },
-            onPreview = { actions.onPreview(selected.appId) },
+            onInputChange = { actions.onManualInput(selected.appId, it, selected.revision) },
+            onPreview = { actions.onPreview(selected.appId, selected.revision) },
             onDismissPreview = { actions.onDismissPreview(selected.appId) },
             onConfirm = {
-                actions.onConfirm(selected.appId)
+                manualState.preview?.let { preview ->
+                    actions.onConfirm(selected.appId, preview, selected.revision)
+                }
             },
             onClear = { actions.onClearManual(selected.appId) },
         )

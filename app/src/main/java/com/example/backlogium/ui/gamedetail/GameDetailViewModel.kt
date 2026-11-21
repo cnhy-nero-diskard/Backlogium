@@ -13,6 +13,8 @@ import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.data.repo.SessionRepository
 import com.example.backlogium.data.repo.SettingsRepository
+import com.example.backlogium.domain.AchievementCatalogueState
+import com.example.backlogium.domain.AchievementHydrationState
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.GameRecencyState
 import com.example.backlogium.domain.GameVisibilityUseCase
@@ -71,6 +73,7 @@ data class AchievementUi(
     val hidden: Boolean,
     /** Frozen first-unlock observation; only this value determines earned tier and XP. */
     val earnedPercent: Double? = null,
+    val progressKnown: Boolean = true,
 ) {
     /**
      * Steam withholds a hidden achievement's description until it is unlocked, so a locked hidden
@@ -191,10 +194,15 @@ data class GameDetailUiState(
     val filter: AchievementFilter = AchievementFilter.ALL,
     val isRefreshingPlayerCount: Boolean = false,
     val achievementRefresh: AchievementRefreshActionState = AchievementRefreshActionState(),
+    val catalogue: AchievementCatalogueState = AchievementCatalogueState(),
+    val hydration: AchievementHydrationState = AchievementHydrationState.Idle,
+    val hasAchievementRows: Boolean = achievements.isNotEmpty() || summary.achievementsTotal > 0,
+    val hasUnknownAchievementProgress: Boolean = achievements.any { !it.progressKnown },
 ) {
     /** True once every known achievement for this game is unlocked (100% completion). */
     val allUnlocked: Boolean
-        get() = summary.achievementsTotal > 0 && summary.achievementsUnlocked == summary.achievementsTotal
+        get() = !hasUnknownAchievementProgress && summary.achievementsTotal > 0 &&
+            summary.achievementsUnlocked == summary.achievementsTotal
 }
 
 /**
@@ -206,7 +214,7 @@ data class GameDetailUiState(
 @HiltViewModel
 class GameDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    achievementRepository: AchievementRepository,
+    private val achievementRepository: AchievementRepository,
     private val gameRepository: GameRepository,
     private val sharedGames: FamilySharedGameRepository,
     private val setSharedGamePlaytime: SetSharedGamePlaytimeUseCase,
@@ -237,6 +245,10 @@ class GameDetailViewModel @Inject constructor(
     private val activePlayers = MutableStateFlow<Int?>(null)
     private val refreshingPlayerCount = MutableStateFlow(false)
     private var activePlayersPollingJob: Job? = null
+    private var hydrationJob: Job? = null
+    private val hydration = MutableStateFlow<AchievementHydrationState>(AchievementHydrationState.Idle)
+    private val catalogue = appIdState.filterNotNull().distinctUntilChanged()
+        .flatMapLatest(achievementRepository::observeCatalogue)
     private val _removedSharedGameEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val removedSharedGameEvents: SharedFlow<Unit> = _removedSharedGameEvents.asSharedFlow()
 
@@ -313,6 +325,8 @@ class GameDetailViewModel @Inject constructor(
             summary = content.toSummary(rows, activePlayers),
             rarityStanding = content.toRarityStanding(),
             achievements = rows.visibleThrough(lens),
+            hasAchievementRows = rows.isNotEmpty(),
+            hasUnknownAchievementProgress = rows.any { !it.progressKnown },
             sort = lens.sort,
             filter = lens.filter,
             isRefreshingPlayerCount = isRefreshingPlayerCount,
@@ -320,7 +334,9 @@ class GameDetailViewModel @Inject constructor(
             hideEffect = actions.first.second,
             achievementRefresh = actions.second,
         )
-    }.stateIn(
+    }.combine(catalogue) { state, catalogue -> state.copy(catalogue = catalogue) }
+        .combine(hydration) { state, hydration -> state.copy(hydration = hydration) }
+        .stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = GameDetailUiState(),
@@ -330,8 +346,29 @@ class GameDetailViewModel @Inject constructor(
     internal fun setAppId(value: Long) {
         if (appIdState.value == value) return
         stopPolling()
+        stopBrowsing()
         appIdState.value = value
         activePlayers.value = null
+    }
+
+    /** A composition owns one subscription, including retries; opening never sweeps the library. */
+    internal fun startBrowsing() {
+        if (hydrationJob?.isActive == true) return
+        val id = appIdState.value ?: return
+        hydrationJob = viewModelScope.launch {
+            achievementRepository.hydrateDetail(id).collect { hydration.value = it }
+        }
+    }
+
+    internal fun stopBrowsing() {
+        hydrationJob?.cancel()
+        hydrationJob = null
+        hydration.value = AchievementHydrationState.Idle
+    }
+
+    fun retryAchievements() {
+        stopBrowsing()
+        startBrowsing()
     }
 
     /** Start live polling while this screen presentation is composed. */
@@ -390,6 +427,7 @@ class GameDetailViewModel @Inject constructor(
 
     internal fun endPresentation() {
         stopPolling()
+        stopBrowsing()
         achievementAction.leave()
     }
 
@@ -534,7 +572,7 @@ internal data class Content(
  * [GameAchievement.rarityPercent], which is intentionally frozen for XP/tier stability.
  */
 internal fun Content.toRarityStanding(): RarityStanding.Result? {
-    if (achievements.isEmpty()) return null
+    if (achievements.isEmpty() || achievements.any { !it.progressKnown }) return null
     return RarityStanding.derive(
         RarityStanding.Input(
             totalAchievements = achievements.size,
@@ -558,8 +596,8 @@ internal fun Content.toSummary(rows: List<AchievementUi>, activePlayers: Int?): 
         mainExtraMinutes = game.mainExtraMinutes,
         completionistMinutes = game.completionistMinutes,
         allStylesMinutes = game.allStylesMinutes,
-        achievementsUnlocked = rows.count { it.unlocked },
-        achievementsTotal = rows.size,
+        achievementsUnlocked = if (rows.all { it.progressKnown }) rows.count { it.unlocked } else 0,
+        achievementsTotal = if (rows.all { it.progressKnown }) rows.size else 0,
         // The Library's own derivation, called rather than re-written, so the two agree by
         // construction: engine inputs (backfill + tracked minutes), never `playtimeForever`.
         xpContributed = LibraryXp.contribution(
@@ -622,6 +660,7 @@ internal fun GameAchievement.toUi(config: RuleConfig): AchievementUi {
         unlockedAt = unlockedAt,
         description = description,
         hidden = hidden,
+        progressKnown = progressKnown,
     )
 }
 

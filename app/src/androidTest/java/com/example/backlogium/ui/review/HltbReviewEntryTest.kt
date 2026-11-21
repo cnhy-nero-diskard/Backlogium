@@ -132,7 +132,7 @@ class HltbReviewEntryTest {
                         actions = HltbReviewActions(
                             onSkip = routeHolder.session::skip, onReviewSkipped = routeHolder.session::reviewSkipped,
                             onBroaderSearch = { appId, _ -> queue.value = queue.value.map { if (it.appId == appId) game(appId, true) else it } },
-                            onResolve = { appId, _ -> queue.value = queue.value.filterNot { it.appId == appId } },
+                            onResolve = { appId, _, _ -> queue.value = queue.value.filterNot { it.appId == appId } },
                         ),
                     )
                 }

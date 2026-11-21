@@ -1,9 +1,9 @@
 # Backlogium architecture map
 
-Status snapshot: 2026-08-21
+Status snapshot: 2026-11-12 (`origin/master` at `ffc28ff2`)
 
 This is a source-oriented map of the current repository. It describes the Android
-client and the independent cloud presence writer as they exist on the current
+client and the independent cloud presence writer and reader as they exist on the current
 branch; it is not a proposed replacement architecture.
 
 ```text
@@ -74,12 +74,13 @@ collection-entity boundary breach documented in the root README.
 ```text
 +------------------------------ Android local state ----------------------+
 |                                                                         |
-|  Room database (schema version 41)                                     |
+|  Room database (schema version 43)                                     |
 |    games                 sessions              daily_progress            |
 |    player_profile       hltb_data              achievements              |
 |    game_achievement_sync                         collections             |
 |    collection_members   game_genre_cache                               |
 |    cloud_historical_operations / intervals / boundaries / journals    |
+|    recovery observations / contributions / placements                  |
 |    sync_runs            request_breakdowns       presence_decisions     |
 |                                                                         |
 |  DataStore / Keystore                                                    |
@@ -112,7 +113,19 @@ SteamSyncWorker / ViewModels / BackupRepository
 
 `BackupRepository` serializes a local JSON backup, merges it through
 `BackupMergeEngine`, and uses `SnapshotStore` for optional rolling automatic
-snapshots. A restore also queues a deferred achievement reconciliation pass.
+snapshots. Backup v3 preserves recovery observations, funded contributions,
+placements, and provenance; v1/v2 imports remain supported. A restore also queues
+a deferred achievement reconciliation pass.
+
+Missed-playtime recovery retains durable per-game Steam observation baselines.
+New cumulative minutes fund contributions exactly once; validated local or cloud
+timing evidence places only a bounded share. Residual minutes become disclosed
+unknown-time or multi-day estimated activity rather than fabricated sessions.
+Later reconciliation atomically replaces eligible placements while conserving
+quantity. Canonical projections supply History, Analytics, and pace calculations;
+corrective finalization must preserve earned-event eligibility. See the
+[recovery spec](../openspec/specs/playtime-recovery/spec.md) and
+[hardening audit archive](../openspec/changes/archive/2026-10-22-harden-playtime-recovery-post-merge/).
 
 ## External integrations
 
@@ -165,7 +178,7 @@ connected network                  charging + unmetered network
 
 Settings -> expedited "Sync now"
 Settings -> forced "Full achievement refresh"
-Library  -> HLTB refresh / cancel / candidate selection
+Library  -> explicit per-game HLTB lookup / Match Center candidate selection
 App foreground -> live status check -> PresenceService (60s cadence)
 ```
 
@@ -178,7 +191,7 @@ rarity-standing rendering.
 
 ## Sync write integrity
 
-`SteamSyncWorker` is restructured into three phases so that no partial write can
+`SteamSyncWorker` uses four phases so that no partial write can
 land and no two polls can double-count the same increase:
 
 ```text

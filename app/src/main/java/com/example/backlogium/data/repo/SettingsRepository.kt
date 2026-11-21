@@ -154,6 +154,11 @@ interface SettingsRepository : SessionEndOutbox {
     suspend fun setNotificationPermissionRequested()
 
     /** Explicit opt-in to keep the foreground presence service polling before a game is detected. */
+    val achievementWatch: Flow<com.example.backlogium.domain.AchievementWatchPreferences>
+        get() = flowOf(com.example.backlogium.domain.AchievementWatchPreferences())
+
+    suspend fun setAchievementWatch(value: com.example.backlogium.domain.AchievementWatchPreferences) = Unit
+
     val liveMonitorEnabled: Flow<Boolean>
 
     suspend fun setLiveMonitorEnabled(enabled: Boolean)
@@ -440,6 +445,11 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setNotificationPermissionRequested() =
         settings.setNotificationPermissionRequested()
+
+    override val achievementWatch = settings.achievementWatchFlow
+
+    override suspend fun setAchievementWatch(value: com.example.backlogium.domain.AchievementWatchPreferences) =
+        settings.setAchievementWatch(value)
 
     override val liveMonitorEnabled: Flow<Boolean> = settings.liveMonitorEnabledFlow
 

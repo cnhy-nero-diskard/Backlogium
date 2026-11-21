@@ -6,7 +6,9 @@ Defines the Android app's UI behavior: the app shell and navigation, the Steam p
 header, the Home screen,
 visual theming, typography, iconography, game art states, celebratory animations, the
 Library screen, the History screen, and sync feedback in the app shell.
+
 ## Requirements
+
 ### Requirement: App shell and navigation
 The system SHALL present a Compose UI with navigation between Home, Library, History, Analytics,
 and Settings screens, and all screens SHALL render from locally stored state so the app
@@ -1143,8 +1145,9 @@ Matches SHALL be presented in order of how closely they matched the query, stron
 name match, then a name beginning with the query, then a name containing a word beginning with the
 query, then a name containing the query elsewhere, then a match on a genre label alone. Ranking
 SHALL ignore case. The search SHALL also offer a genre filter that narrows results to games carrying
-any selected genre. That genre selection SHALL apply to the current visit only and SHALL NOT be
-remembered between visits, unlike each list's chosen sort order.
+any selected genre. The text query and genre selection SHALL remain active for the current Library
+visit as defined by Library visit context retention, but SHALL NOT be remembered after that visit
+expires, unlike each list's chosen sort order.
 
 The search field SHALL keep a stable width and a legible input while it is focused and while text is
 entered, so neither focusing the field nor typing into it changes the size of the field or of the
@@ -1185,8 +1188,12 @@ text within it.
 - **WHEN** the user selects one or more genres in the Library search
 - **THEN** only games carrying at least one selected genre are shown, ranked as above
 
+#### Scenario: Genre filter retained during a visit
+- **WHEN** the user selects genres, leaves Library for another tab, and returns in less than five minutes
+- **THEN** the selected genres remain active with the other Library discovery filters
+
 #### Scenario: Genre filter not remembered between visits
-- **WHEN** the user selects genres in the Library search, leaves the Library, and returns
+- **WHEN** the user selects genres, leaves Library for another tab, and returns five minutes or more later
 - **THEN** no genre filter is active and the full Library is shown, while each list's chosen sort
   order is still remembered
 
@@ -1701,7 +1708,7 @@ games remain discoverable in the destination without inflating that badge.
 ### Requirement: Game detail screen with achievements
 The system SHALL provide a game detail screen, reachable by selecting a game from the
 Library or by selecting a game tile in a collection overview, that lists that game's
-achievements with each achievement's unlock state, rarity tier, and the XP it contributes,
+achievements with each achievement's known unlock state, available rarity information, and the XP it contributes,
 using its display name and icon when available. The screen SHALL also show the game's current
 Steam concurrent-player count when available, and SHALL show no such line when it is not. The
 screen SHALL present the game's summary above the achievement list, so a game with no
@@ -1727,8 +1734,7 @@ SHALL present the same content regardless of which entry point opened it.
 
 #### Scenario: Game without achievement data
 - **WHEN** the user opens the detail for a game that has no stored achievements
-- **THEN** the game's summary is still shown, and the achievement area indicates there are no
-  achievements to show rather than appearing broken
+- **THEN** the game's summary is still shown while targeted catalogue hydration proceeds when online; the achievement area distinguishes loading, unavailable data with retry, and confirmed no achievements
 
 #### Scenario: Current player count shown
 - **WHEN** the detail screen opens and Steam reports a current player count for the game
@@ -2095,7 +2101,7 @@ unlocked-of-total count is shown in the least dense grid, the same distinction S
 
 ### Requirement: History screen
 The system SHALL provide a History screen presenting play history grouped by day, where each day
-expands into the games played that day and each game expands into its individual sessions. Each day
+expands into the games played that day and each game expands into its timestamped sessions and dated unknown-time allocations. Each day
 SHALL show its total played time, its goal-game time, and whether that day's quest was met. A
 session's start time SHALL be presented as approximate, and its tracked playtime SHALL be presented
 distinctly from that start time — never as a start–end range, since subtracting the two into a
@@ -2115,8 +2121,8 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Expanding a game within a day
 - **WHEN** the user expands a game within a day
-- **THEN** that game's individual sessions for that day are listed, each with its approximate start
-  time and its tracked playtime
+- **THEN** timestamped sessions show approximate start and tracked minutes, and unknown-time allocations show minutes with exact session times unavailable
+- **AND** allocations do not show fabricated clock times or in-progress session status
 
 #### Scenario: Today expanded by default
 - **WHEN** the History screen is opened
@@ -2132,7 +2138,7 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 
 #### Scenario: Day total matches its contents
 - **WHEN** a day is expanded
-- **THEN** the total shown on that day's header equals the sum of the sessions listed beneath it
+- **THEN** the total shown on that day's header equals the sum of the credited activity listed beneath it
 
 #### Scenario: Session spanning midnight
 - **WHEN** a session began on one day and ended on the next
@@ -2166,8 +2172,9 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 - **THEN** its header shows no achievement thumbnail row
 
 #### Scenario: Day with progress but no sessions
-- **WHEN** a day has recorded progress but no individual sessions
-- **THEN** its header is shown with its recorded state and offers nothing to expand
+- **WHEN** a day has recorded progress but no timestamped sessions
+- **THEN** the header is shown with its recorded state
+- **AND** it expands into known game allocations when those exist, otherwise offers no activity expansion
 
 #### Scenario: Quest state remains authoritative
 - **WHEN** a day's presented total differs from the stored per-day total that determined its quest
@@ -2179,7 +2186,7 @@ unlocked that day, capped at 5 with any excess collapsed into a count badge.
 - **THEN** the session is still listed under a fallback label rather than being omitted
 
 #### Scenario: No history yet
-- **WHEN** no sessions and no daily progress exist
+- **WHEN** no sessions, recovery activity or daily progress exist
 - **THEN** an empty state explains that history appears after playing and syncing
 
 ### Requirement: Circular game thumbnails in compact rows
@@ -2538,7 +2545,7 @@ a streak.
 
 ### Requirement: Surfaces agree on a session's date
 Every surface that presents play activity by date — history, daily progress, quest status,
-streaks, and analytics — SHALL use the same attribution rule, so that the same session is
+streaks, and analytics — SHALL use the same attribution rule for timestamped sessions and explicit frozen dates for unknown-time allocations, so that the same session is
 never shown under one date on one surface and counted toward another date elsewhere.
 
 #### Scenario: Midnight-crossing session in history and progress
@@ -2553,6 +2560,10 @@ never shown under one date on one surface and counted toward another date elsewh
 #### Scenario: Analytics agree
 - **WHEN** per-day totals are presented in analytics
 - **THEN** they reconcile with the dates history shows for the same sessions
+
+#### Scenario: Unknown-time activity agrees across surfaces
+- **WHEN** a recovery allocation contributes to a date's quest
+- **THEN** History, Analytics, game breakdowns and daily totals show those same minutes on that date
 
 ### Requirement: Committed actions are felt as well as seen
 Surfaces that commit a consequence SHALL accompany the outcome with the corresponding haptic
@@ -2759,22 +2770,24 @@ the system SHALL exclude it rather than counting it as zero.
 
 ### Requirement: Achievement surfaces follow what Steam reports
 Where Steam reports achievement progress for a family-shared game, the existing achievement,
-rarity, and standing surfaces SHALL present it as for any other game. Where Steam reports no
-achievement data, the game SHALL be presented without an achievement surface rather than with an
-empty one.
+rarity, and standing surfaces SHALL present it as for any other game. Where neither a catalogue nor player achievement data is available, the game SHALL be presented without an empty or zeroed progress surface. A positive catalogue SHALL remain browsable when personal progress is unavailable, without inventing completion, rarity standing, or earned XP.
 
 #### Scenario: Achievements available for a shared game
 - **WHEN** Steam reports achievement progress for a family-shared game
 - **THEN** achievements, rarity tiers, and rarity standing are presented as for an owned game
 
 #### Scenario: No achievement data
-- **WHEN** Steam reports no achievement data for a family-shared game
+- **WHEN** neither catalogue nor player achievement data is available for a family-shared game
 - **THEN** no achievement surface is shown for it, and no empty or zeroed surface appears in its
   place
 
 #### Scenario: Rarity XP unaffected
 - **WHEN** achievements are reported for a family-shared game and unlocked
 - **THEN** they contribute rarity-tiered XP on the same terms as an owned game's
+
+#### Scenario: Shared catalogue without personal progress
+- **WHEN** Steam supplies objectives for a shared game but no usable player progress
+- **THEN** game detail shows the catalogue with personal progress unavailable and no fabricated completion or XP
 
 ### Requirement: Derived collections in the Collections screen
 The Collections screen SHALL present derived collections as a group distinct from custom
@@ -3195,7 +3208,7 @@ History SHALL provide concise contextual help explaining that session starts are
 - **THEN** the app explains the poll-quantized start time and tracked-minute semantics without implying data loss or an exact start-end interval
 
 ### Requirement: Analytics leads with an interpretable insight
-Analytics SHALL present a plain-language summary derived from the selected window before secondary chart configuration. It SHALL visually distinguish selected-window figures from all-time figures.
+Analytics SHALL present a plain-language summary derived from the selected window before secondary chart configuration. It SHALL visually distinguish selected-window figures from all-time figures. Essential insight meaning and its actual displayed period SHALL be visible as text as well as accessible semantics. A featured game's identity and minutes SHALL be visibly scoped to that game, while whole-period totals SHALL be labelled as covering all eligible visible games. Artwork SHALL NOT imply that the featured game owns aggregate figures, is currently being played, or has been completed without evidence.
 
 #### Scenario: Window contains activity
 - **WHEN** Analytics has tracked activity in the selected window
@@ -3204,6 +3217,44 @@ Analytics SHALL present a plain-language summary derived from the selected windo
 #### Scenario: Window contains no activity
 - **WHEN** the selected window has no tracked activity
 - **THEN** Analytics states that directly, retains period navigation, and does not present all-time achievements or streaks as if they described the empty window
+
+#### Scenario: Featured game and aggregate totals
+- **WHEN** the headline features the leading game with artwork and its minutes
+- **THEN** visible text identifies its most-played role and displayed period, and the aggregate figures identify their all-games scope separately
+
+#### Scenario: Current calendar period
+- **WHEN** a current month or year is only partly elapsed
+- **THEN** overview context identifies the represented dates through today without implying future days contributed to activity figures
+
+#### Scenario: Window is changing
+- **WHEN** the selected period changes while new figures are loading
+- **THEN** retained figures, featured identity/artwork, and scope labels remain attached to the same prior snapshot with an updating state until the replacement snapshot is available
+
+### Requirement: Featured-game presentation preserves evidence and fallback behavior
+Analytics SHALL bind featured identity, artwork, recorded minutes, and displayed scope to the same eligible leading game and snapshot. Missing artwork SHALL preserve the textual identity and meaning. A comparison or no-data headline SHALL NOT retain a stale featured-game panel. Existing deterministic headline priority and ranking, hidden-game exclusions, stored arithmetic, session attribution, and external request behavior SHALL remain unchanged.
+
+#### Scenario: Game artwork unavailable
+- **WHEN** the featured game's artwork cannot be loaded
+- **THEN** its name, most-played role, minutes, and period remain legible with the established artwork fallback
+
+#### Scenario: Equal leading totals
+- **WHEN** multiple games tie under the existing deterministic ranking
+- **THEN** the selected game's identity and artwork match its displayed minutes and the presentation makes no unsupported unique-leader claim
+
+#### Scenario: Different headline type
+- **WHEN** a comparable-period or empty-window headline replaces a leading-game headline
+- **THEN** no stale artwork or game-specific minutes remain attached to its aggregate statement
+
+### Requirement: Analytics scope is readable across accessibility contexts
+Visible labels and accessibility descriptions SHALL convey the same featured-game, all-games, selected-period, and lifetime scopes. Localized period text and quantities SHALL remain readable on narrow screens with larger fonts and in both themes. Scope SHALL NOT depend solely on artwork, color, or an explanation available only to assistive technology.
+
+#### Scenario: Screenshot or sighted inspection
+- **WHEN** the overview is read without opening an explanation or using a screen reader
+- **THEN** the featured game's role and the aggregate figures' scope are still understandable
+
+#### Scenario: Large fonts and assistive technology
+- **WHEN** text size is increased or the overview is read by assistive technology
+- **THEN** essential scope labels remain available and describe the same facts
 
 ### Requirement: Analytics chart inspection is accessible without precise touch
 Every day represented by the daily-playtime chart SHALL be inspectable through explicit previous/next-day controls and accessible semantics. Chart meaning SHALL also be available as text, including the selected date, minutes, goal state, and per-game breakdown.
@@ -3332,3 +3383,479 @@ While the cloud reader is configured, History SHALL offer a compact Cloud activi
 #### Scenario: Observation ages while detail stays open
 - **WHEN** the newest known observation becomes stale while Cloud activity remains on screen or the app resumes
 - **THEN** its freshness warning reflects the current time without requiring another reader request
+
+### Requirement: App bottom navigation visibility
+Backlogium SHALL show its bottom navigation bar only on the five top-level destinations: Home,
+Library, History, Analytics, and Settings overview. First-run configuration and all pushed
+destinations SHALL hide the app bar while retaining system navigation and system Back. Top-level
+destinations SHALL remain reachable before Steam credentials are configured.
+
+#### Scenario: Top-level destination
+- **WHEN** the player visits Home, Library, History, Analytics, or Settings overview
+- **THEN** the app bottom navigation is visible with the corresponding destination selected
+
+#### Scenario: First-run configuration
+- **WHEN** first-run credential onboarding or the setup step is shown
+- **THEN** the app bottom navigation is hidden and system Back remains available
+
+#### Scenario: Pushed destinations
+- **WHEN** the player opens game detail, HLTB review, collection or derived collection, gap planning,
+  Settings detail, diagnostics, cloud activity, or another pushed destination
+- **THEN** the app bottom navigation is hidden
+
+#### Scenario: Return to a top-level destination
+- **WHEN** the player returns from a pushed destination
+- **THEN** the app bottom navigation reappears for the restored top-level destination and its tab
+  state remains intact
+
+#### Scenario: Unconfigured top-level guidance remains reachable
+- **WHEN** Steam credentials have not been configured and the player visits a top-level destination
+- **THEN** the app bottom navigation remains available so the destination's setup guidance is reachable
+
+### Requirement: Library bottom content spacing
+The Library SHALL use the space above the app bottom navigation without an unexplained blank strip.
+It SHALL respect the system navigation inset and keep the final list or grid item reachable. Hiding
+or showing the app bar SHALL not leave stale padding or apply bottom space twice.
+
+#### Scenario: Library list and grids
+- **WHEN** Library is shown in list or either grid density
+- **THEN** content reaches the intended space above the app bar and the last item can be fully seen
+  and selected
+
+#### Scenario: System navigation modes
+- **WHEN** the device uses gesture navigation or three-button navigation
+- **THEN** Library content and the app bar respect the system safe area without an extra blank band
+
+#### Scenario: Bar transition
+- **WHEN** the player opens a pushed screen from Library and returns
+- **THEN** bottom spacing follows the visible app bar without retaining the prior screen's padding
+
+#### Scenario: Display variations
+- **WHEN** Library is shown in either theme or with increased font size
+- **THEN** the final item remains reachable without overlap or an unexplained bottom gap
+
+### Requirement: Library visit context retention
+The system SHALL preserve the Library text query, selected genres, coverage-only and Family
+Shared-only filters, and the current useful scroll position during a Library visit. A pushed screen
+opened from Library, including game detail or HLTB review, SHALL remain part of that visit. Switching
+to another top-level tab or backgrounding the app SHALL start a five-minute absence interval. If
+both happen, the earliest departure time SHALL govern; backgrounding SHALL NOT extend an interval
+already running. Returning while less than five minutes have elapsed SHALL resume the visit. At
+five minutes or later, the next Library presentation SHALL start a fresh visit with those filters
+cleared and scroll reset to the top. A cold launch SHALL start a fresh visit. Library sort and
+density preferences SHALL retain their existing persistence behavior.
+
+#### Scenario: Return from a pushed screen
+- **WHEN** the player opens game detail or HLTB review from a filtered Library and returns, regardless
+  of time spent on that screen while the app remains foregrounded
+- **THEN** the same query and filters remain active and the Library returns to the same useful scroll
+  position when its prior content is still available
+
+#### Scenario: Short tab departure
+- **WHEN** the player switches away from Library and returns less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Tab departure reaches the threshold
+- **WHEN** the player switches away from Library and returns five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Short background departure
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and resumes
+  the Library visit less than five minutes later
+- **THEN** the query, filters, and useful scroll position are restored
+
+#### Scenario: Background departure reaches the threshold
+- **WHEN** the player backgrounds the app while in Library or a screen pushed from it, and next sees
+  Library five minutes or more later
+- **THEN** the query and filters are cleared and Library opens at the top
+
+#### Scenario: Backgrounding does not renew an earlier tab departure
+- **WHEN** the player switches away from Library, later backgrounds the app, and returns to Library
+  five minutes or more after the tab switch
+- **THEN** a fresh Library visit starts even if less than five minutes have passed since backgrounding
+
+#### Scenario: Repeated short departures
+- **WHEN** the player returns to Library before expiry, then leaves it again
+- **THEN** the next five-minute absence interval starts from the later departure
+
+#### Scenario: Configuration recreation
+- **WHEN** the device configuration recreates the current Library visit
+- **THEN** the query, filters, scroll context, and any running absence interval remain unchanged
+
+#### Scenario: Cold launch
+- **WHEN** the app launches into a new process after a previous Library visit
+- **THEN** Library starts with no transient query or filters and at the top, while saved sort and
+  density preferences remain available
+
+#### Scenario: Explicit clear
+- **WHEN** the player uses a Library Clear control during an active visit
+- **THEN** the selected query or filters clear immediately without waiting for visit expiry
+
+#### Scenario: Items change during a retained visit
+- **WHEN** Library content changes while the player is away and the visit has not expired
+- **THEN** the retained query and filters apply to current content and the scroll position stays near
+  the previously visible item when possible, or at the nearest valid position when that item is gone
+
+### Requirement: Wishlist matches in Library search
+Library text search SHALL include cached wishlist titles alongside owned and Family Shared games.
+Wishlist-only matches SHALL appear in a clearly labeled wishlist result section and SHALL use
+wishlist-appropriate store actions rather than owned-game tracking or collection actions. A title
+present in both sources SHALL not appear as two indistinguishable results. Search SHALL preserve
+the existing owned-game ranking and grouping behavior.
+
+#### Scenario: Wishlist title matches
+- **WHEN** a text query matches a cached wishlist-only title
+- **THEN** that title appears as a labeled wishlist result in list and both grid densities
+
+#### Scenario: Owned and wishlist title overlap
+- **WHEN** a Steam app ID appears in both owned/shared results and the cached wishlist
+- **THEN** its owned/shared result retains the Library detail and tracking actions, and no duplicate
+  wishlist-only result is shown
+
+#### Scenario: Wishlist-only action
+- **WHEN** the player opens a wishlist-only search result
+- **THEN** its available store action is offered without owned-game tracking or collection controls
+
+#### Scenario: Owned-only filters with a query
+- **WHEN** an owned-game genre, HLTB coverage, or Family Shared filter is active with a text query
+- **THEN** wishlist-only titles are not presented as if they satisfied that filter
+
+#### Scenario: Wishlist read fails with cached entries
+- **WHEN** the latest wishlist read fails but cached wishlist entries exist
+- **THEN** matching cached entries remain searchable and the wishlist's unavailable or stale state
+  remains distinguishable from a fresh result
+
+#### Scenario: Wishlist read fails without cached entries
+- **WHEN** the wishlist cannot be read and has no cached entries
+- **THEN** search does not claim there are no matching wishlist games; it identifies wishlist
+  unavailability separately from an owned-game no-match state
+
+### Requirement: Added recently Library sorting
+Each owned/shared Library section SHALL offer an Added recently sort based on the game's recorded
+first observation by Backlogium. It SHALL be separate from Recent activity, which describes play.
+Known observation times SHALL order by time, with stable title and app-ID tie-breaks. Unknown times,
+including baseline and legacy games, SHALL remain grouped after known times in either direction
+without implying an acquisition order. The chosen sort and direction SHALL retain the existing
+per-section preference behavior.
+
+#### Scenario: Newest observed games first
+- **WHEN** the player selects Added recently in its default direction
+- **THEN** games with known observation times appear newest first within that Library section
+
+#### Scenario: Reverse added order
+- **WHEN** the player reverses Added recently
+- **THEN** games with known observation times appear oldest first, while unknown times remain after
+  dated games
+
+#### Scenario: Equal observation time
+- **WHEN** multiple games share the same observation time, including a first-sync batch
+- **THEN** their order is stable by title and app ID and does not claim one was acquired first
+
+#### Scenario: Unknown observation time
+- **WHEN** a baseline or legacy game has no recorded observation time
+- **THEN** it remains sortable and is not assigned a fabricated date
+
+#### Scenario: Sort explanation
+- **WHEN** the Added recently option or its explanation is shown
+- **THEN** the app makes clear the time is when Backlogium first observed the game, not its Steam
+  purchase date
+
+### Requirement: Concise Hide game confirmation
+The Hide game confirmation SHALL state the immediate consequence and how to restore the game in
+short, direct copy. When hiding changes XP, level, or Focus membership, the dialog SHALL still
+disclose those material effects. It SHALL retain distinct confirm and cancel actions.
+
+#### Scenario: Confirm or cancel hiding
+- **WHEN** the player chooses Hide game from Library
+- **THEN** the dialog explains that the game will leave visible surfaces and can be restored from
+  Hidden Games, with clear Hide and Cancel choices
+
+#### Scenario: Material progress effect
+- **WHEN** hiding the selected game changes XP, level, or Focus membership
+- **THEN** the confirmation states those effects concisely before the player confirms
+
+### Requirement: HLTB review session deferral and forward progression
+The HLTB Match Center SHALL let the player defer an unresolved game for the current review session.
+Explicit Skip and moving past an unresolved game SHALL defer its app ID without changing its stored
+match status. Automatic forward navigation and post-match selection SHALL exclude deferred app IDs
+and choose the next unprocessed game by the current queue order. When none remains, the Match Center
+SHALL show a completion or exhaustion state rather than wrap to a deferred game. The player SHALL
+be able to deliberately review skipped games again. The session SHALL survive configuration
+recreation and temporary detail return, and SHALL end when the Match Center route is dismissed or
+the app process ends.
+
+#### Scenario: Explicit skip
+- **WHEN** the player chooses Skip for this review session on an unresolved game
+- **THEN** that game remains unresolved in storage, is excluded from automatic forward selection,
+  and the next unprocessed game is shown
+
+#### Scenario: Navigate past an unresolved game
+- **WHEN** the player uses Next or Previous to leave an unresolved game
+- **THEN** the game is deferred for this session and is not selected automatically later in that pass
+
+#### Scenario: Match removes selected game
+- **WHEN** the selected game is matched or leaves the queue after a data update
+- **THEN** selection moves forward to the next unprocessed app ID in the current actionable order
+
+#### Scenario: Queue partitions reorder
+- **WHEN** a game changes between ambiguous and unmatched partitions while review is in progress
+- **THEN** selection follows the intended app ID and deferred games remain excluded from automatic
+  progression
+
+#### Scenario: No unprocessed games remain
+- **WHEN** all actionable games have been matched or deferred
+- **THEN** the Match Center shows completion or exhaustion with a deliberate Review skipped action
+  when deferred games remain, without wrapping automatically
+
+#### Scenario: Review skipped games
+- **WHEN** the player chooses Review skipped
+- **THEN** deferred games become selectable for another pass without changing their stored match
+  status until the player resolves one
+
+#### Scenario: Session survives temporary interruption
+- **WHEN** configuration recreation occurs or the player temporarily opens detail and returns
+- **THEN** current selection and the deferred app IDs remain part of the same review session
+
+#### Scenario: Session ends on route dismissal
+- **WHEN** the player leaves the Match Center and later opens a new Match Center route
+- **THEN** no game remains deferred solely because of the prior review session
+
+#### Scenario: Scoped game is deferred
+- **WHEN** the Match Center was opened for one game and the player defers that game
+- **THEN** the scoped game stays unresolved and the route offers completion or Review skipped;
+  automatic return to Library occurs only when that scoped game is actually resolved
+
+### Requirement: HLTB reviewer entry points across Library and Settings
+Library list and both grid densities SHALL offer an accessible per-game completion-time lookup or
+review action that reaches the existing targeted HLTB route. Settings Gameplay SHALL offer a direct
+Match Center shortcut even when no attention badge is present.
+
+#### Scenario: Per-game action in both grids
+- **WHEN** the player uses either Library grid density
+- **THEN** each eligible game has a labeled, accessible completion-time lookup or review action
+  with the same target game behavior as the list
+
+#### Scenario: Settings Gameplay shortcut
+- **WHEN** the player opens Settings Gameplay
+- **THEN** a Match Center shortcut opens the general reviewer regardless of attention count
+
+#### Scenario: Targeted route remains scoped
+- **WHEN** a per-game Library action opens the reviewer
+- **THEN** that game's app ID is the initial review target, and resolving a different game does not
+  falsely complete the scoped route
+
+### Requirement: Estimated activity is visible and accessible wherever dated totals are inspected
+Every positive multi-day estimated allocation SHALL carry a visible ! indicator in History activity, day summaries, Analytics calendar/chart inspection and relevant game breakdowns. Aggregates mixing timed and estimated play SHALL indicate that they contain estimates. Activating the indicator SHALL explain: "Estimated playtime - X minutes recovered from a cumulative Steam total between [dates] and distributed evenly. Exact session times are unavailable." The explanation SHALL distinguish the window's recovered residual total from the selected day's share, state its allocation zone when relevant, and remain available after restart and backup import. The symbol SHALL have an accessible label and activation target, and copy SHALL be localized with locale-aware dates and amounts. Single-day unknown-time activity SHALL also disclose its derivation and absent clock boundaries without claiming multi-day distribution.
+
+#### Scenario: Mixed day summary
+- **WHEN** a day contains timestamped sessions and estimated allocations
+- **THEN** its combined total and game breakdown reconcile and expose an accessible estimate explanation
+
+#### Scenario: Inspecting a chart day
+- **WHEN** a user selects an estimated date by touch or an accessible alternative
+- **THEN** the date's minutes, estimated share and explanation are available without precise chart touch
+
+#### Scenario: Single-day fallback
+- **WHEN** 70 minutes were recovered onto one date
+- **THEN** History describes unknown session times and does not show a fabricated start
+
+### Requirement: Unknown-time activity does not invent session metrics
+Analytics SHALL include dated recovery allocations in played-minute charts, comparative totals, day/game breakdowns and most-played games. It SHALL exclude unknown-time allocations from session counts, longest/average session duration, time-of-day buckets and related session-shape claims. Pending date-unknown quantity SHALL be disclosed separately from dated charts. If only unknown-time activity exists, session/time-of-day insights SHALL explain that session timing is unavailable rather than suggesting measured zeros.
+
+#### Scenario: Allocations-only period
+- **WHEN** a selected period contains 105 recovered minutes but no timestamped sessions
+- **THEN** it shows 105 played minutes and matching games while session and time-of-day insights state that timing is unavailable
+
+### Requirement: Recovery availability is described honestly
+When Steam data is unavailable or an expected increase has not yet appeared, the interface SHALL preserve last-good figures and communicate that recovery depends on Steam publishing an updated readable cumulative total. It SHALL not claim real-time detection of Offline/Invisible or PC-offline gameplay. A successful unchanged read without independent evidence of pending play SHALL not be described as a known recovery debt. Timing anomalies with credited but undated quantity SHALL be distinguishable from unavailable remote data.
+
+#### Scenario: Private library
+- **WHEN** the owned-game read is inaccessible
+- **THEN** the interface shows unavailable recovery status and retains the prior baseline and credited play
+
+#### Scenario: Unchanged total without observed play
+- **WHEN** a trustworthy total is unchanged and no independent observation indicates pending play
+- **THEN** the interface reports the successful reading without inventing pending minutes
+
+### Requirement: Unlock feedback uses one claimed presentation surface
+The app SHALL present a claimed foreground unlock group accessibly with game identity, achievement names/count, and an action to the specific game detail. A background group SHALL use a notification carrying the same destination. Notification permission, alert preferences, current account, and hidden-game policy SHALL be checked before dispatch; suppressed groups SHALL NOT later flood the app.
+
+#### Scenario: Several achievements
+- **WHEN** a foreground group contains multiple unlocks
+- **THEN** one presentation identifies the game and all unlocks/count without a burst of alerts
+
+#### Scenario: Background game destination
+- **WHEN** the player taps a background unlock notification
+- **THEN** the app opens that game's detail after ordinary configured-account routing
+
+#### Scenario: Unavailable notification permission
+- **WHEN** a background group cannot be presented because permission or alerts are disabled
+- **THEN** it is suppressed durably while achievement persistence remains successful
+
+#### Scenario: Reduced motion and accessibility
+- **WHEN** a group is presented with reduced motion or TalkBack
+- **THEN** its content/actions remain understandable without animation or color alone
+
+### Requirement: Achievement browsing explains catalogue and progress availability
+Game detail SHALL show cached achievement objectives before play, load missing data without blocking the summary, and distinguish loading, unavailable data with retry, confirmed no achievements, and unavailable personal progress. Catalogue-only objectives SHALL NOT be labelled as confirmed locked or used to claim completion or earned XP. Both entry points SHALL expose the same behaviour accessibly.
+
+#### Scenario: Unplayed game with objectives but no player stats
+- **WHEN** game detail has a catalogue but no confirmed personal achievement progress
+- **THEN** objectives remain visible with personal progress identified as unavailable and no invented unlocked/total completion or earned XP
+
+#### Scenario: Offline without cache
+- **WHEN** a game is opened offline with no stored catalogue or player achievements
+- **THEN** the summary remains usable and the achievement area explains unavailable data with a retry action rather than claiming the game has no achievements
+
+#### Scenario: Failure with cached content
+- **WHEN** a detail hydration fails with last-good objectives or player rows stored
+- **THEN** those rows stay visible and the screen explains that fresh data could not be loaded
+
+#### Scenario: Catalogue is confirmed empty
+- **WHEN** a successful complete catalogue has no objectives and no retained player achievements contradict it
+- **THEN** the achievement area states that the game has no achievements
+
+#### Scenario: Collection overlay and accessibility
+- **WHEN** the same unplayed game is opened from a collection with TalkBack enabled
+- **THEN** catalogue availability, progress availability, and retry actions are understandable as in the Library entry point
+
+### Requirement: Today's quest expands into an evidence-aware game breakdown
+Home SHALL offer an initially collapsed per-game minute breakdown inside Today's quest while preserving the compact collapsed card. The expanded content SHALL identify its date, visible recorded subtotal, stored daily and Focus totals when available, and any reconciliation or unavailable allocation required by the daily-activity-breakdown capability. It SHALL not change the quest result or imply that recorded session minutes are exact elapsed play.
+
+#### Scenario: Breakdown expanded
+- **WHEN** the player expands Today's quest on a multi-game day
+- **THEN** each visible game's recorded minutes appear and the credit comparison explains how they relate to the card's quest total
+
+#### Scenario: No recorded activity
+- **WHEN** today's breakdown contains neither visible sessions nor stored credit
+- **THEN** Home shows a compact no-recorded-activity state rather than fabricating games
+
+#### Scenario: Per-game allocation unavailable
+- **WHEN** stored progress exists without visible dated game activity
+- **THEN** the expanded card explains the unavailable allocation and retains the authoritative quest total
+
+### Requirement: Daily breakdown actions remain accessible and account safe
+The expansion control SHALL announce its purpose and state. Visible game rows SHALL offer named detail actions with accessible touch targets. Home SHALL use localized text that remains readable with larger fonts and in both themes. The breakdown SHALL be keyed by account and date.
+
+#### Scenario: Detail navigation and return
+- **WHEN** the player opens a visible game from the expanded breakdown and returns on the same account and date
+- **THEN** the same day's breakdown remains expanded with current local data
+
+#### Scenario: Target becomes unavailable
+- **WHEN** a game is hidden or removed before its detail action executes
+- **THEN** Home provides a clear unavailable result and exposes no hidden game detail
+
+#### Scenario: Large-font or screen-reader use
+- **WHEN** the player inspects the card with larger fonts or assistive technology
+- **THEN** game names, minutes, reconciliation wording, and expansion/navigation actions remain understandable without color-only cues
+
+#### Scenario: Account or date changes
+- **WHEN** the active account or current local date changes
+- **THEN** stale rows are cleared or replaced under the correct identity and the new breakdown starts collapsed
+
+### Requirement: History session facts are individually understandable
+History SHALL identify each timestamped session's approximate local start, recorded minutes and open state with accessible textual equivalents. The approximate start and recorded minutes SHALL remain separate. Proven cloud contributions SHALL retain their individual qualifications.
+
+#### Scenario: Closed session
+- **WHEN** a closed session is expanded
+- **THEN** its approximate start and recorded minutes are explicitly labelled without an exact end-time-derived duration
+
+#### Scenario: Open session
+- **WHEN** an open session is shown
+- **THEN** the row identifies the live state and recorded amount without treating elapsed wall-clock time as additional recorded play
+
+#### Scenario: Overnight session
+- **WHEN** a session starts before midnight and continues into the next day
+- **THEN** the session appears on its local start date and any funded shares keep their frozen credited dates, with the displayed amounts explained
+
+#### Scenario: Cloud or legacy evidence
+- **WHEN** a session has proven cloud assistance or incomplete historical source evidence
+- **THEN** its contribution remains separately qualified or its source is described conservatively, without a blanket Steam-only claim
+
+### Requirement: History daily evidence and quest credit have distinct scopes
+History SHALL sum visible canonical dated activity for day and game totals and use the daily-activity-breakdown capability to reconcile those totals with stored daily play. Stored Focus minutes and quest outcomes SHALL retain their distinct scopes. A missing quest outcome SHALL appear as unavailable.
+
+#### Scenario: Visible sessions and credit disagree
+- **WHEN** a day's visible recorded total differs from its stored daily play total
+- **THEN** History identifies both scopes and their reconciliation while retaining the stored quest outcome
+
+#### Scenario: Progress-only date
+- **WHEN** stored daily progress exists without visible sessions or dated allocations
+- **THEN** the day retains its credit/outcome and explains that a game/session allocation is unavailable
+
+#### Scenario: Mixed or allocation-only day
+- **WHEN** a date contains credited recovery allocations or funded timed shares
+- **THEN** day and game totals include each visible amount once on its credited date
+- **AND** unknown-time allocations retain estimate or timing disclosures without a clock start or live state
+
+#### Scenario: Pending date-unknown quantity
+- **WHEN** recovery has credited minutes awaiting a valid date
+- **THEN** History preserves the separate recovery status and keeps those minutes outside dated totals
+
+#### Scenario: No recorded quest result
+- **WHEN** session evidence exists without a stored daily-progress outcome
+- **THEN** History shows the sessions with unavailable quest state instead of an invented failure
+
+#### Scenario: Gap between recorded sessions
+- **WHEN** displayed records have a temporal gap
+- **THEN** the presentation does not assert no play occurred or interpolate unsupported activity
+
+### Requirement: History grouping never implies a measured time axis
+The existing day/game/session presentation SHALL make its grouping and ordering understandable. Game rows SHALL be ordered by recorded minutes with deterministic ties, and a timeline-style gutter SHALL NOT imply that row position, line length, or spacing measures elapsed time. Sessions inside a game SHALL remain ordered by their approximate start. Its text and layout SHALL remain readable with larger fonts and in both themes.
+
+#### Scenario: Games interleave in time
+- **WHEN** one game's sessions occur before and after another game's sessions
+- **THEN** History identifies the game grouping rather than implying the game rows form one chronological sequence
+
+#### Scenario: Sparse day
+- **WHEN** few records span a long time interval
+- **THEN** gutter spacing is not presented as proportional duration or continuous observation
+
+### Requirement: History clarity preserves bounded navigation and reveal state
+History clarity changes SHALL preserve its bounded loaded date window, older-content action, explicit fully-loaded state, current-day expansion, valid expanded game/session state, and game-detail navigation. They SHALL preserve evidence-backed cloud marks, their explanations, and exact-session reveal with a clear unavailable fallback. Recomputations SHALL retain a coherent prior snapshot with an updating state; account replacement SHALL clear old content.
+
+#### Scenario: Older history loaded
+- **WHEN** the player loads another bounded window
+- **THEN** valid expanded rows remain stable and the older/fully-loaded state reflects both canonical dated activity, including allocation-only dates, and stored progress
+
+#### Scenario: Cloud activity reveals a session
+- **WHEN** a cloud activity item targets a session still present in the loaded window
+- **THEN** its exact day, game, and session remain revealable after the presentation change
+
+#### Scenario: Device timezone changes
+- **WHEN** the device timezone changes while History is open
+- **THEN** the visible window refreshes with local-start attribution for unlinked session minutes and retains frozen recovery dates
+
+#### Scenario: Account changes during loading
+- **WHEN** the active account changes while history recomputes
+- **THEN** the previous account's records are cleared and late results cannot repopulate them
+
+### Requirement: Analytics presents personal momentum with independent dated scope
+Analytics SHALL present a compact personal momentum card explicitly describing recorded personal activity over the last seven completed local days versus the preceding seven. Both actual date ranges and the fixed scope's independence from the main Analytics period selector SHALL be understandable in visible text and semantics. The card SHALL use the eligibility, ranking, limit, and caveats of personal-play-momentum, and distinguish growth from newly recorded activity. It SHALL not replace the main selected-window headline, label personal momentum as Steam community growth, or duplicate a recent-play collection's membership view.
+
+#### Scenario: Main period selector changes
+- **WHEN** the player selects a different Analytics month, year, or rolling window
+- **THEN** the personal card retains its own fixed dated comparison and clearly identifies that it describes the recent completed weeks
+
+#### Scenario: Candidate inspected
+- **WHEN** an eligible title appears
+- **THEN** its current/baseline recorded minutes, growth amount or newly-recorded reason, and both period scopes are inspectable
+
+#### Scenario: Learning or no qualifying increase
+- **WHEN** history is insufficient or no title qualifies
+- **THEN** the card shows the corresponding concise explanation without unsupported growth or community claims
+
+### Requirement: Personal momentum rows offer accessible safe detail navigation
+Momentum game rows SHALL offer named accessible detail actions with adequate touch targets, locale-aware amounts/dates, and textual growth meaning independent of color. Essential scope and caveats SHALL remain legible on narrow screens, larger fonts, and both themes. A title that becomes hidden or unavailable before navigation SHALL produce a clear unavailable result; returning to Analytics SHALL preserve its existing main-period selection.
+
+#### Scenario: Game detail opened and closed
+- **WHEN** the player opens a momentum title and returns
+- **THEN** the main Analytics selection is preserved and the personal comparison uses current local evidence
+
+#### Scenario: Target visibility changes
+- **WHEN** a title is hidden before its detail action executes
+- **THEN** no hidden detail is opened and the card refreshes its eligibility with clear action feedback
+
+#### Scenario: Screen reader or larger text
+- **WHEN** the player reads a momentum row with assistive technology or larger text
+- **THEN** game identity, both amounts, comparison reason, and detail action remain understandable

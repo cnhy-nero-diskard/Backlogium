@@ -27,6 +27,19 @@ class SettingsRepositoryTest {
 
 
     @Test
+    fun achievementWatchPreferencesPersistIndependentlyOfMonitorAndAlerts() = runTest {
+        val repository = DataStoreSettingsRepository(SettingsDataStore(RuntimeEnvironment.getApplication()))
+        assertEquals(com.example.backlogium.domain.AchievementWatchPreferences(), repository.achievementWatch.first())
+        repository.setAchievementWatch(com.example.backlogium.domain.AchievementWatchPreferences(false, 30, false))
+        assertFalse(repository.liveMonitorEnabled.first())
+        assertEquals(com.example.backlogium.domain.AchievementWatchPreferences(false, 30, false), repository.achievementWatch.first())
+        repository.setAchievementWatch(com.example.backlogium.domain.AchievementWatchPreferences(true, 30, false))
+        assertTrue(repository.achievementWatch.first().enabled)
+        assertFalse(repository.achievementWatch.first().alertsEnabled)
+        assertEquals(30_000L, repository.achievementWatch.first().intervalMillis)
+    }
+
+    @Test
     fun liveMonitorEnabled_defaultsOff_andRepositoryForwardsItsWrite() = runTest {
         val dataStore = settingsFixture.create()
         val repository = DataStoreSettingsRepository(dataStore)

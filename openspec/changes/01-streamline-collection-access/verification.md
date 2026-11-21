@@ -65,3 +65,13 @@ Logs are in `%TEMP%/backlogium-01-{backup-final,instrument-final,offline-migrati
 The final lint and golden logs are `%TEMP%/backlogium-01-lint-final.log` and `%TEMP%/backlogium-01-goldens-verify.log`. Emulator network settings were restored after offline acceptance. Gradle runs were kept sequential after an earlier overlap caused a transient generated-code race. That race was resolved by a successful sequential build.
 
 All 17 change tasks are complete. Separate planning changes `02-improve-game-detail` and `03-archive-deadline-collections` remain untouched. Spec sync and archive are outside this autoship invocation.
+
+## Integration verification after merging master
+
+Rechecked on 2026-11-21 against `master` at `098dbff3`. The combined Room 45→46 migration adds only `game_preferences`. It preserves all 42 tables in the released v45 schema, including recovery, achievement-watch, and catalogue data. Migration tests covered the released chain and the upgrade from populated v45 games and collection members. The 43/44 schemas from earlier development builds of this branch differ from those released on `master`.
+
+Optional preferences round-tripped through the current version-3 backup and snapshot paths. Decoder tests also exercised supported version-1/2 inputs and rejected invalid or duplicate preference records. A real Room query check confirmed that future and zero-minute sessions cannot hide earlier qualifying evidence in Played recently.
+
+The full app JVM suite passed 2,469 tests and gamification passed 53. The API 37 emulator passed the migration and Library visit suites and all five collection shortcut tests after the collection fixture was changed to await visible Room state. Strict OpenSpec validation and the visual baseline currency check passed. The existing screenshots were regenerated from the merged code.
+
+The debug build and lint passed. Lint reported 65 warnings and used the existing baseline. All 85 Roborazzi screenshot-suite tests passed after reusing localized count and action text on the shared derived cards.

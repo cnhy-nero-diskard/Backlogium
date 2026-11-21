@@ -17,12 +17,14 @@ import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PendingCloudEvidenceDao
 import com.example.backlogium.data.local.dao.CloudHistoricalDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.dao.SteamReviewCacheDao
 import com.example.backlogium.data.local.dao.WishlistDao
+import com.example.backlogium.data.local.dao.AchievementWatchDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -82,6 +84,8 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_41_42,
                 BacklogiumDatabase.MIGRATION_42_43,
                 BacklogiumDatabase.MIGRATION_43_44,
+                BacklogiumDatabase.MIGRATION_44_45,
+                BacklogiumDatabase.MIGRATION_45_46,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
@@ -111,6 +115,9 @@ object DatabaseModule {
 
     @Provides
     fun provideHltbDatasetDao(db: BacklogiumDatabase): HltbDatasetDao = db.hltbDatasetDao()
+
+    @Provides
+    fun provideAchievementWatchDao(db: BacklogiumDatabase): AchievementWatchDao = db.achievementWatchDao()
 
     @Provides
     fun provideAchievementDao(db: BacklogiumDatabase): AchievementDao = db.achievementDao()
@@ -151,4 +158,8 @@ object DatabaseModule {
     @Provides
     fun provideSteamReviewCacheDao(db: BacklogiumDatabase): SteamReviewCacheDao =
         db.steamReviewCacheDao()
+
+    @Provides
+    fun providePlaytimeRecoveryDao(db: BacklogiumDatabase): PlaytimeRecoveryDao =
+        db.playtimeRecoveryDao()
 }

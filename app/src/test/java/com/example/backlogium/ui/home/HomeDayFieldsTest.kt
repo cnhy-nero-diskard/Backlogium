@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.home
 
+import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.data.repo.DayProgress
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -56,6 +57,13 @@ class HomeDayFieldsTest {
         val fields = homeDayFields(emptyList(), aug14)
 
         assertEquals(0, fields.minutesPlayed)
+        assertFalse(fields.questMet)
+    }
+    @Test
+    fun focusQuestUsesStoredFocusMinutesAndOutcome() {
+        val days = listOf(DayProgress(aug14.toString(), 60, 25, questMet = false))
+        val fields = homeDayFields(days, aug14, QuestMode.GOAL_ONLY)
+        assertEquals(25, fields.minutesPlayed)
         assertFalse(fields.questMet)
     }
 }

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Selected Steam covers use existing offline asset behavior
-The system SHALL resolve a tracked game's selected cover variant from the same supported Steam image families and local storage used by ordinary covers. Chooser previews SHALL prefer valid cached images and use only bounded user-initiated image reads when online. Selecting or resetting a variant SHALL NOT enqueue bulk downloads, trigger Steam metadata discovery, or mutate the integrity-checked asset manifest as though unvalidated files were stored. A missing or failed selected asset SHALL fall back normally without erasing the preference.
+Selected covers SHALL use supported Steam image families and the existing offline store. Previews SHALL prefer cache and make bounded user-initiated reads online. Selection and reset SHALL leave bulk jobs, metadata discovery, and the validated manifest alone. A failed or missing asset SHALL use normal fallbacks and preserve the preference.
 
 #### Scenario: Selected asset is cached
 - **WHEN** the user chooses a variant already stored in the offline asset inventory

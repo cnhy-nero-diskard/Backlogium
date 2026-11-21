@@ -2,11 +2,15 @@ package com.example.backlogium.work.setup
 
 import com.example.backlogium.data.setup.ActiveSetupStage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,6 +27,36 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SetupCoordinatorTest {
+
+    @Test
+    fun duplicateStartsDoNotQueueAnotherRun() = runTest {
+        var calls = 0
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val runner = SetupStageRunner { calls++; gate.await(); SetupOutcome.Succeeded }
+        val subject = coordinator(listOf(fakeStage("sync", runner)), scope = this)
+        subject.start(setOf("sync"))
+        subject.start(setOf("sync"))
+        advanceUntilIdle()
+        subject.start(setOf("sync"))
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, calls)
+        assertTrue(subject.state.value.finished)
+    }
+
+    @Test
+    fun recoveryCannotBeReplacedByAnEarlyStart() = runTest {
+        val held = FakeStageRunner().also { it.autoComplete = false }
+        val store = FakeSetupStateStore(activeStage = ActiveSetupStage("sync", null, setOf("sync")))
+        val subject = coordinator(listOf(fakeStage("sync", held)), store, this)
+        subject.ensureLoaded()
+        subject.start(emptySet())
+        advanceUntilIdle()
+        assertTrue(subject.state.value.running)
+        assertEquals(setOf("sync"), subject.state.value.selected)
+        held.gate.complete(Unit)
+        advanceUntilIdle()
+    }
 
     private fun coordinator(
         stages: List<SetupStage>,
@@ -63,6 +97,8 @@ class SetupCoordinatorTest {
             this,
         )
 
+        subject.ensureLoaded()
+        advanceUntilIdle()
         subject.skipAll()
         advanceUntilIdle()
 
@@ -74,6 +110,60 @@ class SetupCoordinatorTest {
         assertTrue(subject.state.value.finished)
         assertFalse(subject.state.value.running)
     }
+
+    @Test
+    fun declineDoesNotAdvanceHistoryUntilSkippedOutcomesAreDurableAcrossRestart() =
+        runTest(StandardTestDispatcher()) {
+            val outcomeWriteGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val store = FakeSetupStateStore(
+                initialOutcomes = mutableMapOf(
+                    "a" to SetupOutcome.NeverRun,
+                    "b" to SetupOutcome.NeverRun,
+                ),
+                initialOptIns = mutableMapOf("a" to true, "b" to true),
+                outcomeWriteGate = outcomeWriteGate,
+            )
+            val stages = listOf(fakeStage("a"), fakeStage("b"))
+            val firstProcess = coordinator(stages, store, this)
+
+            firstProcess.claimFirstRunSetup()
+            firstProcess.ensureLoaded()
+            advanceUntilIdle()
+            val interruptedSkip = launch { firstProcess.skipAll() }
+            runCurrent()
+
+            assertEquals(FirstRunPhase.SETUP, firstProcess.firstRunPhase.first())
+            assertEquals(
+                mapOf("a" to SetupOutcome.NeverRun, "b" to SetupOutcome.NeverRun),
+                store.outcomes,
+            )
+
+            // Simulate process death while the first outcome write is held. A new coordinator
+            // must still see SETUP and can finish the decline rather than resuming at history.
+            interruptedSkip.cancelAndJoin()
+            val restarted = coordinator(stages, store, this)
+            restarted.ensureLoaded()
+            advanceUntilIdle()
+            val resumedSkip = async { restarted.skipAll() }
+            runCurrent()
+
+            assertFalse("skip remains suspended on the held outcome write", resumedSkip.isCompleted)
+            assertEquals(FirstRunPhase.SETUP, restarted.firstRunPhase.first())
+            assertEquals(
+                mapOf("a" to SetupOutcome.NeverRun, "b" to SetupOutcome.NeverRun),
+                store.outcomes,
+            )
+
+            outcomeWriteGate.complete(Unit)
+            assertTrue(resumedSkip.await())
+            advanceUntilIdle()
+
+            assertEquals(
+                mapOf("a" to SetupOutcome.Skipped, "b" to SetupOutcome.Skipped),
+                store.outcomes,
+            )
+            assertEquals(FirstRunPhase.HISTORY, restarted.firstRunPhase.first())
+        }
 
     @Test
     fun aFailingStageLeavesLaterStagesRunningAndEarlierResultsIntact() =
@@ -379,11 +469,13 @@ class SetupCoordinatorTest {
             subject.claimFirstRunSetup()
             assertTrue(subject.firstRunSetupActive.first())
 
-            // A completed run owes the user nothing further. Holding the claim past this point
-            // would reopen the checklist on the next cold launch with no run in flight, where the
-            // only exit is "Skip setup" — overwriting the outcomes that just succeeded.
+            // Setup completion advances durably to the optional history decision, not another
+            // checklist. That decision keeps the first-run claim until explicitly dismissed.
             subject.start(setOf("a"))
             advanceUntilIdle()
+            assertTrue(subject.firstRunSetupActive.first())
+            assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+            subject.releaseFirstRunSetup()
             assertFalse(subject.firstRunSetupActive.first())
         }
 

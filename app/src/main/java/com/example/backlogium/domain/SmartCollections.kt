@@ -133,6 +133,9 @@ object SmartCollections {
      */
     const val ALMOST_DONE_ACHIEVEMENT_FRACTION = 0.8
 
+    internal fun recentPlayWindowStart(today: LocalDate, zone: ZoneId): Long =
+        today.minusDays(13).atStartOfDay(zone).toInstant().toEpochMilli()
+
     /**
      * Derive every list from one snapshot of library, achievement, and date facts.
      * [sessionZone] defaults to UTC so JVM callers have deterministic timestamp boundaries; the
@@ -146,6 +149,7 @@ object SmartCollections {
         favoriteAppIds: Set<Long> = emptySet(),
         nowMillis: Long = today.plusDays(1).atStartOfDay(sessionZone).toInstant().toEpochMilli() - 1,
     ): SmartCollectionResult {
+        val recentStart = recentPlayWindowStart(today, sessionZone)
         val rows = games
             .distinctBy { it.appId }
             .sortedWith(compareBy<SmartCollectionGame> { it.name.lowercase() }.thenBy { it.appId })
@@ -172,8 +176,7 @@ object SmartCollections {
                 SmartCollectionId.FAVORITES to membersWhere({ it.game.appId in favoriteAppIds }),
                 SmartCollectionId.PLAYED_RECENTLY to membersWhere({ row ->
                     row.game.recentPlayedAt?.let { at ->
-                        at <= nowMillis && at >= today.minusDays(13)
-                            .atStartOfDay(sessionZone).toInstant().toEpochMilli()
+                        at in recentStart..nowMillis
                     } == true
                 }),
                 SmartCollectionId.QUICK_WINS to membersWhere(

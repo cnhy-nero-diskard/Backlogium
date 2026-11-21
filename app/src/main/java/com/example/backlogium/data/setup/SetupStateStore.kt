@@ -10,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.backlogium.work.setup.SetupOutcome
 import com.example.backlogium.work.setup.decodeSetupOutcome
 import com.example.backlogium.work.setup.encodeSetupOutcome
+import com.example.backlogium.work.setup.FirstRunPhase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -36,7 +37,7 @@ interface SetupStateStore {
 
     /**
      * True from the moment a first configuration persists its credentials until the first-run setup
-     * surface is dismissed. This is the durable half of the onboarding takeover: saved-instance
+     * and optional history decision are dismissed. This is the durable half of the onboarding takeover: saved-instance
      * state survives rotation but not abrupt process death, and after credentials are stored a cold
      * launch has no other way to tell "configured, setup still owed" from "configured long ago".
      *
@@ -44,6 +45,8 @@ interface SetupStateStore {
      * configured and were never shown a setup step, so they must not be sent to one.
      */
     val firstRunSetupActiveFlow: Flow<Boolean>
+    val firstRunPhaseFlow: Flow<FirstRunPhase?>
+    suspend fun advanceToHistory()
 
     /** Every stored per-stage outcome, keyed by stage id, including ids this build may not know. */
     suspend fun storedOutcomes(): Map<String, SetupOutcome>
@@ -111,8 +114,19 @@ class DataStoreSetupStateStore @Inject constructor(
     }
 
     override val firstRunSetupActiveFlow: Flow<Boolean> = context.setupDataStore.data.map { prefs ->
-        prefs[FIRST_RUN_ACTIVE_KEY] ?: false
+        phaseOf(prefs) != null
     }
+
+    override val firstRunPhaseFlow: Flow<FirstRunPhase?> = context.setupDataStore.data.map(::phaseOf)
+
+    override suspend fun advanceToHistory() {
+        context.setupDataStore.edit { prefs ->
+            if (phaseOf(prefs) == FirstRunPhase.SETUP) prefs[FIRST_RUN_PHASE_KEY] = FirstRunPhase.HISTORY.name
+        }
+    }
+
+    private fun phaseOf(prefs: Preferences): FirstRunPhase? =
+        restoredFirstRunPhase(prefs[FIRST_RUN_PHASE_KEY], prefs[FIRST_RUN_ACTIVE_KEY] == true)
 
     override suspend fun storedOutcomes(): Map<String, SetupOutcome> {
         val prefs = context.setupDataStore.data.first()
@@ -198,7 +212,13 @@ class DataStoreSetupStateStore @Inject constructor(
 
     override suspend fun setFirstRunSetupActive(active: Boolean) {
         context.setupDataStore.edit { prefs ->
-            if (active) prefs[FIRST_RUN_ACTIVE_KEY] = true else prefs.remove(FIRST_RUN_ACTIVE_KEY)
+            if (active) {
+                prefs[FIRST_RUN_ACTIVE_KEY] = true
+                prefs[FIRST_RUN_PHASE_KEY] = FirstRunPhase.SETUP.name
+            } else {
+                prefs.remove(FIRST_RUN_ACTIVE_KEY)
+                prefs.remove(FIRST_RUN_PHASE_KEY)
+            }
         }
     }
 
@@ -210,6 +230,7 @@ class DataStoreSetupStateStore @Inject constructor(
         val ACTIVE_WORK_KEY = stringPreferencesKey("active_work_id")
         val COMPLETED_KEY = booleanPreferencesKey("setup_completed")
         val FIRST_RUN_ACTIVE_KEY = booleanPreferencesKey("first_run_setup_active")
+        val FIRST_RUN_PHASE_KEY = stringPreferencesKey("first_run_phase")
 
         fun outcomeKey(stageId: String): Preferences.Key<String> =
             stringPreferencesKey(OUTCOME_PREFIX + stageId)
@@ -222,3 +243,7 @@ class DataStoreSetupStateStore @Inject constructor(
             if (startsWith(prefix)) removePrefix(prefix).takeIf { it.isNotEmpty() } else null
     }
 }
+
+internal fun restoredFirstRunPhase(stored: String?, legacyActive: Boolean): FirstRunPhase? =
+    FirstRunPhase.entries.firstOrNull { it.name == stored }
+        ?: if (legacyActive) FirstRunPhase.SETUP else null

@@ -254,6 +254,7 @@ data class SettingsUiState(
     val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
+    val achievementWatch: com.example.backlogium.domain.AchievementWatchPreferences = com.example.backlogium.domain.AchievementWatchPreferences(),
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
     val isImportingHistory: Boolean = false,
@@ -475,6 +476,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
         state.copy(liveMonitorEnabled = monitorEnabled)
+    }.combine(settings.achievementWatch) { state, preferences ->
+        state.copy(achievementWatch = preferences)
     }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
         state.copy(cloudPresenceRefilingApplied = applied)
     }.combine(settings.cloudPresenceRefilingReceipt) { state, receipt ->
@@ -1415,6 +1418,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { profileRepository.reconcileNow() }
     }
 
+    fun onAchievementWatchChanged(preferences: com.example.backlogium.domain.AchievementWatchPreferences) = viewModelScope.launch {
+        settings.setAchievementWatch(preferences)
+    }
+
     /** Start only from this visible Settings interaction; disabling is observed by the service. */
     fun onLiveMonitorEnabledChanged(enabled: Boolean) = viewModelScope.launch {
         settings.setLiveMonitorEnabled(enabled)
@@ -1502,10 +1509,15 @@ class SettingsViewModel @Inject constructor(
     // concurrent taps can't overlap.
     private fun runHistoryOp(op: suspend () -> Unit) {
         if (isImportingHistory.value) return
+        isImportingHistory.value = true
         viewModelScope.launch {
-            isImportingHistory.update { true }
             try {
                 op()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _toastMessages.tryEmit(SettingsText(R.string.settings_history_operation_failed,
+                    listOf(error.message ?: "Try again.")))
             } finally {
                 isImportingHistory.update { false }
             }
@@ -1555,8 +1567,8 @@ class SettingsViewModel @Inject constructor(
         if (backupRepository.isMismatched(file)) {
             pendingMismatchImport.value = file
         } else {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
@@ -1567,11 +1579,23 @@ class SettingsViewModel @Inject constructor(
         val file = pendingMismatchImport.value ?: return
         pendingMismatchImport.value = null
         runBackupOp {
-            backupRepository.importBackup(file)
-            backupMessage.value = SettingsText(R.string.settings_backup_imported)
+            val summary = backupRepository.importBackup(file)
+            backupMessage.value = summary.toSettingsMessage()
             refreshSnapshots()
             _hapticIntents.tryEmit(HapticIntent.Confirm)
         }
+    }
+
+    private fun com.example.backlogium.data.backup.BackupImportSummary.toSettingsMessage(): SettingsText = when {
+        recoveryConflicts.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_conflict,
+            args = listOf(recoveryConflicts.size, recoveryConflicts.joinToString(" • ") { it.detail }),
+        )
+        recoveryWarnings.isNotEmpty() -> SettingsText(
+            R.string.settings_backup_imported_recovery_warning,
+            args = listOf(recoveryWarnings.size, recoveryWarnings.joinToString(" • ") { it.detail }),
+        )
+        else -> SettingsText(R.string.settings_backup_imported)
     }
 
     /** Delete one retained automatic snapshot after the user confirms the action in the UI. */

@@ -233,21 +233,28 @@ object PersonalPace {
         zone: ZoneId,
     ): PersonalPaceProfile = derive(dailyTotals(sessions, today, zone), today)
 
-    /** Derive from already bucketed local-date totals. Duplicate dates are summed safely. */
+    /**
+     * Derive from already bucketed local-date totals. Duplicate dates are summed safely.
+     * [unknownDates] includes every unresolved multi-day window date, even a zero-share or mixed
+     * date. Removing a complete-placement date from that set restores its eligibility; merely
+     * filtering estimated rows would otherwise synthesize invented zero-play observations.
+     */
     fun derive(
         totals: Iterable<DatedPlayTotal>,
         today: LocalDate,
+        unknownDates: Set<LocalDate> = emptySet(),
     ): PersonalPaceProfile {
         val firstDate = today.minusDays(LOOKBACK_DAYS)
         val lastDate = today.minusDays(1)
         val aggregated = totals.asSequence()
             .filter { !it.date.isBefore(firstDate) && !it.date.isAfter(lastDate) }
+            .filterNot { it.date in unknownDates }
             .groupingBy { it.date }
             .fold(0) { total, item -> total + item.minutes.coerceAtLeast(0) }
         val firstObserved = aggregated.keys.minOrNull() ?: return PersonalPaceProfile.empty()
         val dates = generateSequence(firstObserved) { current ->
             current.plusDays(1).takeUnless { it.isAfter(lastDate) }
-        }.map { date ->
+        }.filterNot { it in unknownDates }.map { date ->
             DatedPlayTotal(date, aggregated[date] ?: 0)
         }.toList()
 

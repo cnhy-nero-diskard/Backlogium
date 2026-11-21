@@ -1,16 +1,16 @@
 package com.example.backlogium.domain
 
 import androidx.room.withTransaction
+import com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.entity.AchievementWatchWork
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
-import com.example.backlogium.data.repo.CredentialsState
-import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SingleGameRefresh
 import com.example.backlogium.work.SteamSyncCoordinator
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.first
+import java.util.UUID
 import javax.inject.Inject
 
 enum class AchievementRefreshOutcome { UPDATED, NO_CHANGE, NO_USABLE_DATA, FAILED, NEEDS_CREDENTIALS, DISCARDED }
@@ -22,9 +22,7 @@ class RefreshGameAchievementsUseCase @Inject constructor(
     private val credentials: CredentialsProvider,
     private val marker: AccountChangeMarkerStore,
     private val sync: SteamSyncCoordinator,
-    private val derived: DerivedStateWriteCoordinator,
-    private val updater: GamificationUpdater,
-    private val settings: SettingsRepository,
+    private val recomputeRecovery: AchievementRecomputeRecovery,
     private val time: TimeProvider,
 ) {
     suspend operator fun invoke(appId: Long): AchievementRefreshOutcome {
@@ -42,22 +40,30 @@ class RefreshGameAchievementsUseCase @Inject constructor(
             val result = achievements.refreshOne(configured.apiKey, configured.steamId, appId,
                 commit = { merge ->
                     sync.withLock {
-                        derived.withLock {
-                            marker.withAccountState {
-                                val committed = database.withTransaction {
-                                    if (marker.generation() != generation || !eligible(appId, configured.steamId)) {
-                                        SingleGameRefresh.Discarded
-                                    } else merge()
+                        val committed = marker.withAccountState {
+                            database.withTransaction {
+                                if (marker.generation() != generation || !eligible(appId, configured.steamId)) {
+                                    return@withTransaction SingleGameRefresh.Discarded
                                 }
-                                if (committed is SingleGameRefresh.Persisted) {
-                                    // Repeating this recompute is idempotent, and retries also finish
-                                    // a derived write that failed after the raw merge committed.
-                                    val rules = settings.ruleConfigWithVersion.first()
-                                    updater.recompute(time.today(), RecomputeSource.SYNC, rules.config, rules.version)
+                                val result = merge()
+                                if (result is SingleGameRefresh.Persisted && result.xpInputsChanged) {
+                                    database.achievementWatchDao().insert(
+                                        AchievementWatchWork(
+                                            eventId = UUID.randomUUID().toString(),
+                                            account = configured.steamId,
+                                            appId = appId,
+                                            epoch = "manual-detail",
+                                            observedAt = time.nowMillis(),
+                                            recomputeNeeded = true,
+                                            epochClosed = true,
+                                        ),
+                                    )
                                 }
-                                committed
+                                result
                             }
                         }
+                        if (committed is SingleGameRefresh.Persisted) recomputeRecovery.resumeWhileLocked()
+                        committed
                     }
                 })
             // Failure/no-data responses also belong to the initiating account and game.
@@ -72,7 +78,7 @@ class RefreshGameAchievementsUseCase @Inject constructor(
                 is SingleGameRefresh.Persisted -> if (result.changed) AchievementRefreshOutcome.UPDATED else AchievementRefreshOutcome.NO_CHANGE
                 SingleGameRefresh.NoUsableData -> AchievementRefreshOutcome.NO_USABLE_DATA
                 SingleGameRefresh.Unavailable -> AchievementRefreshOutcome.FAILED
-                SingleGameRefresh.Discarded -> AchievementRefreshOutcome.DISCARDED
+                SingleGameRefresh.Discarded, SingleGameRefresh.Stale -> AchievementRefreshOutcome.DISCARDED
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

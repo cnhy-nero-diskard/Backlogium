@@ -8,7 +8,7 @@ planning without network or Android dependencies.
 ## Requirements
 
 ### Requirement: Local Personal Pace profile
-The system SHALL derive a Personal Pace profile entirely from locally stored synthesized sessions over the latest 56 completed local dates. It SHALL aggregate multiple sessions that start on the same local date, exclude the current partial date and open sessions from profile training, and issue no network request. The derivation SHALL accept injected date and zone inputs and SHALL have no Android dependency.
+The system SHALL derive Personal Pace entirely from locally stored eligible dated activity over the latest 56 completed local dates. It SHALL sum closed timestamped sessions by start date and eligible single-day unknown-time credits by their frozen allocation dates, exclude the current partial date and open sessions, and issue no network request. Multi-day estimated allocations SHALL be excluded from habit training and confidence. Unresolved dates affected by a multi-day estimate SHALL not be synthesized as observed zero-play dates; mixed dates with incomplete placement SHALL remain unknown for training unless independent evidence establishes their complete dated total. Pending date-unknown quantity SHALL supply no habit observation. The derivation SHALL accept injected date/zone and observation eligibility inputs and have no Android dependency.
 
 #### Scenario: Multiple sessions on one date
 - **WHEN** two or more closed sessions start on the same local date
@@ -26,12 +26,26 @@ The system SHALL derive a Personal Pace profile entirely from locally stored syn
 - **WHEN** the same stored sessions, date, and zone are supplied repeatedly
 - **THEN** the same profile is returned without issuing a network request or reading an Android clock
 
+#### Scenario: Multi-day distribution is not a habit observation
+- **WHEN** a gap's minutes are distributed across Tuesday through Friday
+- **THEN** those estimates do not train weekday duration or frequency and do not qualify as observed covered or active dates
+- **AND** removing the estimate from training does not turn its unresolved dates into observed zero-play days
+
+#### Scenario: Single-day unknown-time play
+- **WHEN** a completed date contains a single-day fallback with a known credited date
+- **THEN** those minutes can train date-level habits without supplying any time-of-day evidence
+
+#### Scenario: Evidence upgrade restores eligibility
+- **WHEN** delayed validated evidence fully resolves an estimated date's activity
+- **THEN** the now-eligible dated total participates in the next deterministic profile derivation
+
 ### Requirement: Robust habit estimation
-The Personal Pace profile SHALL distinguish active dates from zero-minute dates, derive expected active gaming days and typical active-day minutes, give more weight to recent observations, and account for weekday-specific behavior. Duration estimation SHALL use an outlier-resistant statistic so one unusually long day does not define the user's normal capacity. A weekday with sparse active observations SHALL be blended toward the user's global active-day pattern rather than treated as independently reliable.
+The Personal Pace profile SHALL distinguish eligible active dates, eligible zero-minute dates and unknown estimated dates, derive expected active gaming days and typical active-day minutes, give more weight to recent observations, and account for weekday-specific behavior. Duration estimation SHALL use an outlier-resistant statistic so one unusually long day does not define the user's normal capacity. A weekday with sparse active observations SHALL be blended toward the user's global active-day pattern rather than treated as independently reliable.
 
 #### Scenario: Zero-minute dates affect frequency
-- **WHEN** the lookback contains dates with no tracked sessions
-- **THEN** those dates reduce expected active-day frequency without being treated as zero-length active sessions
+- **WHEN** eligible completed dates contain no tracked play and are not unresolved multi-day estimated dates
+- **THEN** those dates reduce active-day frequency without becoming zero-length active sessions
+- **AND** unknown estimated dates contribute neither an active-day observation nor a zero-day observation
 
 #### Scenario: Recent behavior carries more weight
 - **WHEN** recent completed dates show a sustained play pattern different from older dates in the window
@@ -46,8 +60,8 @@ The Personal Pace profile SHALL distinguish active dates from zero-minute dates,
 - **THEN** its expected duration is blended with the global active-day duration
 
 ### Requirement: Confidence-aware profile
-The system SHALL classify Personal Pace as reliable only when the local history covers at least 14
-completed dates and includes at least six active dates. A profile that does not meet both
+The system SHALL classify Personal Pace as reliable only when the eligible local history covers at least 14
+completed dates and includes at least six eligible active dates. A profile that does not meet both
 thresholds SHALL remain in a learning state and SHALL NOT support definitive feasibility or
 infeasibility claims.
 
@@ -79,6 +93,10 @@ observed span SHALL NOT be accompanied by relaxing the active-date floor.
 - **WHEN** a profile satisfied the previous, longer covered-date threshold
 - **THEN** it remains reliable and its expected active days and expected gaming minutes are
   unchanged, because the threshold gates classification only and is not an input to the forecast
+
+#### Scenario: Estimates cannot manufacture reliability
+- **WHEN** spreading one recovered increase creates enough estimated dates to appear to cross a confidence threshold
+- **THEN** confidence does not increase from those estimated dates
 
 ### Requirement: Date-range capacity forecast
 Given a Personal Pace profile and an inclusive future local-date range, the system SHALL project expected active gaming days and expected gaming minutes by summing the profile's weekday-adjusted expectations for each date. It SHALL also calculate the minutes required per projected active day when a positive amount of required work is supplied. Forecast outputs SHALL be unformatted numeric values suitable for pure domain tests.
