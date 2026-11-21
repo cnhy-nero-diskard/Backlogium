@@ -536,3 +536,41 @@ Version 3 recovery observations and contribution ranges SHALL stay within the no
 #### Scenario: Ambiguous portable timed-session reference
 - **WHEN** a timed placement's natural key matches more than one exported session
 - **THEN** preflight rejects the ambiguous recovery reference before persistence
+
+### Requirement: Favorite preferences survive compatible backup merges
+Manual backups and snapshots SHALL include favorite preferences keyed by app ID, including explicit clears and absent-game records. Import SHALL merge explicit favorites without changing Focus or collection memberships. Omitted preferences SHALL preserve local values and leave new games unfavorited. Preflight validation, atomic merge, and warned cross-account import SHALL apply. Changing accounts remains a separate reset.
+
+#### Scenario: Set and cleared favorites round-trip
+- **WHEN** a backup with explicit true and false favorite values is exported and restored
+- **THEN** those values are restored exactly without changing Focus or custom membership
+
+#### Scenario: Legacy import preserves a local favorite
+- **WHEN** a supported older backup omits favorite preferences
+- **THEN** existing favorite preferences are preserved and absent values do not become an instruction to clear them
+
+#### Scenario: Invalid preference payload
+- **WHEN** a backup contains invalid or duplicate contradictory preference records
+- **THEN** import fails validation before any write
+
+#### Scenario: Cross-account merge
+- **WHEN** the user confirms the existing Steam identity mismatch warning
+- **THEN** explicit imported favorite values follow the same per-app-ID merge semantics without changing the configured account
+
+### Requirement: Artwork preferences retain explicit selection and reset
+Backups and snapshots SHALL carry a supported Steam cover variant or explicit reset independently of the favorite value. Omitted artwork SHALL preserve local selection while an explicit choice SHALL replace it. Imports SHALL validate before the atomic, warned merge. Artwork records SHALL contain no arbitrary URLs, image files, credentials, or implied favorite change.
+
+#### Scenario: Chosen variant round-trips
+- **WHEN** a backup containing a selected variant is restored
+- **THEN** the same variant remains preferred and the fallback chain handles its current availability
+
+#### Scenario: Reset round-trips
+- **WHEN** a backup with an explicit artwork reset and the same favorite value as the local game is imported
+- **THEN** the override is cleared and the favorite value is preserved
+
+#### Scenario: Favorite-only backup is imported
+- **WHEN** a supported older record contains favorite data but no artwork field
+- **THEN** favorite merge proceeds while the existing artwork preference is preserved
+
+#### Scenario: Invalid artwork preference
+- **WHEN** a backup contains an unsupported variant or invalid reset representation
+- **THEN** import rejects the payload before writing any records
