@@ -20,4 +20,4 @@
 
 - [x] 4.1 Integrate canonical activity and the shared daily breakdown with History. Keep recovery disclosures, frozen-date totals, allocation-aware paging, cloud reveal and account-safe navigation.
 - [x] 4.2 Verify mixed and allocation-only dates, frozen dates across zone changes, Focus-only credit, and paging on the integrated branch.
-- [ ] 4.3 Re-record and verify affected Roborazzi baselines, rerun strict OpenSpec validation, and document current acceptance evidence.
+- [x] 4.3 Re-record and verify affected Roborazzi baselines, rerun strict OpenSpec validation, and document current acceptance evidence.

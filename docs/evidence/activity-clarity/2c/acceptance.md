@@ -26,3 +26,15 @@ Draft [#176](https://github.com/cnhy-nero-diskard/Backlogium/pull/176) owns shar
 Draft [#177](https://github.com/cnhy-nero-diskard/Backlogium/pull/177) owns unlock-only dates, the extended evidence floor and marginal daily XP. The new 2c requirement names are distinct. HistoryDayGroup.activity carries optional credit/outcome; later evidence-only models must preserve unknown amounts rather than reuse legacy Int/Boolean defaults. The current session/progress evidence floor is preserved; unlock-only dates and XP remain unapplied.
 
 Controlled emulator evidence does not cover a physical device or the complete authenticated shell. Compose semantics test labels, action names, state descriptions and touch targets; manual TalkBack traversal and live-account mixed-source reconciliation were not performed. Explicit labels increase scrolling at 150% font; text remains readable and actions scroll into view.
+
+## Verification after the master merge
+
+The activity clarity branch was integrated with master at `985f31da`. Home and History share canonical dated evidence. Mixed and allocation-only days retain their estimates, funded minutes retain their frozen credited dates, and older allocation-only dates keep earlier loading available. History retains clock rows, exact cloud-session reveal, and separate pending-date recovery status.
+
+- The app and gamification JVM suites passed all 2,474 tests. The recovery projection test covers a zone change, mixed and allocation-only days, the older-content floor, and stored daily and Focus minutes.
+- The GPU-verified API 37 emulator passed 50 focused tests covering Home, History, Analytics, and Personal Momentum. The isolated fixture build uses empty Steam credentials. History and Home fixture checks cover both themes, larger text, labels, navigation, and recovery disclosures.
+- Roborazzi verified all 37 scoped Home, History, and Analytics comparisons. The merge refreshed 36 tracked baselines. The branch retains the existing Library baselines.
+- Debug assembly and lint passed with the repository's existing lint baseline.
+- Strict OpenSpec validation passed for `1c-add-daily-game-breakdown` and `2c-clarify-history-session-presentation`. Git whitespace and the visual-baseline currency checks passed.
+
+The results cover controlled fixtures and local Room snapshots. Authenticated Steam playback and manual TalkBack traversal remain outside this record.

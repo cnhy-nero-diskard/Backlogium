@@ -14,3 +14,9 @@ Device captures use the isolated validation package `com.example.backlogium.acti
 Scope coordination: [draft #176](https://github.com/cnhy-nero-diskard/Backlogium/pull/176) owns broader provenance classification; these labels describe recorded evidence and earned credit without blanket Steam-source claims. [Draft #177](https://github.com/cnhy-nero-diskard/Backlogium/pull/177) owns unlock-only History and daily XP. This disclosure stays inside the quest card and adds neither feature. `DailyActivity` and its bounded repository remain reusable by 2c.
 
 Unavailable contexts: physical-device and manual TalkBack traversal were not performed. Captures cover production Home content in the test activity, rather than the complete authenticated navigation shell. Navigation return uses the same saveable-state mechanism as the shell; detail eligibility is checked against current local visibility, account, and date before opening.
+
+## Verification after the master merge
+
+Home reads canonical dated activity and stored daily progress from one local Room snapshot. The Focus-only card uses the stored Focus amount. The expanded breakdown identifies stored daily play, stored Focus play, visible play and estimated recovery separately.
+
+The focused Room tests cover a timezone change, frozen funded placement, an allocation-only date, hidden-game exclusion, and coherent progress refresh. The device suite checks the Focus-only card, the estimate explanation, navigation return, and same-account/date expansion. See the [integration test results](../2c/acceptance.md#verification-after-the-master-merge).
