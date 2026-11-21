@@ -232,6 +232,126 @@ class ProgressEventDetectorTest {
         assertEquals(pending, result.marks.pendingStreakBreak)
     }
 
+    // ---------------------------------------------------------------- recover-missed-playtime 5.5/5.6
+
+    @Test
+    fun earnedLevelUpIsRecordedAsADurableObligation() {
+        val result = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            current = ProgressState(level = 7, currentStreak = 0, todayQuestMet = false),
+        )
+
+        assertEquals(listOf(ProgressEvent.LevelUp(4, 7)), result.events)
+        assertEquals(setOf(PendingLevelUp(4, 7)), result.marks.pendingLevelUps)
+    }
+
+    @Test
+    fun aFurtherRiseWhileOneIsOwedAddsADistinctEvent() {
+        val first = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            current = ProgressState(level = 7, currentStreak = 0, todayQuestMet = false),
+        )
+        val second = detect(
+            marks = first.marks,
+            previous = ProgressState(level = 7, currentStreak = 0, todayQuestMet = false),
+            current = ProgressState(level = 9, currentStreak = 0, todayQuestMet = false),
+        )
+
+        // Independent transitions stay independent: the new rise is its own earned event, not a
+        // collapsed extension of the still-owed one.
+        assertEquals(listOf(ProgressEvent.LevelUp(7, 9)), second.events)
+        assertEquals(setOf(PendingLevelUp(4, 7), PendingLevelUp(7, 9)), second.marks.pendingLevelUps)
+    }
+
+    @Test
+    fun owedLevelUpSurvivesACorrectiveReseedWithoutRegressingTheBaseline() {
+        val owed = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            current = ProgressState(level = 7, currentStreak = 0, todayQuestMet = false),
+        )
+        val corrected = detect(
+            marks = owed.marks,
+            previous = ProgressState(level = 7, currentStreak = 0, todayQuestMet = false),
+            current = ProgressState(level = 20, currentStreak = 0, todayQuestMet = false),
+            source = RecomputeSource.RETROACTIVE_PLAY,
+        )
+
+        // The corrective pass generated nothing and did not consume the already-owed delivery.
+        assertTrue(corrected.events.isEmpty())
+        assertEquals(setOf(PendingLevelUp(4, 7)), corrected.marks.pendingLevelUps)
+        assertEquals(20, corrected.marks.lastCelebratedLevel)
+    }
+
+    @Test
+    fun owedStreakBreakSurvivesACorrectiveReseed() {
+        val pending = PendingStreakBreak(today, 12)
+        val result = detect(
+            marks = initializedMarks(level = 4).copy(pendingStreakBreak = pending),
+            previous = ProgressState(level = 4, currentStreak = 12, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            source = RecomputeSource.RETROACTIVE_PLAY,
+        )
+
+        assertTrue(result.events.isEmpty())
+        assertEquals(pending, result.marks.pendingStreakBreak)
+        // The corrective drop counts for acknowledgement only when nothing was already owed.
+        assertEquals(null, result.marks.lastStreakBrokenDate)
+    }
+
+    @Test
+    fun correctiveDropWithoutAnOwedBreakStillRecordsTheAcknowledgedDate() {
+        val result = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 12, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            source = RecomputeSource.RULE_CHANGE,
+        )
+
+        assertTrue(result.events.isEmpty())
+        assertEquals(null, result.marks.pendingStreakBreak)
+        assertEquals(today, result.marks.lastStreakBrokenDate)
+    }
+
+    @Test
+    fun owedMilestonesSurviveACorrectiveReseed() {
+        val first = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 6, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 8, todayQuestMet = false),
+        )
+        assertEquals(listOf(ProgressEvent.StreakMilestone(7)), first.events)
+        assertEquals(setOf(7), first.marks.pendingStreakMilestones)
+
+        val corrected = detect(
+            marks = first.marks,
+            previous = ProgressState(level = 4, currentStreak = 8, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 0, todayQuestMet = false),
+            source = RecomputeSource.RETROACTIVE_PLAY,
+        )
+        assertTrue(corrected.events.isEmpty())
+        assertEquals(setOf(7), corrected.marks.pendingStreakMilestones)
+    }
+
+    @Test
+    fun freshMilestoneAfterAnOwedOneAddsWithoutDuplicating() {
+        val first = detect(
+            marks = initializedMarks(level = 4),
+            previous = ProgressState(level = 4, currentStreak = 6, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 8, todayQuestMet = false),
+        )
+        val second = detect(
+            marks = first.marks,
+            previous = ProgressState(level = 4, currentStreak = 8, todayQuestMet = false),
+            current = ProgressState(level = 4, currentStreak = 15, todayQuestMet = false),
+        )
+
+        assertEquals(listOf(ProgressEvent.StreakMilestone(14)), second.events)
+        assertEquals(setOf(7, 14), second.marks.pendingStreakMilestones)
+    }
+
     private fun detect(
         marks: ProgressMarks,
         previous: ProgressState?,

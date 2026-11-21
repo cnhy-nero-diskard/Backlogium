@@ -7,7 +7,7 @@ import org.junit.Test
 class DailyActivityTest {
     private val date = LocalDate.of(2026, 10, 3)
     private fun read(minutes: List<Int>, credit: Long?) = dailyActivity(
-        date, "fixture-account", minutes.map { DailyActivityEvidence(1, "Game", it, true) }, credit,
+        date, "fixture-account", minutes.map { DailyActivityEvidence(1, "Game", it.toLong(), true) }, credit,
         credit?.let { it >= 30 },
     )
 
@@ -20,7 +20,7 @@ class DailyActivityTest {
 
     @Test fun absentCreditDoesNotEvaluateQuest() {
         val result = read(listOf(60), null)
-        assertNull(result.creditedMinutes)
+        assertNull(result.storedMinutes)
         assertNull(result.questMet)
         assertNull(result.differenceMinutes)
     }
@@ -29,13 +29,13 @@ class DailyActivityTest {
         assertTrue(read(emptyList(), 60).games.isEmpty())
         assertEquals(60L, read(emptyList(), 60).differenceMinutes)
         assertEquals(1, read(listOf(0), 0).games.size)
-        assertNull(read(emptyList(), null).creditedMinutes)
+        assertNull(read(emptyList(), null).storedMinutes)
     }
 
     @Test fun widerSumsAndMissingIdentityDoNotDisappear() {
         val result = dailyActivity(date, "fixture-account", listOf(
-            DailyActivityEvidence(1, null, Int.MAX_VALUE, false),
-            DailyActivityEvidence(1, null, Int.MAX_VALUE, false),
+            DailyActivityEvidence(1, null, Int.MAX_VALUE.toLong(), false),
+            DailyActivityEvidence(1, null, Int.MAX_VALUE.toLong(), false),
             DailyActivityEvidence(2, "Other", 40, true),
         ), 30, false)
         assertEquals(4_294_967_334L, result.recordedMinutes)

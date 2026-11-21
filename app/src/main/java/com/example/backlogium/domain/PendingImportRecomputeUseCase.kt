@@ -6,7 +6,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.first
 
 /**
- * Resolves a backup merge whose raw-data transaction committed but whose follow-up gamification
+ * Resolves a backup merge or Steam-history import whose raw-data transaction committed but whose follow-up gamification
  * recompute never ran — the process ended in the window between the two, which
  * [PlayerProfile.pendingImportRecompute][com.example.backlogium.data.local.entity.PlayerProfile.pendingImportRecompute]
  * exists to detect (auditfix-backup-integrity design.md decision 2). That flag lives in Room so it

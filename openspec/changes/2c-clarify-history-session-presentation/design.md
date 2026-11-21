@@ -26,7 +26,7 @@ Alternative: flatten all sessions into chronological order or add text/timeline 
 
 ### Reuse daily evidence without loading one query per day
 
-Extend `1c`'s projection/composition to the currently loaded History date bounds. Read a coherent bounded snapshot and map its days into History UI models off the main thread. Preserve each visible day's session subtotal and show authoritative stored credit/outcome separately when needed. Progress-only rows retain recorded amounts with no invented per-game distribution; sessions without recorded outcomes show unavailable quest state. Current Focus membership can describe current filtering only, never historical Focus membership inferred from today's flags.
+Extend `1c`'s projection/composition to the currently loaded History date bounds. Read a coherent bounded snapshot and map its days into History UI models off the main thread. Compute each visible day's total from canonical dated play and show stored daily play, Focus play and the recorded quest outcome separately. Progress-only rows retain recorded amounts with no invented per-game distribution; sessions without recorded outcomes show unavailable quest state. Current Focus membership can describe current filtering only, never historical Focus membership inferred from today's flags.
 
 When PR #177 lands, its explicit evidence-only states must flow through the same presentation without fabricating zero minutes or a failed quest. Do not implement that feature here. Broad provenance markers, if supplied by PR #176, reuse these facts rather than duplicate help actions.
 
@@ -34,7 +34,7 @@ Alternative: rewrite stored daily progress to match the currently visible tree. 
 
 ### Preserve interaction state and evidence floor
 
-Keep existing older-window bounds and fully-loaded calculation; this change does not redefine the evidence floor owned by PR #177. Stable day/app/session keys preserve expansion, scroll, and cloud reveal. Maintain today's date transition and reject obsolete account snapshots. A reveal target that disappears receives the current clear fallback, not a jump to the nearest game or day. Missing time gaps receive no invented zero-activity or continuous-play claim.
+Keep the existing older-window bounds and use the canonical dated activity and progress floor. The unlock-only evidence floor remains in the proposal merged in PR #177. Stable day/app/session keys preserve expansion, scroll, and cloud reveal. Refresh the bounded snapshot on local date or zone changes and reject obsolete account snapshots. A reveal target that disappears receives the current clear fallback, not a jump to the nearest game or day. Missing time gaps receive no invented zero-activity or continuous-play claim.
 
 ## Risks / Trade-offs
 

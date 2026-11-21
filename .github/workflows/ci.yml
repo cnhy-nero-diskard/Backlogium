@@ -32,7 +32,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
-          path: '**/build/reports/tests/'
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
 
   visual-regression:
     name: Compose screenshot verification
@@ -58,6 +60,8 @@ jobs:
           --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest
+          --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest
+          --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest
 
       - name: Upload Roborazzi failure artifacts
         if: failure()

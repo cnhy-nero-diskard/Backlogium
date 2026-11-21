@@ -33,6 +33,8 @@ alter the goldens:
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
   --no-daemon
 ```
 
@@ -42,6 +44,7 @@ screen, state, theme, and viewport:
 - `main/<screen>/<state>/<theme>/<viewport>.png` contains the 20 core cells.
 - `alternatives/<screen>/<state>/dark/standard.png` contains the bounded edge-state cells.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
+- `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.
 
 Generated actual, compare/diff, JSON, and HTML report files live below `app/build/` and are
 ignored. They must not be committed as baselines.
@@ -57,6 +60,8 @@ classes used by CI:
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
   --offline --no-daemon
 ```
 
@@ -96,4 +101,3 @@ It fails only when a fixture-rendered source changed and no file under
 A copy-only edit to `strings.xml` counts as visual, because it moves rendered pixels. A pull request
 that regenerates the whole suite satisfies the gate on any recorded baseline, because
 `recordRoborazziDebug` always re-records every matching test.
-

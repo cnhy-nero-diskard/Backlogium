@@ -47,6 +47,9 @@ FIXTURE_RENDERED_SOURCES: tuple[str, ...] = (
     "app/src/main/java/com/example/backlogium/ui/library",
     # SettingsOverviewScreen. Over-matches SettingsScreen.kt, which the fixtures do not draw.
     "app/src/main/java/com/example/backlogium/ui/settings",
+    # SetupRecoveryScreenshotBase renders the shared setup controls and history decision.
+    "app/src/main/java/com/example/backlogium/ui/setup",
+    "app/src/main/java/com/example/backlogium/ui/onboarding",
     # BacklogiumTheme
     "app/src/main/java/com/example/backlogium/ui/theme",
     # Every rendered label, so a copy change is treated as a visual change.
@@ -59,6 +62,7 @@ FIXTURE_RENDERED_SOURCES: tuple[str, ...] = (
 FIXTURE_SOURCES: tuple[str, ...] = (
     "app/src/test/java/com/example/backlogium/ui/screenshot/MainScreenshotFixtures.kt",
     "app/src/test/java/com/example/backlogium/ui/screenshot/ScreenshotTestSupport.kt",
+    "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
 )
 
 # The single label that acknowledges a covered change which provably cannot move a pixel.

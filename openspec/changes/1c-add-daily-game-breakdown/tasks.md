@@ -18,6 +18,6 @@
 
 ## 4. Reconcile with playtime recovery
 
-- [ ] 4.1 Read canonical dated activity, visibility and stored progress in one bounded snapshot and verify mixed, allocation-only, hidden, and frozen-date inputs.
-- [ ] 4.2 Present stored all-play and Focus totals separately and disclose estimates in the Home game breakdown. Preserve account and date gating.
+- [x] 4.1 Read canonical dated activity, visibility and stored progress in one bounded snapshot and verify mixed, allocation-only, hidden, and frozen-date inputs.
+- [x] 4.2 Present stored all-play and Focus totals separately and disclose estimates in the Home game breakdown. Preserve account and date gating.
 - [ ] 4.3 Verify the updated Home projection and presentation on the integrated branch.

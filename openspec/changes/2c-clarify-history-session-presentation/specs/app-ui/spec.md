@@ -69,6 +69,10 @@ History clarity changes SHALL preserve its bounded loaded date window, older-con
 - **WHEN** a cloud activity item targets a session still present in the loaded window
 - **THEN** its exact day, game, and session remain revealable after the presentation change
 
+#### Scenario: Device timezone changes
+- **WHEN** the device timezone changes while History is open
+- **THEN** the visible window refreshes with local-start attribution for unlinked session minutes and retains frozen recovery dates
+
 #### Scenario: Account changes during loading
 - **WHEN** the active account changes while history recomputes
 - **THEN** the previous account's records are cleared and late results cannot repopulate them

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -12,6 +13,9 @@ import androidx.compose.ui.unit.dp
 import com.example.backlogium.R
 import com.example.backlogium.domain.DailyActivity
 import com.example.backlogium.domain.DailyActivityKey
+import com.example.backlogium.ui.components.RecoveryExplanationControl
+import com.example.backlogium.ui.history.recoveryShares
+import com.example.backlogium.ui.history.toHistoryAllocationUi
 import com.example.backlogium.ui.util.UiFormat
 import kotlin.math.abs
 
@@ -42,8 +46,11 @@ internal fun DailyActivityContent(activity: DailyActivity, onOpenGame: (Long) ->
         Text(UiFormat.date(activity.date), style = MaterialTheme.typography.labelLarge)
         if (activity.updating) Text(stringResource(R.string.activity_updating))
         Text(stringResource(R.string.activity_recorded_total, UiFormat.count(activity.recordedMinutes)))
-        Text(activity.creditedMinutes?.let { stringResource(R.string.activity_credited_total, UiFormat.count(it)) }
+        Text(activity.storedMinutes?.let { stringResource(R.string.activity_stored_total, UiFormat.count(it)) }
             ?: stringResource(R.string.activity_credit_unavailable))
+        activity.storedFocusMinutes?.let {
+            Text(stringResource(R.string.activity_stored_focus_total, UiFormat.count(it)))
+        }
         val difference = activity.differenceMinutes
         if (difference != null && difference != 0L) {
             Text(stringResource(
@@ -52,13 +59,23 @@ internal fun DailyActivityContent(activity: DailyActivity, onOpenGame: (Long) ->
             ))
         }
         if (activity.games.isEmpty()) {
-            Text(stringResource(if ((activity.creditedMinutes ?: 0) > 0)
+            Text(stringResource(if (activity.storedMinutes != null)
                 R.string.activity_allocation_unavailable else R.string.activity_no_records))
         }
         activity.games.forEach { game ->
             val name = game.name ?: stringResource(R.string.activity_app_fallback, UiFormat.count(game.appId))
             Column(Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.activity_game_minutes, name, UiFormat.count(game.minutes)))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.activity_game_minutes, name, UiFormat.count(game.minutes)),
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (game.allocations.isNotEmpty()) {
+                        RecoveryExplanationControl(
+                            shares = recoveryShares(game.allocations.map { it.toHistoryAllocationUi() }),
+                        )
+                    }
+                }
                 if (game.detailAvailable) {
                     TextButton(onClick = { onOpenGame(game.appId) }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.activity_open_game, name))

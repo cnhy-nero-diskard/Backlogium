@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: exact-pending
+expected_outcome: |
+  Keep the pair pending and ask for exact-pair approval before a direct fetch; never infer approval from exact title, confidence, or a general fetch request.

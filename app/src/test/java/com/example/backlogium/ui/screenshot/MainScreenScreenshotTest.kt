@@ -45,6 +45,46 @@ internal class MainScreenScreenshotNarrowTest : MainScreenshotTestBase() {
     }
 
     @Test
+    fun historyAllocationsSingleLightBaseline() {
+        captureFixture("main/history/allocations-single/light/narrow.png", MainFixtureKind.HISTORY_ALLOCATION_SINGLE, darkTheme = false)
+    }
+
+    @Test
+    fun historyAllocationsSingleDarkBaseline() {
+        captureFixture("main/history/allocations-single/dark/narrow.png", MainFixtureKind.HISTORY_ALLOCATION_SINGLE, darkTheme = true)
+    }
+
+    @Test
+    fun historyAllocationsMultiLightBaseline() {
+        captureFixture("main/history/allocations-multi/light/narrow.png", MainFixtureKind.HISTORY_ALLOCATION_MULTI, darkTheme = false)
+    }
+
+    @Test
+    fun historyAllocationsMultiDarkBaseline() {
+        captureFixture("main/history/allocations-multi/dark/narrow.png", MainFixtureKind.HISTORY_ALLOCATION_MULTI, darkTheme = true)
+    }
+
+    @Test
+    fun historyMixedLightBaseline() {
+        captureFixture("main/history/mixed/light/narrow.png", MainFixtureKind.HISTORY_MIXED, darkTheme = false)
+    }
+
+    @Test
+    fun historyMixedDarkBaseline() {
+        captureFixture("main/history/mixed/dark/narrow.png", MainFixtureKind.HISTORY_MIXED, darkTheme = true)
+    }
+
+    @Test
+    fun historyUnavailableLightNarrowBaseline() {
+        captureFixture("main/history/unavailable/light/narrow.png", MainFixtureKind.HISTORY_UNAVAILABLE, darkTheme = false)
+    }
+
+    @Test
+    fun historyUnavailableDarkNarrowBaseline() {
+        captureFixture("main/history/unavailable/dark/narrow.png", MainFixtureKind.HISTORY_UNAVAILABLE, darkTheme = true)
+    }
+
+    @Test
     fun analyticsPopulatedLightBaseline() {
         captureFixture("main/analytics/populated/light/narrow.png", MainFixtureKind.ANALYTICS_POPULATED, darkTheme = false)
     }
@@ -52,6 +92,16 @@ internal class MainScreenScreenshotNarrowTest : MainScreenshotTestBase() {
     @Test
     fun analyticsPopulatedDarkBaseline() {
         captureFixture("main/analytics/populated/dark/narrow.png", MainFixtureKind.ANALYTICS_POPULATED, darkTheme = true)
+    }
+
+    @Test
+    fun analyticsAllocationsOnlyLightBaseline() {
+        captureFixture("main/analytics/allocations-only/light/narrow.png", MainFixtureKind.ANALYTICS_ALLOCATIONS_ONLY, darkTheme = false)
+    }
+
+    @Test
+    fun analyticsAllocationsOnlyDarkBaseline() {
+        captureFixture("main/analytics/allocations-only/dark/narrow.png", MainFixtureKind.ANALYTICS_ALLOCATIONS_ONLY, darkTheme = true)
     }
 
     @Test
@@ -101,6 +151,36 @@ internal class MainScreenScreenshotStandardTest : MainScreenshotTestBase() {
     }
 
     @Test
+    fun historyAllocationsSingleLightBaseline() {
+        captureFixture("main/history/allocations-single/light/standard.png", MainFixtureKind.HISTORY_ALLOCATION_SINGLE, darkTheme = false)
+    }
+
+    @Test
+    fun historyAllocationsSingleDarkBaseline() {
+        captureFixture("main/history/allocations-single/dark/standard.png", MainFixtureKind.HISTORY_ALLOCATION_SINGLE, darkTheme = true)
+    }
+
+    @Test
+    fun historyAllocationsMultiLightBaseline() {
+        captureFixture("main/history/allocations-multi/light/standard.png", MainFixtureKind.HISTORY_ALLOCATION_MULTI, darkTheme = false)
+    }
+
+    @Test
+    fun historyAllocationsMultiDarkBaseline() {
+        captureFixture("main/history/allocations-multi/dark/standard.png", MainFixtureKind.HISTORY_ALLOCATION_MULTI, darkTheme = true)
+    }
+
+    @Test
+    fun historyMixedLightBaseline() {
+        captureFixture("main/history/mixed/light/standard.png", MainFixtureKind.HISTORY_MIXED, darkTheme = false)
+    }
+
+    @Test
+    fun historyMixedDarkBaseline() {
+        captureFixture("main/history/mixed/dark/standard.png", MainFixtureKind.HISTORY_MIXED, darkTheme = true)
+    }
+
+    @Test
     fun analyticsPopulatedLightBaseline() {
         captureFixture("main/analytics/populated/light/standard.png", MainFixtureKind.ANALYTICS_POPULATED, darkTheme = false)
     }
@@ -111,6 +191,16 @@ internal class MainScreenScreenshotStandardTest : MainScreenshotTestBase() {
     }
 
     @Test
+    fun analyticsAllocationsOnlyLightBaseline() {
+        captureFixture("main/analytics/allocations-only/light/standard.png", MainFixtureKind.ANALYTICS_ALLOCATIONS_ONLY, darkTheme = false)
+    }
+
+    @Test
+    fun analyticsAllocationsOnlyDarkBaseline() {
+        captureFixture("main/analytics/allocations-only/dark/standard.png", MainFixtureKind.ANALYTICS_ALLOCATIONS_ONLY, darkTheme = true)
+    }
+
+    @Test
     fun settingsOverviewLightBaseline() {
         captureFixture("main/settings/overview/light/standard.png", MainFixtureKind.SETTINGS_OVERVIEW, darkTheme = false)
     }
@@ -118,6 +208,16 @@ internal class MainScreenScreenshotStandardTest : MainScreenshotTestBase() {
     @Test
     fun settingsOverviewDarkBaseline() {
         captureFixture("main/settings/overview/dark/standard.png", MainFixtureKind.SETTINGS_OVERVIEW, darkTheme = true)
+    }
+
+    @Test
+    fun historyUnavailableLightStandardBaseline() {
+        captureFixture("main/history/unavailable/light/standard.png", MainFixtureKind.HISTORY_UNAVAILABLE, darkTheme = false)
+    }
+
+    @Test
+    fun historyUnavailableDarkStandardBaseline() {
+        captureFixture("main/history/unavailable/dark/standard.png", MainFixtureKind.HISTORY_UNAVAILABLE, darkTheme = true)
     }
 
     @Test

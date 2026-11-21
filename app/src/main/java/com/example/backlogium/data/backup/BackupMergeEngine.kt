@@ -30,8 +30,12 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.RecomputeSource
+import com.example.backlogium.domain.DailyProgressBackfillUseCase
+import com.example.backlogium.domain.UnknownTimeMaterializer
+import com.example.backlogium.work.SteamSyncCoordinator
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.defaultSort
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.gamification.RuleConfig
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -69,15 +73,35 @@ class BackupMergeEngine @Inject constructor(
     private val time: TimeProvider,
     private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+    /**
+     * The recovery graph's read/write seam (recover-missed-playtime, design.md Decision 10).
+     * Defaulted to the no-op store so a test that does not exercise recovery stays constructible;
+     * production binds [DaoRecoveryBackupStore].
+     */
+    private val recoveryStore: RecoveryBackupStore = NoopRecoveryBackupStore,
+    /**
+     * Resolves the configured SteamID64 for the recovery merge, mirroring the export mapper's
+     * account resolution. Nullable so a plain JVM test can omit it; production injects the bound
+     * [com.example.backlogium.data.repo.CredentialsProvider].
+     */
+    private val credentials: CredentialsProvider? = null,
+    /** Serializes raw merge with Steam/account-reset commits; the Room transaction remains authority. */
+    private val syncCoordinator: SteamSyncCoordinator = SteamSyncCoordinator(),
+    /** Canonical daily raw projection after recovery-aware restore; optional for unrelated JVM tests. */
+    private val dailyProgressBackfill: DailyProgressBackfillUseCase? = null,
+    /** Drains bounded compact-recipe slices before restored derived state is recomputed. */
+    private val unknownTimeMaterializer: UnknownTimeMaterializer? = null,
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
      * which is export-time-only (see [BackupFile.ruleConfig]'s doc). Passed in rather than read
      * internally so this engine stays a plain, JVM-testable class, mirroring [GamificationUpdater].
      */
-    suspend fun merge(file: BackupFile, config: RuleConfig, configVersion: Long = 0L) =
-        derivedStateWrites.withLock {
-            mergeContents(file, config, configVersion)
+    suspend fun merge(file: BackupFile, config: RuleConfig, configVersion: Long = 0L): RecoveryMergeSummary =
+        syncCoordinator.withLock {
+            derivedStateWrites.withLock {
+                mergeContents(file, config, configVersion)
+            }
         }
 
     /** Called by [BackupRepository] while it owns the shared rule/write coordinator. */
@@ -85,9 +109,10 @@ class BackupMergeEngine @Inject constructor(
         file: BackupFile,
         config: RuleConfig,
         configVersion: Long,
-    ) {
-        mergeRawWithLockHeld(file)
+    ): RecoveryMergeSummary {
+        val summary = mergeRawWithLockHeld(file)
         recomputeAfterMerge(file, config, configVersion)
+        return summary
     }
 
     /**
@@ -100,19 +125,42 @@ class BackupMergeEngine @Inject constructor(
      * the reconciliation that [mutateHiddenSetAndReconcile] performs: the recompute below stays
      * outside it (see [recomputeAfterMerge]).
      */
-    internal suspend fun mergeRawWithLockHeld(file: BackupFile) {
+    internal suspend fun mergeRawWithLockHeld(file: BackupFile): RecoveryMergeSummary {
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
+
+        val activeAccount = credentials?.currentCredentials()?.steamId?.takeIf { it.isNotBlank() }
+            ?: playerProfileDao.get()?.steamId?.takeIf { it.isNotBlank() }
 
         // Every raw-data write commits as one unit (design.md decision 2). No suspension besides
         // these DAO calls happens in here — no settings, no file access, nothing that hops
         // threads — so the transaction cannot deadlock or be left holding a connection open.
+        val sessionIdByKey = mutableMapOf<RecoverySessionKey, Long>()
+        var plan: RecoveryMergePlan? = null
         transaction.run {
+            // Snapshot local recovery only after the raw Room transaction begins. A concurrent
+            // Steam commit is serialized by Room and this prevents planning against a stale graph
+            // captured before that commit.
+            val localRecovery = activeAccount?.let { recoveryStore.read(it) }
+            // Portable session tombstones (a retired synthetic's natural key) suppress the same
+            // synthetic coming back from an older backup; they travel in the journal's free JSON.
+            val tombstonedSessions = sessionTombstones(file.recovery?.replacements.orEmpty()) +
+                sessionTombstones(localRecovery?.replacements.orEmpty())
             file.excludedSharedGames.forEach { mergeExcludedSharedGame(it) }
             // Games first: Session/Achievement/HltbData all carry a FOREIGN KEY on games.appId, so
             // a fresh-install restore (no games synced yet) needs the skeleton row to exist first.
             file.games.forEach { mergeGame(it) }
-            file.sessions.forEach { mergeSession(it) }
+            file.sessions.forEach { mergeSession(it, tombstonedSessions, sessionIdByKey) }
+            // The recovery graph commits inside the same transaction as every other raw write, so
+            // an interrupted version 3 import rolls observations, contribution revisions,
+            // placements and replacements back together (backup-restore "Interrupted import").
+            val recoveryPlan = mergeRecoveryPlan(file.recovery, localRecovery, activeAccount)
+            recoveryStore.apply(recoveryPlan, time.nowMillis(), linkedSessionIds(recoveryPlan, sessionIdByKey))
+            // Keep the legacy detector pair honest: Game.lastPlaytime follows the authoritative
+            // recovery high-water so the next Steam read cannot re-credit imported quantity.
+            syncGamesWithObservations(recoveryPlan)
+            plan = recoveryPlan
+
             file.dailyProgress.forEach { mergeDailyProgress(it) }
             file.hltbData.forEach { mergeHltbData(it) }
             file.achievements.forEach { mergeAchievement(it) }
@@ -121,6 +169,37 @@ class BackupMergeEngine @Inject constructor(
             // Applied before the recompute below, so the restored XP already excludes the games the
             // file records as hidden rather than briefly counting them and then correcting.
             mergeHiddenGames(file.hiddenGames)
+
+            // A fresh install may not yet have admitted the credential SteamID into the singleton
+            // profile. The raw backup sections have already passed the receiving-account warning
+            // policy; admit only when the profile has no identity, never overwrite a different
+            // nonblank local identity here.
+            val beforeProfile = playerProfileDao.get()
+            if (beforeProfile == null) playerProfileDao.insertIfMissing()
+            val profileAfterEnsure = playerProfileDao.get()
+            if (activeAccount != null && profileAfterEnsure?.steamId.isNullOrBlank()) {
+                val profile = profileAfterEnsure ?: com.example.backlogium.data.local.entity.PlayerProfile()
+                playerProfileDao.updateSteamIdentity(
+                    steamId = activeAccount,
+                    steamLevel = profile.steamLevel,
+                    personaName = profile.personaName,
+                    avatarUrl = profile.avatarUrl,
+                    storeRegion = profile.storeRegion,
+                )
+            }
+
+            // The incoming daily rows are a snapshot from one side of the merge. Re-project the
+            // canonical merged activity before commit so a recovered union share does not inherit a
+            // stale/partial rollup from either backup. Compact recipe tails are drained after the
+            // raw transaction, before the gamification compute below.
+            dailyProgressBackfill?.computeCorrections(activeAccount).orEmpty().forEach { correction ->
+                dailyProgressDao.ensureDate(correction.date)
+                dailyProgressDao.setMinutes(
+                    date = correction.date,
+                    minutesPlayed = correction.correctedMinutes,
+                    goalMinutesPlayed = correction.correctedGoalMinutes,
+                )
+            }
 
             // playtimeBackfilled is a historical fact ("has this account ever backfilled"), not a
             // derivation — folded in like longestStreak, as a one-way OR rather than a replace, so
@@ -141,6 +220,7 @@ class BackupMergeEngine @Inject constructor(
             // (PendingImportRecomputeUseCase) instead of leaving aggregates silently stale.
             playerProfileDao.markPendingImportRecompute()
         }
+        return requireNotNull(plan).toSummary()
     }
 
     /**
@@ -155,6 +235,11 @@ class BackupMergeEngine @Inject constructor(
         configVersion: Long,
     ) {
         val importedLongestStreak = file.playerProfile.longestStreak
+        val recoveryAccount = credentials?.currentCredentials()?.steamId?.takeIf { it.isNotBlank() }
+            ?: playerProfileDao.get()?.steamId?.takeIf { it.isNotBlank() }
+        if (recoveryAccount != null) {
+            unknownTimeMaterializer?.materializeAll(recoveryAccount, time.nowMillis())
+        }
         // Outside the transaction by construction: persist() suspends on DataStore and owns a
         // coordinator that a Room transaction must never wrap (design.md decision 2).
         val result = gamificationUpdater.compute(time.today(), config)
@@ -169,10 +254,91 @@ class BackupMergeEngine @Inject constructor(
         file: BackupFile,
         config: RuleConfig,
         configVersion: Long,
-    ) {
-        mergeRawWithLockHeld(file)
+    ): RecoveryMergeSummary {
+        val summary = mergeRawWithLockHeld(file)
         recomputeAfterMerge(file, config, configVersion)
+        return summary
     }
+
+    /** Pure planning + in-transaction application of the recovery section (design.md Decision 10). */
+    private suspend fun mergeRecoveryPlan(
+        imported: BackupRecovery?,
+        local: BackupRecovery?,
+        activeAccount: String?,
+    ): RecoveryMergePlan {
+        val plan = RecoveryBackupMergePlanner.plan(local, imported, activeAccount)
+        check(plan.contributions.all { conserve(it) }) {
+            "a merge plan must not commit a non-conserving contribution graph"
+        }
+        return plan
+    }
+
+    private fun conserve(graph: RecoveryContributionGraph): Boolean {
+        return recoveryGraphConserves(graph)
+    }
+
+    /**
+     * Resolves every plan timed share's portable session key to the session row this import
+     * inserted/upserted, falling back to a locally existing session with the same natural key. A
+     * share with no resolvable portable host remains a detached timed share on its frozen credited
+     * date; it is still the same funded quantity, not an additional allocation.
+     */
+    private suspend fun linkedSessionIds(
+        plan: RecoveryMergePlan,
+        sessionIdByKey: MutableMap<RecoverySessionKey, Long>,
+    ): Map<RecoverySessionKey, Long> {
+        plan.contributions.flatMap { it.timedPlacements }.forEach { placement ->
+            val key = placement.sessionKey() ?: return@forEach
+            if (key !in sessionIdByKey) {
+                sessionDao.findByNaturalKey(key.appId, key.startAt ?: return@forEach, key.endAt)
+                    ?.let { sessionIdByKey[key] = it.id }
+            }
+        }
+        return sessionIdByKey
+    }
+
+    /** Game.lastPlaytime follows the adopted recovery high-water so the legacy diff pair stays coherent. */
+    private suspend fun syncGamesWithObservations(plan: RecoveryMergePlan) {
+        plan.observations.forEach { observation ->
+            val game = gameDao.getById(observation.appId) ?: return@forEach
+            gameDao.updateSteamFields(
+                appId = game.appId,
+                name = game.name,
+                iconUrl = game.iconUrl,
+                playtimeForever = game.playtimeForever,
+                playtime2Weeks = game.playtime2Weeks,
+                lastPlaytime = observation.highWaterMinutes
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                lastSyncedAt = observation.lastObservationAt?.iso8601ToEpochMilli() ?: time.nowMillis(),
+                lastPlayedAt = game.lastPlayedAt,
+                returnedToPlayAt = game.returnedToPlayAt,
+            )
+        }
+    }
+
+    private fun sessionTombstones(replacements: List<BackupReplacement>): Set<RecoverySessionKey> {
+        val keys = replacements.flatMap {
+            RecoveryBackupSessionTombstones.decode(it.payloadJson) +
+                RecoveryBackupSessionTombstones.decode(it.replacedRecipeJson)
+        }
+        return keys.mapNotNull { key ->
+            val startAt = key.startAt?.iso8601ToEpochMilli() ?: return@mapNotNull null
+            RecoverySessionKey(key.appId, startAt, key.endAt?.iso8601ToEpochMilli())
+        }.toSet()
+    }
+
+    private fun BackupTimedPlacement.sessionKey(): RecoverySessionKey? {
+        val startAt = sessionStartAt?.iso8601ToEpochMilli() ?: return null
+        val endAt = sessionEndAt?.iso8601ToEpochMilli()
+        return RecoverySessionKey(appId, startAt, endAt)
+    }
+
+    private fun RecoveryMergePlan.toSummary() = RecoveryMergeSummary(
+        conflicts = conflicts,
+        warnings = warnings,
+        importedObservations = observations.size,
+        importedContributions = contributions.size,
+    )
 
     /**
      * Restore one game's app-owned state.
@@ -267,20 +433,32 @@ class BackupMergeEngine @Inject constructor(
         )
     }
 
-    private suspend fun mergeSession(backupSession: BackupSession) {
+    private suspend fun mergeSession(
+        backupSession: BackupSession,
+        tombstonedSessions: Set<RecoverySessionKey>,
+        sessionIdByKey: MutableMap<RecoverySessionKey, Long>,
+    ) {
         val startAt = backupSession.startAt.iso8601ToEpochMilli()
         val endAt = backupSession.endAt?.iso8601ToEpochMilli()
+        val key = RecoverySessionKey(backupSession.appId, startAt, endAt)
+        if (key in tombstonedSessions) {
+            // This synthetic session's row was retired by a recovery replacement. Re-creating it
+            // next to the upgraded placement would resurrect the old full-width record (double
+            // XP); it stays suppressed on both insert and update.
+            return
+        }
         val existing = sessionDao.findByNaturalKey(backupSession.appId, startAt, endAt)
         val recovered = backupSession.cloudContribution?.recoveredSharedPlay?.name
             ?.let(RecoveredSharedPlayState::valueOf)
         val timing = backupSession.cloudContribution?.timingInformedSteamPlay?.name
             ?.let(TimingInformedSteamPlayState::valueOf)
-        if (existing != null) {
+        val id = if (existing != null) {
             sessionDao.update(existing.copy(
                 minutes = backupSession.minutes,
                 recoveredSharedPlay = recovered ?: existing.recoveredSharedPlay,
                 timingInformedSteamPlay = timing ?: existing.timingInformedSteamPlay,
             ))
+            existing.id
         } else {
             sessionDao.insert(
                 Session(
@@ -298,6 +476,7 @@ class BackupMergeEngine @Inject constructor(
                 ),
             )
         }
+        sessionIdByKey[key] = id
     }
 
     private suspend fun mergeDailyProgress(backupDay: BackupDailyProgress) {
@@ -472,6 +651,25 @@ class BackupMergeEngine @Inject constructor(
                 done = backupMember.done,
             ),
         )
+    }
+}
+
+/** Overflow-safe conservation guard shared by merge planning/application tests. */
+internal fun recoveryGraphConserves(graph: RecoveryContributionGraph): Boolean {
+    val authorized = graph.contribution.authorizedMinutes
+    return try {
+        val timed = graph.timedPlacements.fold(0L) { total, row -> Math.addExact(total, row.minutes) }
+        val allocated = if (graph.recipe != null && !graph.recipe.pending) {
+            Math.addExact(
+                Math.multiplyExact(graph.recipe.quotient ?: 0L, graph.recipe.eligibleCount.toLong()),
+                graph.recipe.remainderCount ?: 0L,
+            )
+        } else {
+            graph.unknownAllocations.fold(0L) { total, row -> Math.addExact(total, row.minutes) }
+        }
+        Math.addExact(timed, allocated) == authorized
+    } catch (_: ArithmeticException) {
+        false
     }
 }
 private fun String?.toGameSource(fallback: GameSource): GameSource =

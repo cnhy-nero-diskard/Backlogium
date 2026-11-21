@@ -13,6 +13,7 @@ class HapticsTest {
     @Test
     fun progressEvents_mapExhaustively_andStreakBreakIsSilent() {
         val events = listOf(
+            ProgressEvent.UnlockGroup(com.example.backlogium.domain.AchievementUnlockGroup("fixture", "fixture", 1, "Fixture", 1, emptyList())),
             ProgressEvent.LevelUp(from = 1, to = 2),
             ProgressEvent.QuestMet(LocalDate.of(2026, 8, 19)),
             ProgressEvent.StreakMilestone(days = 7),
@@ -21,6 +22,7 @@ class HapticsTest {
 
         assertEquals(
             listOf(
+                HapticIntent.AchievementUnlock,
                 HapticIntent.LevelUp,
                 HapticIntent.QuestMet,
                 HapticIntent.StreakMilestone,

@@ -62,10 +62,19 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
 
     override fun observeClosedSince(cutoff: Long): Flow<List<Session>> =
         flowOf(sessions.filter { it.startAt >= cutoff && !it.open })
+    override fun observeAllOpenSessions(): Flow<List<Session>> = flowOf(sessions.filter { it.open })
     override suspend fun getAll(): List<Session> = sessions
+    override suspend fun sessionsByIds(sessionIds: List<Long>): List<Session> =
+        sessions.filter { it.id in sessionIds.toSet() }
+    override suspend fun sessionsBetweenSnapshot(startInclusive: Long, endExclusive: Long): List<Session> =
+        sessions.filter { it.startAt >= startInclusive && it.startAt < endExclusive }
+    override suspend fun closedSessionsSinceSnapshot(cutoff: Long): List<Session> =
+        sessions.filter { it.startAt >= cutoff && !it.open }
+    override suspend fun allOpenSessionsSnapshot(): List<Session> = sessions.filter { it.open }
     override suspend fun deleteAll() = Unit
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
+    override suspend fun earliestVisibleSessionStartSnapshot(): Long? = sessions.minOfOrNull { it.startAt }
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )
@@ -105,6 +114,50 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
         sessions.groupBy { it.appId }
             .map { (appId, group) -> GameSessionCounts(appId, group.size) },
     )
+
+    override fun observeActiveRecoveryAllocations(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryAllocationsSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> =
+        emptyList()
+    override fun observeActiveRecoveryTimedPlacements(): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeRecoveryTimedPlacementsSnapshot(): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> =
+        emptyList()
+    override fun observeRecoveryProjectionInvalidation(): Flow<Long> = flowOf(0L)
+    override suspend fun hiddenAppIdsSnapshot(): List<Long> = emptyList()
+    override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
+        flowOf(emptyList())
+    override fun observeActiveRecoveryContributions(): Flow<List<com.example.backlogium.data.local.entity.PlaytimeContribution>> =
+        flowOf(emptyList())
+    override fun observeDatedAllocationsBetween(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocation>> =
+        flowOf(emptyList())
+    override suspend fun datedAllocationsBetweenSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.UnknownTimeAllocation> = emptyList()
+    override fun observeTimedPlacementsByDate(fromDate: String, toDateExclusive: String): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun timedPlacementsByDateSnapshot(
+        fromDate: String,
+        toDateExclusive: String,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeHostSessionsForDates(fromDate: String, toDateExclusive: String): Flow<List<Session>> =
+        flowOf(emptyList())
+    override suspend fun hostSessionsForDatesSnapshot(fromDate: String, toDateExclusive: String): List<Session> =
+        emptyList()
+    override fun observeActiveTimedPlacementsForSessions(sessionIds: List<Long>): Flow<List<com.example.backlogium.data.local.entity.TimedContributionPlacement>> =
+        flowOf(emptyList())
+    override suspend fun activeTimedPlacementsForSessionsSnapshot(
+        sessionIds: List<Long>,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
+    override fun observeEarliestDatedAllocationDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestDatedAllocationDateSnapshot(): String? = null
+    override fun observeEarliestTimedShareDate(): Flow<String?> = flowOf(null)
+    override suspend fun earliestTimedShareDateSnapshot(): String? = null
+    override suspend fun activeRecoveryRecipesSnapshot(): List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe> =
+        emptyList()
+    override suspend fun activeRecoveryContributionsSnapshot(): List<com.example.backlogium.data.local.entity.PlaytimeContribution> =
+        emptyList()
 }
 
 /**
@@ -143,6 +196,17 @@ internal class FakeHltbDataDao(
     override fun observeMatchCenter(): Flow<List<HltbData>> = flowOf(emptyList())
     override suspend fun getMatchCenter(): List<HltbData> = emptyList()
     override suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int = 0
+    override suspend fun resolveMatchIfUnchanged(
+        appId: Long,
+        expectedMatchStatus: HltbMatchStatus,
+        expectedFetchedAt: Long,
+        expectedCandidatesJson: String?,
+        hltbId: Long,
+        mainStoryMinutes: Int?,
+        mainExtraMinutes: Int?,
+        completionistMinutes: Int?,
+        allStylesMinutes: Int?,
+    ): Int = 0
 
     private fun cacheRows(): List<HltbData> =
         completionistByAppId.map { (appId, minutes) -> hltbRow(appId, minutes) }
@@ -308,6 +372,14 @@ internal class FakeDailyProgressDao(
     override suspend fun setMinutes(date: String, minutesPlayed: Int, goalMinutesPlayed: Int) {
         val day = store[date] ?: DailyProgress(date)
         store[date] = day.copy(minutesPlayed = minutesPlayed, goalMinutesPlayed = goalMinutesPlayed)
+    }
+
+    override suspend fun applyMinutesDelta(date: String, minutesDelta: Int, goalDelta: Int) {
+        val day = store[date] ?: DailyProgress(date)
+        store[date] = day.copy(
+            minutesPlayed = day.minutesPlayed + minutesDelta,
+            goalMinutesPlayed = day.goalMinutesPlayed + goalDelta,
+        )
     }
 
     override suspend fun updateQuestMet(date: String, questMet: Boolean) {

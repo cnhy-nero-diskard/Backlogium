@@ -1,6 +1,7 @@
 package com.example.backlogium.domain
 
 import java.time.LocalDate
+import java.time.ZoneOffset
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
@@ -19,6 +20,11 @@ class DailyActivityObservationTest {
                 emit(DailyActivity(key.date, key.accountId, emptyList(), 60, true))
             } }.collect { results.add(it) }
         }
+        val changedZone = DailyActivityKey("fixture-a", today, ZoneOffset.ofHours(-7))
+        keys.value = changedZone
+        runCurrent()
+        assertEquals(changedZone, results.last().key)
+        assertNull(results.last().activity)
         keys.value = DailyActivityKey("fixture-a", today.plusDays(1))
         runCurrent()
         keys.value = DailyActivityKey("fixture-b", today.plusDays(1))

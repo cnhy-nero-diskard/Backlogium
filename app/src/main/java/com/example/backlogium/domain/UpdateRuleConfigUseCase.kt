@@ -1,7 +1,9 @@
 package com.example.backlogium.domain
 
+import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.gamification.RuleConfig
+import com.example.backlogium.work.SteamSyncCoordinator
 import javax.inject.Inject
 
 /**
@@ -17,12 +19,44 @@ import javax.inject.Inject
  * exists: a two-step invariant in the UI layer is one a future caller can perform half of.
  * [SettingsRepository] stays a pure storage seam and never learns about the domain layer.
  */
-class UpdateRuleConfigUseCase @Inject constructor(
+class UpdateRuleConfigUseCase private constructor(
     private val settings: SettingsRepository,
     private val gamificationUpdater: GamificationUpdater,
     private val time: TimeProvider,
-    private val derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
+    private val derivedStateWrites: DerivedStateWriteCoordinator,
+    private val recoveryBoundary: RecoveryBoundary?,
 ) {
+
+    /** Production constructor: finish any interrupted earned/corrective operation before rules move. */
+    @Inject constructor(
+        settings: SettingsRepository,
+        gamificationUpdater: GamificationUpdater,
+        time: TimeProvider,
+        derivedStateWrites: DerivedStateWriteCoordinator,
+        syncCoordinator: SteamSyncCoordinator,
+        playerProfileDao: PlayerProfileDao,
+        materializer: UnknownTimeMaterializer,
+        recoveryFinalizer: RecoveryDerivedFinalizer,
+    ) : this(
+        settings = settings,
+        gamificationUpdater = gamificationUpdater,
+        time = time,
+        derivedStateWrites = derivedStateWrites,
+        recoveryBoundary = RecoveryBoundary(
+            syncCoordinator = syncCoordinator,
+            playerProfileDao = playerProfileDao,
+            materializer = materializer,
+            finalizer = recoveryFinalizer,
+        ),
+    )
+
+    /** Narrow direct-construction seam for platform-free rule-math tests without recovery storage. */
+    constructor(
+        settings: SettingsRepository,
+        gamificationUpdater: GamificationUpdater,
+        time: TimeProvider,
+        derivedStateWrites: DerivedStateWriteCoordinator = DerivedStateWriteCoordinator(),
+    ) : this(settings, gamificationUpdater, time, derivedStateWrites, recoveryBoundary = null)
 
     /**
      * Run the real recompute under a candidate [config] and return what it *would* store,
@@ -41,7 +75,29 @@ class UpdateRuleConfigUseCase @Inject constructor(
      * level, quest status, or streak derived from the previous rules. Rule changes redefine the
      * progress-event baseline and therefore never celebrate the resulting transition.
      */
-    suspend fun apply(config: RuleConfig) = derivedStateWrites.withLock {
+    suspend fun apply(config: RuleConfig) {
+        val boundary = recoveryBoundary
+        if (boundary == null) {
+            persistRuleAndRecompute(config)
+        } else {
+            // A rule recompute is a non-earned baseline. If a process died with an operation
+            // between its corrective and earned stages, applying rules first could mark that
+            // operation's fresh threshold as historical. Drain pending stages under the shared
+            // sync barrier before taking the ordinary derived-write lock and moving the version.
+            boundary.syncCoordinator.withLock {
+                val account = boundary.playerProfileDao.get()?.steamId?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                if (account != null) {
+                    val now = time.nowMillis()
+                    boundary.materializer.materializeAll(account, now)
+                    boundary.finalizer.resumePending(account, now)
+                }
+                persistRuleAndRecompute(config)
+            }
+        }
+    }
+
+    private suspend fun persistRuleAndRecompute(config: RuleConfig) = derivedStateWrites.withLock {
         val stored = settings.setRuleConfigAndGetVersion(config)
         gamificationUpdater.recompute(
             today = time.today(),
@@ -50,4 +106,11 @@ class UpdateRuleConfigUseCase @Inject constructor(
             configVersion = stored.version,
         )
     }
+
+    private data class RecoveryBoundary(
+        val syncCoordinator: SteamSyncCoordinator,
+        val playerProfileDao: PlayerProfileDao,
+        val materializer: UnknownTimeMaterializer,
+        val finalizer: RecoveryDerivedFinalizer,
+    )
 }

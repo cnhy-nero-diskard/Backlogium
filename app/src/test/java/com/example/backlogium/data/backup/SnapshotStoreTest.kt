@@ -41,6 +41,36 @@ class SnapshotStoreTest {
     }
 
     @Test
+    fun write_streamsAReadableBackupSnapshot() {
+        val backup = BackupFile(
+            formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
+            exportedAt = "2026-10-22T00:00:00Z",
+            identity = BackupIdentity("76561198000000000"),
+            ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 2, 5, 10, 20, 40, 80),
+            games = emptyList(),
+            achievements = emptyList(),
+            sessions = emptyList(),
+            dailyProgress = emptyList(),
+            hltbData = emptyList(),
+            librarySortPrefs = BackupLibrarySortPrefs("NAME", "PLAYTIME"),
+            playerProfile = BackupPlayerProfile(0, 1, 0, 0, false),
+            computed = BackupComputed(emptyList(), emptyList()),
+            recovery = BackupRecovery(
+                observations = emptyList(),
+                contributions = emptyList(),
+                timedPlacements = emptyList(),
+                unknownAllocations = emptyList(),
+                recipes = emptyList(),
+                replacements = emptyList(),
+            ),
+        )
+
+        store.write(backup, 1_234L)
+
+        assertEquals(backup, store.read("1234.json"))
+    }
+
+    @Test
     fun normalMigration_preservesEverySnapshotAndItsTimestamp() {
         writeLegacy("1000.json", "first")
         writeLegacy("2000.json", "second")

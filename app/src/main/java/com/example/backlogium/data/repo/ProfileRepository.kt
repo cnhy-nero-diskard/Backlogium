@@ -9,6 +9,7 @@ import com.example.backlogium.domain.PlaytimeBackfillResetResult
 import com.example.backlogium.work.SyncScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,7 +23,7 @@ data class PlayerStats(
     val longestStreak: Int,
     val lastSyncAt: Long,
     val lastSyncError: String?,
-    /** True once the player has opted in to importing historical Steam playtime (one-time). */
+    /** True once historical playtime is captured and its derived recompute has completed. */
     val playtimeBackfilled: Boolean,
     /** Steam persona name, or null before the first sync observed one. */
     val personaName: String?,
@@ -45,7 +46,11 @@ class ProfileRepository @Inject constructor(
     private val dailyProgressDao: DailyProgressDao,
     private val syncScheduler: SyncScheduler,
     private val playtimeBackfill: PlaytimeBackfillUseCase,
-) {
+    credentials: CredentialsRepository,
+) : HistoryImportGateway {
+    override val historyImportReadiness: Flow<HistoryImportReadiness> = combine(
+        profileDao.observe(), credentials.credentialsStateFlow, ::historyImportReadinessFor,
+    )
     val profile: Flow<PlayerStats?> = profileDao.observe().map { it?.toDomain() }
     val dailyProgress: Flow<List<DayProgress>> = dailyProgressDao.observeAll()
         .map { rows -> rows.map(DailyProgress::toDomain) }
@@ -77,13 +82,21 @@ class ProfileRepository @Inject constructor(
      * already imported. Recompute inside the use-case updates the observed profile, so Home
      * reflects the new XP/level automatically.
      */
-    suspend fun importSteamHistory(): Boolean = playtimeBackfill()
+    override suspend fun importSteamHistory(): Boolean = playtimeBackfill()
 
     /**
      * Undo a prior history import: clears the frozen offsets and the flag, then recomputes so
      * the import can be offered again. Leaves tracked sessions and streaks intact.
      */
     suspend fun resetSteamHistoryImport(): PlaytimeBackfillResetResult = playtimeBackfill.reset()
+}
+
+internal fun historyImportReadinessFor(profile: PlayerProfile?, configured: CredentialsState): HistoryImportReadiness = when {
+    configured !is CredentialsState.Configured || profile?.steamId != configured.steamId ->
+        HistoryImportReadiness.NEEDS_SYNC
+    profile.playtimeBackfilled && !profile.pendingImportRecompute -> HistoryImportReadiness.IMPORTED
+    profile.lastSyncAt > 0L -> HistoryImportReadiness.READY
+    else -> HistoryImportReadiness.NEEDS_SYNC
 }
 
 private fun PlayerProfile.toDomain() = PlayerStats(
@@ -95,7 +108,7 @@ private fun PlayerProfile.toDomain() = PlayerStats(
     longestStreak = longestStreak,
     lastSyncAt = lastSyncAt,
     lastSyncError = lastSyncError,
-    playtimeBackfilled = playtimeBackfilled,
+    playtimeBackfilled = playtimeBackfilled && !pendingImportRecompute,
     personaName = personaName,
     avatarUrl = avatarUrl,
 )

@@ -12,6 +12,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.backlogium.domain.*
+import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.ui.screenshot.ScreenshotTestActivity
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import java.io.File
@@ -29,7 +30,7 @@ class HomeDailyActivityTest {
         dailyActivity = DailyActivity(day, account, listOf(
             DailyActivityGame(1, "A game with a longer title for accessible wrapping", 25, true),
             DailyActivityGame(2, "Another game", 15, false),
-        ), 60, true),
+        ), 60, true, storedFocusMinutes = 25),
         todayMinutes = 60, questMet = true,
     )
 
@@ -51,7 +52,43 @@ class HomeDailyActivityTest {
             .performScrollTo().performClick()
         rule.runOnIdle { homeVisible.value = true }
         rule.onNodeWithText("Hide today’s game breakdown").assertExists()
-        rule.onNodeWithText("Credited quest minutes: 60").assertExists()
+        rule.onNodeWithText("Stored daily minutes: 60").assertExists()
+        rule.onNodeWithText("Stored Focus minutes: 25").assertExists()
+    }
+
+    @Test fun focusQuestAndRecoveredGameKeepTheirOwnAmounts() {
+        val original = state()
+        val activity = requireNotNull(original.dailyActivity)
+        val estimate = CreditedAllocation(
+            placementId = "recovered",
+            appId = 2L,
+            date = date,
+            minutes = 15,
+            method = PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE,
+            zone = "UTC",
+            windowStartDate = date,
+            windowEndDate = date,
+            windowTotalMinutes = 15,
+            goalAtCredit = false,
+        )
+        val focus = original.copy(
+            todayMinutes = 25,
+            questMet = false,
+            questMode = QuestMode.GOAL_ONLY,
+            dailyActivity = activity.copy(
+                questMet = false,
+                games = listOf(activity.games[0], activity.games[1].copy(allocations = listOf(estimate))),
+            ),
+        )
+        rule.setContent { BacklogiumTheme { HomeContent(focus) } }
+
+        rule.onNodeWithText("Focus play today · 25 mins of 30 mins").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Show today’s game breakdown").performScrollTo().performClick()
+        rule.onNodeWithText("Stored daily minutes: 60").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Stored Focus minutes: 25").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithContentDescription("Estimated playtime — show explanation")
+            .performScrollTo().performClick()
+        rule.onNodeWithText("Exact session times are unavailable", substring = true).assertIsDisplayed()
     }
 
     private fun capture(dark: Boolean, fontScale: Float, name: String) {
@@ -67,7 +104,8 @@ class HomeDailyActivityTest {
         captureImage("$name-collapsed")
         rule.onNodeWithText("Show today’s game breakdown").performClick()
         rule.onNodeWithText("Visible recorded minutes: 40").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithText("Credited quest minutes: 60").assertExists()
+        rule.onNodeWithText("Stored daily minutes: 60").assertExists()
+        rule.onNodeWithText("Stored Focus minutes: 25").assertExists()
         rule.onNodeWithText("Open A game with a longer title for accessible wrapping details")
             .performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         captureImage("$name-expanded")
@@ -91,7 +129,7 @@ class HomeDailyActivityTest {
         rule.onNodeWithText("Show today’s game breakdown").performScrollTo().performClick()
         rule.runOnIdle { current.value = state(account = "fixture-b", day = date.plusDays(1)) }
         rule.onNodeWithText("Show today’s game breakdown").assertExists()
-        rule.onNodeWithText("Credited quest minutes: 60").assertDoesNotExist()
+        rule.onNodeWithText("Stored daily minutes: 60").assertDoesNotExist()
     }
 
     private fun captureImage(name: String) {

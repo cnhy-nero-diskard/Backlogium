@@ -1,5 +1,6 @@
 package com.example.backlogium.ui.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.local.entity.Collection
@@ -38,9 +39,12 @@ import com.example.backlogium.domain.SmartCollectionFeed
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.Gamification
+import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import com.example.backlogium.work.setup.SetupCoordinator
+import com.example.backlogium.ui.util.observeCalendar
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.LocalDate
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -50,6 +54,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.example.backlogium.data.repo.DailyActivityRepository
@@ -79,6 +84,7 @@ data class HomeUiState(
     val questMet: Boolean = false,
     val todayMinutes: Int = 0,
     val questThreshold: Int = 30,
+    val questMode: QuestMode = QuestMode.ANY,
     val currentStreak: Int = 0,
     val longestStreak: Int = 0,
     val lastSyncError: String? = null,
@@ -235,10 +241,14 @@ internal data class HomeDayFields(
  * bug this function was extracted to make testable — Home used to hold the previous day's values
  * past midnight because its date input never changed.
  */
-internal fun homeDayFields(days: List<DayProgress>, today: LocalDate): HomeDayFields {
+internal fun homeDayFields(
+    days: List<DayProgress>,
+    today: LocalDate,
+    questMode: QuestMode = QuestMode.ANY,
+): HomeDayFields {
     val row = days.firstOrNull { it.date == today.toString() }
     return HomeDayFields(
-        minutesPlayed = row?.minutesPlayed ?: 0,
+        minutesPlayed = (if (questMode == QuestMode.GOAL_ONLY) row?.goalMinutesPlayed else row?.minutesPlayed) ?: 0,
         questMet = row?.questMet ?: false,
     )
 }
@@ -260,16 +270,19 @@ class HomeViewModel @Inject constructor(
     private val smartCollectionFeed: SmartCollectionFeed,
     private val time: TimeProvider,
     private val dailyActivityRepository: DailyActivityRepository,
+    @param:ApplicationContext context: Context,
 ) : ViewModel() {
+    private val calendar = currentDate.observeCalendar(context)
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
     private val dailyDetailUnavailable = MutableStateFlow(false)
     private val dailyActivity = observeDailyActivity(
-        combine(credentials.steamIdFlow, currentDate.currentDate) { account, date ->
-            DailyActivityKey(account.orEmpty(), date)
+        combine(credentials.steamIdFlow, calendar) { account, (date, zone) ->
+            DailyActivityKey(account.orEmpty(), date, zone)
         },
     ) { key ->
         dailyDetailUnavailable.value = false
         if (key.accountId.isEmpty()) flowOf(DailyActivity(key.date, key.accountId, emptyList(), null, null))
-        else dailyActivityRepository.observeDay(key.date, key.accountId)
+        else dailyActivityRepository.observeDay(key.date, key.accountId, key.zone)
     }
 
     fun openDailyGame(appId: Long, onOpen: (Long) -> Unit) {
@@ -315,17 +328,17 @@ class HomeViewModel @Inject constructor(
     // combine on its own, or the previous day's row stays on screen as the current day's.
     private val baseState: Flow<HomeUiState> = combine(
         homeData,
-        currentDate.currentDate,
-    ) { data, today ->
+        calendar,
+    ) { data, (today, zone) ->
         val (profile, days, config, credState, isSyncing) = data
-        val dayFields = homeDayFields(days, today)
+        val dayFields = homeDayFields(days, today, config.questMode)
         // Same ceiling GamificationUpdater recomputes under: a legacy above-ceiling levelBase
         // bypasses Settings validation, so the raw persisted config cannot reach the engine here
         // (auditfix-session-ledger-integrity, #114).
         val xpState = Gamification.levelState(profile?.totalXp ?: 0L, config.coercedToSafeCeilings())
         val configured = credState as? CredentialsState.Configured
         HomeUiState(
-            dailyActivityKey = DailyActivityKey(configured?.steamId.orEmpty(), today),
+            dailyActivityKey = DailyActivityKey(configured?.steamId.orEmpty(), today, zone),
             loading = false,
             hasRenderableContent = true,
             configured = configured != null,
@@ -336,6 +349,7 @@ class HomeViewModel @Inject constructor(
             questMet = dayFields.questMet,
             todayMinutes = dayFields.minutesPlayed,
             questThreshold = config.questThresholdMin,
+            questMode = config.questMode,
             currentStreak = profile?.currentStreak ?: 0,
             longestStreak = profile?.longestStreak ?: 0,
             lastSyncError = profile?.lastSyncError,
@@ -555,7 +569,9 @@ class HomeViewModel @Inject constructor(
         val activity = read.activity.takeIf { read.key == state.dailyActivityKey }
         state.copy(
             dailyActivity = activity,
-            todayMinutes = activity?.creditedMinutes?.let(Math::toIntExact) ?: state.todayMinutes,
+            todayMinutes = activity?.let {
+                if (state.questMode == QuestMode.GOAL_ONLY) it.storedFocusMinutes else it.storedMinutes
+            }?.toInt() ?: state.todayMinutes,
             questMet = activity?.questMet ?: state.questMet,
         )
     }.combine(dailyDetailUnavailable) { state, unavailable ->

@@ -1,0 +1,100 @@
+import { fail } from "./refresh-options.mjs";
+
+export class RequestBudget {
+  constructor(options, dependencies = {}, previous = {}) {
+    this.options = options;
+    this.fetch = dependencies.fetch ?? globalThis.fetch;
+    this.now = dependencies.now ?? Date.now;
+    this.sleep = dependencies.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.random = dependencies.random ?? Math.random;
+    this.started = this.now(); this.previousElapsed = previous.elapsedMs ?? 0;
+    this.lastStart = previous.lastStart ?? -Infinity; this.stopped = null;
+    this.postAttempts = 0; // In-memory discovery accounting; setup GETs are not app searches.
+    this.stats = { requests: previous.requests ?? 0, retries: previous.retries ?? 0,
+      backoffMs: previous.backoffMs ?? 0, exhausted: false, elapsedMs: this.previousElapsed };
+  }
+  remaining() { return this.options.maxRunSeconds * 1000 - this.previousElapsed - (this.now() - this.started); }
+  snapshot() { return { ...this.stats, elapsedMs: this.previousElapsed + this.now() - this.started,
+    lastStart: Number.isFinite(this.lastStart) ? this.lastStart : null }; }
+  async wait(ms, backoff = false) {
+    if (ms >= this.remaining()) { this.stats.exhausted = true; this.stopped = "budget-exhausted"; fail("budget-exhausted"); }
+    if (backoff) this.stats.backoffMs += ms;
+    if (ms > 0) await this.sleep(ms);
+  }
+  async request(url, kind, request = {}) {
+    if (Object.keys(request).some((k) => !["method", "headers", "body"].includes(k)) ||
+      (request.method && request.method !== "POST") || (request.method && kind !== "hltb")) fail("invalid-request");
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      if (this.stopped) fail(this.stopped);
+      if (this.stats.requests >= this.options.maxRequests || this.remaining() <= 0) {
+        this.stats.exhausted = true; this.stopped = "budget-exhausted"; fail("budget-exhausted");
+      }
+      await this.wait(Math.max(0, this.lastStart + 1000 - this.now()));
+      const timeoutMs = Math.min(15000, this.remaining());
+      this.lastStart = this.now(); this.stats.requests++;
+      if (request.method === "POST") this.postAttempts++;
+      if (attempt) this.stats.retries++;
+      let response, text, transport = false;
+      const controller = new AbortController();
+      let timer;
+      try {
+        [response, text] = await Promise.race([
+          (async () => {
+            const r = await this.fetch(url, { signal: controller.signal, redirect: "error", method: request.method ?? "GET", body: request.body, headers: {
+              Accept: kind === "steam" ? "application/json" : "text/html",
+              "User-Agent": "Backlogium-HLTB-Refresh/1",
+              ...request.headers,
+            } });
+            if (kind === "hltb" && [401, 403].includes(r.status)) {
+              // Do not read or interpret denied bodies. Abort/cancel without
+              // awaiting cleanup, which may itself stall on a broken stream.
+              this.stopped = "access-denied";
+              controller.abort();
+              try { void r.body?.cancel?.().catch(() => {}); } catch { /* Cleanup must not mask denial. */ }
+              fail("access-denied", r.status);
+            }
+            // Bound streaming response bodies as well as wall time.
+            let body;
+            if (r.body?.getReader) {
+              const reader = r.body.getReader(); const chunks = []; let bytes = 0;
+              try {
+                while (true) {
+                  const next = await reader.read(); if (next.done) break;
+                  bytes += next.value.byteLength;
+                  if (bytes > 5 * 1024 * 1024) { await reader.cancel(); fail("response-too-large"); }
+                  chunks.push(Buffer.from(next.value));
+                }
+                body = Buffer.concat(chunks).toString("utf8");
+              } finally { reader.releaseLock(); }
+            } else body = await r.text();
+            if (Buffer.byteLength(body) > 5 * 1024 * 1024) fail("response-too-large");
+            return [r, body];
+          })(),
+          new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("timeout")); }, timeoutMs); }),
+        ]);
+      } catch (error) {
+        if (error.category) throw error;
+        transport = true;
+      } finally { clearTimeout(timer); }
+      if (!transport && kind === "hltb" && /cf-chl-|challenge-platform|just a moment|verify you are human|captcha|access denied/i.test(text)) {
+        this.stopped = "challenge-response"; fail("challenge-response", response.status);
+      }
+      if (!transport && kind === "hltb" && response.status === 404) fail("not-found", response.status);
+      if (!transport && response.status >= 200 && response.status < 300) return text;
+      if (!transport && [401, 403].includes(response.status)) {
+        if (kind === "hltb") this.stopped = "access-denied";
+        fail("access-denied", response.status);
+      }
+      const retryable = transport || response.status === 429 || (response.status >= 500 && response.status <= 599);
+      const category = transport ? "transport-failed" : response.status === 429 ? "rate-limited" : response.status >= 500 ? "server-failed" : "http-failed";
+      if (!retryable || attempt === 2) fail(category, transport ? null : response.status);
+      let delay = Math.min(30000, 1000 * 2 ** attempt + Math.floor(this.random() * 250));
+      if (!transport && response.status === 429) {
+        const raw = response.headers?.get("retry-after");
+        if (raw && /^\d+(?:\.\d+)?$/.test(raw.trim())) delay = Math.max(delay, Number(raw) * 1000);
+        else if (raw && Number.isFinite(Date.parse(raw))) delay = Math.max(delay, Date.parse(raw) - this.now());
+      }
+      await this.wait(delay, true);
+    }
+  }
+}

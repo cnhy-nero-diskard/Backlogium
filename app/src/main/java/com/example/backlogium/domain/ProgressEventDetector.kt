@@ -45,14 +45,20 @@ object ProgressEventDetector {
         }
 
         val events = buildList {
-            if (current.level > marks.lastCelebratedLevel) {
-                add(ProgressEvent.LevelUp(marks.lastCelebratedLevel, current.level))
+            val highestOwed = marks.pendingLevelUps.maxOfOrNull { it.to }
+            if (current.level > marks.lastCelebratedLevel && (highestOwed == null || current.level > highestOwed)) {
+                // Each new rise beyond every already-owed transition records its own obligation
+                // rather than being folded into an older one, so an earned event is never silently
+                // merged away by a corrective baseline that moved the acknowledged mark.
+                val from = maxOf(marks.lastCelebratedLevel, highestOwed ?: marks.lastCelebratedLevel)
+                add(ProgressEvent.LevelUp(from, current.level))
             }
 
             val highestMilestone = highestMilestoneAtOrBelow(current.currentStreak)
             if (
                 current.currentStreak > previous.currentStreak &&
-                highestMilestone > marks.lastCelebratedStreakMilestone
+                highestMilestone > marks.lastCelebratedStreakMilestone &&
+                highestMilestone !in marks.pendingStreakMilestones
             ) {
                 add(ProgressEvent.StreakMilestone(highestMilestone))
             }
@@ -73,6 +79,9 @@ object ProgressEventDetector {
 
         val broken = events.filterIsInstance<ProgressEvent.StreakBroken>().firstOrNull()
         val earnedQuestDate = newlyEarnedQuestDate(marks, previous, current, today)
+        val earnedMilestone = events.filterIsInstance<ProgressEvent.StreakMilestone>().firstOrNull()?.days
+        val highestOwed = marks.pendingLevelUps.maxOfOrNull { it.to }
+        val levelRose = current.level > marks.lastCelebratedLevel && (highestOwed == null || current.level > highestOwed)
         val nextMarks = marks.copy(
             initialized = true,
             // Existing unacknowledged dates are left exactly as they are: each one was earned by
@@ -86,6 +95,19 @@ object ProgressEventDetector {
                 PendingStreakBreak(today, broken.previousLength)
             } else {
                 marks.pendingStreakBreak
+            },
+            pendingLevelUps = if (levelRose) {
+                marks.pendingLevelUps + PendingLevelUp(
+                    from = maxOf(marks.lastCelebratedLevel, highestOwed ?: marks.lastCelebratedLevel),
+                    to = current.level,
+                )
+            } else {
+                marks.pendingLevelUps
+            },
+            pendingStreakMilestones = if (earnedMilestone == null) {
+                marks.pendingStreakMilestones
+            } else {
+                marks.pendingStreakMilestones + earnedMilestone
             },
         )
 
@@ -126,6 +148,8 @@ object ProgressEventDetector {
         initialized = true,
         pendingStreakBreak = null,
         pendingQuestDates = emptySet(),
+        pendingLevelUps = emptySet(),
+        pendingStreakMilestones = emptySet(),
     )
 
     /**
@@ -149,13 +173,24 @@ object ProgressEventDetector {
         } else {
             marks.lastQuestCelebratedDate
         },
-        lastStreakBrokenDate = if (previous.currentStreak > 0 && current.currentStreak == 0) {
+        // A corrective reset redefines the baseline but does not cancel deliveries already owed.
+        // A break *already* owed stays owed: only a break that this reset itself created (none was
+        // pending) is recorded as an acknowledged date instead.
+        lastStreakBrokenDate = if (
+            marks.pendingStreakBreak == null &&
+            previous.currentStreak > 0 &&
+            current.currentStreak == 0
+        ) {
             today
         } else {
             marks.lastStreakBrokenDate
         },
         initialized = true,
-        pendingStreakBreak = null,
+        pendingStreakBreak = marks.pendingStreakBreak,
+        // Explicit earned obligations are never cleared by a corrective pass; acknowledgement is the
+        // only consumer that removes them, so a recovery recompute cannot swallow or duplicate them.
+        pendingLevelUps = marks.pendingLevelUps,
+        pendingStreakMilestones = marks.pendingStreakMilestones,
     )
 
     private fun highestMilestoneAtOrBelow(streak: Int): Int {

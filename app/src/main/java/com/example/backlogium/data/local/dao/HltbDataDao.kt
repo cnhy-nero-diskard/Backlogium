@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Upsert
 import com.example.backlogium.data.local.entity.HltbData
+import com.example.backlogium.data.local.entity.HltbMatchStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -58,6 +59,33 @@ interface HltbDataDao {
             "WHERE appId = :appId AND matchStatus = 'UNMATCHED'",
     )
     suspend fun markNeedsReviewWithBroaderCandidates(appId: Long, candidatesJson: String): Int
+
+    /**
+     * Resolve only the exact actionable row version presented to the user. The status, timestamp,
+     * and candidate payload together distinguish a refreshed NEEDS_REVIEW row from the one whose
+     * candidate set the user actually reviewed. A zero result means the action was stale.
+     */
+    @Query(
+        "UPDATE hltb_data SET hltbId = :hltbId, mainStoryMinutes = :mainStoryMinutes, " +
+            "mainExtraMinutes = :mainExtraMinutes, completionistMinutes = :completionistMinutes, " +
+            "allStylesMinutes = :allStylesMinutes, matchStatus = 'RESOLVED', candidatesJson = NULL, " +
+            "origin = 'MANUAL' WHERE appId = :appId " +
+            "AND matchStatus IN ('NEEDS_REVIEW', 'UNMATCHED') " +
+            "AND matchStatus = :expectedMatchStatus " +
+            "AND fetchedAt = :expectedFetchedAt " +
+            "AND candidatesJson IS :expectedCandidatesJson",
+    )
+    suspend fun resolveMatchIfUnchanged(
+        appId: Long,
+        expectedMatchStatus: HltbMatchStatus,
+        expectedFetchedAt: Long,
+        expectedCandidatesJson: String?,
+        hltbId: Long,
+        mainStoryMinutes: Int?,
+        mainExtraMinutes: Int?,
+        completionistMinutes: Int?,
+        allStylesMinutes: Int?,
+    ): Int
 }
 
 private const val HLTB_DATA_WITH_DATASET_QUERY =

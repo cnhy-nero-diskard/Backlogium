@@ -23,7 +23,7 @@ class HistoryEvidenceTest {
     }
     @Test fun progressOnlyRetainsCreditWithoutSyntheticGamesAndWideTotalsDoNotWrap() {
         val day = groupHistory(emptyList(), emptyList(), listOf(DayProgress(date.toString(), 60, 0, true)), emptyList(), zone).single()
-        assertEquals(60L, day.activity!!.creditedMinutes)
+        assertEquals(60L, day.activity!!.storedMinutes)
         assertTrue(day.games.isEmpty())
         val large = groupHistory(listOf(PlaySession(1, 9, at, Int.MAX_VALUE, false),
             PlaySession(2, 9, at + 1, Int.MAX_VALUE, true)), emptyList(), emptyList(), emptyList(), zone).single()

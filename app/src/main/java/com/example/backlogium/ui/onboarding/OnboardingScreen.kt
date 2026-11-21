@@ -81,10 +81,10 @@ fun OnboardingScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            text = if (state.step == OnboardingStep.SETUP) {
-                "Set up your library"
-            } else {
-                "Connect your Steam account"
+            text = when (state.step) {
+                OnboardingStep.SETUP -> "Set up your library"
+                OnboardingStep.HISTORY -> "Bring your past playtime"
+                else -> "Connect your Steam account"
             },
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
@@ -105,6 +105,7 @@ fun OnboardingScreen(
             // final action, using that step's existing inline treatment.
             OnboardingStep.STEAM_ID, OnboardingStep.VERIFY -> SteamIdStep(state, viewModel)
             OnboardingStep.SETUP -> SetupStep(onDone = viewModel::onSetupDone)
+            OnboardingStep.HISTORY -> HistoryImportStep(onDone = onCompleted)
         }
     }
 
@@ -352,16 +353,17 @@ private fun SetupStep(onDone: () -> Unit) {
         state = state,
         onToggle = viewModel::toggle,
         onRetry = viewModel::retry,
-        // Nothing has an outcome worth retrying until this run has finished, and the summary below
-        // plus the Settings entry are where a retry belongs.
-        showRetry = false,
+        showRetry = true,
     )
 
     if (state.finished || state.running) SetupSummary(state)
 
     Spacer(Modifier.height(8.dp))
     val started = state.running || state.finished
-    if (started && state.inScreenSettled) {
+    if (state.finished && !state.editing) {
+        TextButton(onClick = viewModel::editSelection) { Text("Edit selections") }
+    }
+    if (started && state.inScreenSettled && !state.editing) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -381,8 +383,7 @@ private fun SetupStep(onDone: () -> Unit) {
             // run is under way it only leaves — relabelling a stage that is actually running as
             // "skipped" would put a false outcome in front of the Settings list that reads them.
             onSkip = {
-                if (!started) viewModel.skip()
-                onDone()
+                if (!started) viewModel.skip(onDone) else onDone()
             },
         )
     }

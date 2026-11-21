@@ -109,6 +109,7 @@ class SetupStageRegistryTest {
         val store = FakeSetupStateStore()
         val coordinator = SetupCoordinator(registry, store, schedulerScope)
 
+        coordinator.ensureLoaded()
         coordinator.skipAll()
 
         registry.stages.forEach { stage ->

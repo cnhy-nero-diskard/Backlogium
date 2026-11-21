@@ -13,7 +13,7 @@ import java.time.LocalDate
  * marks are finalized, so a crash in between can be resolved deterministically rather than either
  * fabricating an event that never happened or losing one that did.
  *
- * The two `pending…` fields are *explicit earned identity*: a value is present only because an
+ * The four `pending…` fields are *explicit earned identity*: a value is present only because an
  * earned transition put it there, so a consumer never has to re-derive whether it was earned. The
  * two `last…` fields are acknowledgement high-water marks. The distinction matters most for quests:
  * [pendingQuestDates] holds the dates a `SYNC` actually earned and no consumer has acknowledged,
@@ -35,6 +35,31 @@ data class ProgressMarks(
      * back from storage. Never synthesized from historical `DailyProgress` rows.
      */
     val pendingQuestDates: Set<LocalDate> = emptySet(),
+    /**
+     * Level-up transitions earned by earned recomputes and not yet acknowledged
+     * (recover-missed-playtime, design.md §8 / tasks 5.5–5.6). Written at the same finalize step as
+     * [pendingQuestDates] and preserved by every non-earned reseed, so a corrective baseline that
+     * advances [lastCelebratedLevel] past one cannot swallow a delivery that was already owed.
+     * Each entry is one independent earned transition: a fresh rise shares the set with an older
+     * still-owed one instead of collapsing into it, and each is delivered — smallest `from` first —
+     * and removed by its own acknowledgement.
+     */
+    val pendingLevelUps: Set<PendingLevelUp> = emptySet(),
+    /**
+     * Streak milestones earned by earned recomputes and not yet acknowledged, delivered smallest
+     * first. Preserved across corrective reseeds for the same reason as [pendingLevelUps].
+     */
+    val pendingStreakMilestones: Set<Int> = emptySet(),
+)
+
+/**
+ * An earned level-up awaiting delivery. Mirrors [com.example.backlogium.domain.ProgressEvent.LevelUp]
+ * with its bounds captured durably, so a corrective reseed that moves [ProgressMarks.lastCelebratedLevel]
+ * does not erase the transition that actually earned the celebration.
+ */
+data class PendingLevelUp(
+    val from: Int,
+    val to: Int,
 )
 
 data class PendingStreakBreak(
@@ -55,4 +80,10 @@ data class PendingTransition(
     val previousStreak: Int,
     val previousTodayQuestMet: Boolean,
     val evaluationDate: LocalDate,
+    /**
+     * The durable identity of the recovery operation whose staged persist wrote this record
+     * (recover-missed-playtime task 5.6). Null for ordinary syncs; recovery writes it so a resume
+     * can attribute the in-flight transition to its journal rather than to an unrelated later sync.
+     */
+    val operationId: String? = null,
 )

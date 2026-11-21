@@ -358,6 +358,7 @@ class CollectionViewModelTest {
         val sessionRepository = SessionRepository(
             emptySessionDao(),
             hiddenGamesRepository = fakeHiddenGamesRepository(),
+            time = time,
         )
         val hltbRepository = HltbRepository(
             dataSource = object : HltbDataSource {
@@ -569,7 +570,19 @@ class CollectionViewModelTest {
             "observeLatestSessionInstantByGame",
             "observeSessionCountsByGame",
             "observeClosedSince",
+            "observeAllOpenSessions",
+            "observeSince",
+            "observeActiveRecoveryAllocations",
+            "observeActiveRecoveryTimedPlacements",
+            "observeActiveRecoveryRecipes",
+            "observeActiveRecoveryContributions",
+            "observeDatedAllocationsBetween",
+            "observeTimedPlacementsByDate",
+            "observeHostSessionsForDates",
             -> flowOf(emptyList<Any>())
+            "observeEarliestDatedAllocationDate",
+            "observeEarliestTimedShareDate",
+            -> flowOf(null)
             else -> null
         }
     }

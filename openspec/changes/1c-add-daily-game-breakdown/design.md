@@ -2,7 +2,7 @@
 
 See proposal.md for motivation. On master `d46a711c`, Home reads `DayProgress.minutesPlayed` through `homeDayFields`; History instead sums visible sessions and uses stored progress for quest outcome. `SessionRepository` filters hidden games and exposes date-bounded reads. Whole sessions belong to their local start date, including overnight sessions. Hiding can leave earned daily credit intact while making sessions invisible. Manual/imported lifetime credit has no guaranteed date.
 
-The projection spans repository/domain and UI state, so a design is required. Draft PR #176 owns general provenance labels; draft PR #177 owns unlock-only days and daily XP. Neither is implemented on this branch.
+The projection spans repository/domain and UI state, so a design is required. The proposal merged in PR #176 owns general provenance labels; the proposal merged in PR #177 owns unlock-only days and daily XP. Neither is implemented on this branch.
 
 ## Goals / Non-Goals
 
@@ -12,21 +12,21 @@ The projection spans repository/domain and UI state, so a design is required. Dr
 
 ## Decisions
 
-### One domain projection with two totals
+### One domain projection for visible activity and stored progress
 
-Add a repository-backed daily read model containing date/account identity, visible game/session totals, recorded subtotal `V`, optional authoritative credited total `Q`, optional stored quest outcome, and reconciliation state. Build it from committed local inputs in a read transaction or an equivalent version-consistent snapshot. Separate reactive query emissions cannot by themselves prove coherence; invalidate and reload the snapshot after relevant writes, and retain the last coherent result while loading.
+Add a repository-backed daily read model containing date/account identity, visible game totals, recorded subtotal `V`, optional stored all-play total `D`, optional stored Focus total, and optional stored quest outcome, and reconciliation state. Build it from committed local inputs in a read transaction or an equivalent version-consistent snapshot. Separate reactive query emissions cannot by themselves prove coherence; invalidate and reload the snapshot after relevant writes, and retain the last coherent result while loading.
 
-When `Q` exists, describe `R = Q - V` as a signed comparison. For `R > 0`, say some credited activity is unavailable in this visible breakdown; for `R < 0`, state that visible recorded minutes exceed credited minutes. Display the magnitude and both scopes. Never create a synthetic played-minutes row or clip/reweight game totals. A known cause may be named only if existing evidence proves it. Without `Q`, credit and recorded quest outcome are unavailable. The ordinary empty day still shows no recorded activity, and this read never evaluates a missing quest.
+When `D` exists, describe `R = D - V` as a signed comparison. For `R > 0`, say some credited activity is unavailable in this visible breakdown; for `R < 0`, state that visible recorded minutes exceed credited minutes. Display the magnitude and both scopes. Never create a synthetic played-minutes row or clip/reweight game totals. A known cause may be named only if existing evidence proves it. Without a progress row, stored totals and the recorded quest outcome are unavailable. The ordinary empty day still shows no recorded activity, and this read never evaluates a missing quest.
 
 Alternative: sum sessions directly in Home and overwrite its total. Rejected because that changes the meaning of an authoritative earned quest and disagrees after visibility changes. Treating every residual as hidden/imported time is also unsupported.
 
 ### Bound the evidence, preserve the ledger's semantics
 
-Request sessions for the selected complete local day with an exclusive next-midnight upper bound, using the same zone provider as attribution. Sum recorded `minutes`, including open rows; do not extend them from a UI ticker. Join visible identity with a fallback `App <id>` when unavailable. Sort by descending minutes, then localized presentation name, then stable app ID. Totals use wider accumulation and checked presentation conversion so large ledgers cannot silently wrap.
+Read canonical activity for the selected complete local day with an exclusive next-date bound. Include stored open-session minutes. Unlinked amounts follow local session starts and recovered placements retain their frozen dates. Join visible identity with a fallback `App <id>` when unavailable. Sort by descending minutes, then localized presentation name, then stable app ID. Totals use wider accumulation and checked presentation conversion so large ledgers cannot silently wrap.
 
 Read hidden exclusions and session/progress changes in the same snapshot. Do not expose hidden titles, counts, or detail links through reconciliation. A fallback identity can be inspected only when an eligible current detail target exists. Lifetime import/manual values are not added to dated rows.
 
-Alternative: read all history into Home. Rejected because a single-day surface needs only bounded detail. `2c` will reuse this model within History's existing loaded bounds rather than issue a query per rendered row.
+Alternative: read all history into Home. Rejected because a single-day surface needs only bounded detail. `2c` will reuse this model within History's existing loaded bounds in one bounded transaction for the window.
 
 ### Compact disclosure and stable navigation
 

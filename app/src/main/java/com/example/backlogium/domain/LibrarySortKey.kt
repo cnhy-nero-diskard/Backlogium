@@ -24,6 +24,9 @@ enum class LibrarySortKey {
 
     /** XP the game contributed to the player's total, highest first by default. */
     XP_CONTRIBUTED,
+
+    /** Recorded first observation by Backlogium, newest first; unknown dates stay last. */
+    ADDED_RECENTLY,
     ;
 
     /**
@@ -36,7 +39,7 @@ enum class LibrarySortKey {
     val defaultDirection: LibrarySortDirection
         get() = when (this) {
             NAME -> LibrarySortDirection.ASCENDING
-            PLAYTIME, RECENT_ACTIVITY, XP_CONTRIBUTED -> LibrarySortDirection.DESCENDING
+            PLAYTIME, RECENT_ACTIVITY, XP_CONTRIBUTED, ADDED_RECENTLY -> LibrarySortDirection.DESCENDING
         }
 }
 
