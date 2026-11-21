@@ -1,17 +1,15 @@
+# Proposal
+
 ## Why
 
-Issue [#158](https://github.com/cnhy-nero-diskard/Backlogium/issues/158), prioritized by [#174](https://github.com/cnhy-nero-diskard/Backlogium/issues/174), reports setup failures and unavailable recovery during concurrent Steam work. Source inspection confirms that queued retries become stored failures, onboarding hides Retry, completed-run selections mask edits, and a history import can be consumed before a library baseline exists; the reported cascade itself still needs reproduction.
+[#188](https://github.com/cnhy-nero-diskard/Backlogium/pull/188) resolved [#158](https://github.com/cnhy-nero-diskard/Backlogium/issues/158) by shipping setup recovery and the optional history choice. On current `master`, one pending stage can still hold up later selected stages, library-import readiness relies on a sync timestamp, and history consent and recomputation lack durable request provenance.
 
 ## What Changes
 
-- Separate setup's foreground attempt from the lifetime of its underlying work. Show queued/waiting, running, retry scheduled, completed, failed, cancelled, and skipped truthfully, without waiting indefinitely or treating concurrent work as failure.
-- Persist and reconcile each admitted stage's exact work identity after leaving setup or restarting the process. Keep failure isolation and the existing worker-owned detached notifications, including the completion-times repair from #111.
-- Offer per-stage recovery in onboarding and Settings once the foreground attempt settles. Retry only the requested stage, preserve successful siblings, and make edited selections visibly match the next run.
-- Preserve the underlying jobs' existing concurrency policies. Attaching to a queued retry does not promise immediate execution; neither periodic sync nor the live monitor is cancelled or replaced merely to recover setup.
-- Report domain-level library-sync results instead of assuming WorkManager success means a committed library. Expose durable, same-account evidence that a valid baseline exists, including a confirmed empty library.
-- Add an explicit optional history-import decision before first arrival at Home, including after declining setup. Reuse the existing lifetime-playtime-to-XP operation, offer Skip/do later and the existing Settings control, and explain that Steam totals cannot reconstruct dated sessions, quests, or streaks.
-- Guard the shared import operation against an unavailable baseline and make its raw commit plus derived recomputation recoverable and idempotent across concurrent sync, repeated invocation, and process death.
-- Deliver recovery before the history-choice milestone. No progress percentages are invented, no setup stage becomes mandatory, and no implementation is included in this proposal.
+- Let later independent setup stages start once the foreground wait settles. Keep each pending stage recoverable by its exact work identity after Continue or restart.
+- Record per-operation library poll results and durable, same-account baseline confirmation. Accept a confirmed empty library and preserve existing confirmation through failed refreshes.
+- Persist explicit history-import consent and carry its provenance through commit, recovery, and derived recomputation. Let users continue to Home while an admitted import remains recoverable in Settings.
+- Freeze imported historical offsets using canonical credited minutes, including recovered play with unknown timing. Verify that importing and recovering XP preserves both existing tracked credit and prior imported offsets.
 
 ## Capabilities
 
@@ -21,14 +19,12 @@ None.
 
 ### Modified Capabilities
 
-- `first-run-setup`: Truthful work states, foreground settlement, durable per-stage observation, non-destructive retry and editable next-run selection.
-- `onboarding-credentials`: A durable optional history decision between setup and Home, with explicit exit and interruption semantics.
-- `steam-sync`: Attributable library-poll outcomes and authoritative same-account baseline readiness.
-- `playtime-backfill`: Baseline eligibility, truthful lifetime-counter limits, atomic one-time import and recoverable recomputation.
-- `app-settings`: Setup recovery presentation and the same import readiness/recovery policy in Data & privacy.
+- `first-run-setup` — Bounded foreground waits, independent stage admission, and recovery of multiple admitted stages.
+- `onboarding-credentials` — Account-bound recovery of a consented import and durable exit while it is pending.
+- `steam-sync` — Results attributable to individual polls and durable library baseline confirmation.
+- `playtime-backfill` — Baseline admission, canonical credited-minute accounting, and durable request and recomputation provenance.
+- `app-settings` — Reconciled setup status and shared history-import readiness and recovery.
 
 ## Impact
 
-Planning targets `work/setup`, `data/setup`, `ui/setup`, `ui/onboarding`, the Home takeover/startup boundary, Steam sync scheduling/results, the profile repository, and the existing history-import use case and Settings controls. A minimal persistence migration may be needed for baseline evidence, per-stage work ownership, and pending import recomputation; legacy credentials, outcomes, and completed imports must remain compatible. No new remote API, library dependency, cloud requirement, or polling cadence is proposed.
-
-Missing-achievement diagnosis and active-game achievement watch (#159/#175), navigation/insets (#157), broad progress/offline feedback (#161), cloud historical re-filing, and synthetic pre-install session history are outside this change.
+Work builds on the current Android setup coordinator, sync and Room boundaries, history operation, and onboarding and Settings surfaces. Scope excludes HLTB refresh tooling, achievement watching, cloud re-filing changes, and a new playtime writer. See [implementation overlap](implementation-overlap.md) for upstream contracts and [acceptance coverage](acceptance-coverage.md) for current verification.
