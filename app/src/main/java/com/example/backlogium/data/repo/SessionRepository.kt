@@ -231,19 +231,7 @@ class SessionRepository @Inject constructor(
      */
     val earliestCanonicalActivityDate: Flow<LocalDate?> = if (database != null) {
         coherentRecoverySnapshot { dao ->
-            val earliestSessionMillis = dao.earliestVisibleSessionStartSnapshot()
-            val earliestAllocationDate = dao.earliestDatedAllocationDateSnapshot()
-            val earliestTimedShareDate = dao.earliestTimedShareDateSnapshot()
-            val hidden = dao.hiddenAppIdsSnapshot().toSet()
-            val recipes = dao.activeRecoveryRecipesSnapshot()
-            buildSet {
-                earliestSessionMillis?.let { add(PlaytimeReadProjector.sessionDate(it, zone)) }
-                earliestAllocationDate?.toLocalDateOrNull()?.let(::add)
-                earliestTimedShareDate?.toLocalDateOrNull()?.let(::add)
-                recipes.filterNot { it.appId in hidden }
-                    .mapNotNull { PlaytimeReadProjector.earliestPositiveRecipeDate(it.toCredit()) }
-                    .forEach(::add)
-            }.minOrNull()
+            dao.readEarliestCanonicalActivityDate(zone)
         }
     } else {
         combine(
@@ -279,39 +267,15 @@ class SessionRepository @Inject constructor(
         startDateInclusive: LocalDate,
         endDateExclusive: LocalDate,
     ): Flow<List<PlaytimeActivity>> {
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                dao.readCanonicalDatedActivity(zone, startDateInclusive, endDateExclusive)
+            }
+        }
         val fromIso = startDateInclusive.toString()
         val toExclusiveIso = endDateExclusive.toString()
         val startMillis = startDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli() - DAY_MILLIS
         val endMillis = endDateExclusive.atStartOfDay(zone).toInstant().toEpochMilli() + DAY_MILLIS
-        if (database != null) {
-            return coherentRecoverySnapshot { dao ->
-                val hidden = dao.hiddenAppIdsSnapshot().toSet()
-                val input = ActivityInput(
-                    windowSessions = dao.sessionsBetweenSnapshot(startMillis, endMillis),
-                    hostSessions = dao.hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
-                    placements = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
-                    allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
-                    recipes = dao.activeRecoveryRecipesSnapshot(),
-                )
-                val relevantSessions = input.relevantSessions(hidden)
-                val relevantIds = relevantSessions.map(Session::id).distinct()
-                val allHostPlacements = dao.activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
-                PlaytimeReadProjector.datedActivityBetween(
-                    sessions = relevantSessions.map(Session::toCredit),
-                    timedShares = input.placements.filterNot { it.appId in hidden }
-                        .map(TimedContributionPlacement::toCredit),
-                    allocations = input.allocations.filterNot { it.appId in hidden }
-                        .map(UnknownTimeAllocation::toCredit),
-                    recipes = input.recipes.filterNot { it.appId in hidden }
-                        .map(UnknownTimeAllocationRecipe::toCredit),
-                    zone = zone,
-                    startDateInclusive = startDateInclusive,
-                    endDateExclusive = endDateExclusive,
-                    allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
-                        .map(TimedContributionPlacement::toCredit),
-                )
-            }
-        }
         return combine(
             combine(
                 sessionDao.observeBetween(startMillis, endMillis),
@@ -762,13 +726,6 @@ class SessionRepository @Inject constructor(
         return fromRecipes + fromAllocations
     }
 
-    /** Keep SQLite's bind list bounded without leaving the enclosing Room snapshot. */
-    private suspend fun SessionDao.activeTimedPlacementsForSessionsSnapshotChunked(
-        sessionIds: List<Long>,
-    ): List<TimedContributionPlacement> =
-        sessionIds.distinct().chunked(SESSION_ID_QUERY_CHUNK_SIZE)
-            .flatMap { chunk -> activeTimedPlacementsForSessionsSnapshot(chunk) }
-
     private fun Map<Long, Long>.toTrackedMinutesByGame(): Map<Long, Int> =
         mapValues { (_, minutes) -> minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
 
@@ -793,6 +750,67 @@ class SessionRepository @Inject constructor(
         combine(hiddenGamesRepository.hiddenAppIds) { byAppId, hidden ->
             if (hidden.isEmpty()) byAppId else byAppId.filterKeys { it !in hidden }
         }
+}
+
+/** Keep SQLite's bind list bounded without leaving the enclosing Room snapshot. */
+private suspend fun SessionDao.activeTimedPlacementsForSessionsSnapshotChunked(
+    sessionIds: List<Long>,
+): List<TimedContributionPlacement> =
+    sessionIds.distinct().chunked(SESSION_ID_QUERY_CHUNK_SIZE)
+        .flatMap { chunk -> activeTimedPlacementsForSessionsSnapshot(chunk) }
+
+/** Read the canonical activity bundle inside the caller's Room transaction. */
+internal suspend fun SessionDao.readCanonicalDatedActivity(
+    zone: ZoneId,
+    startDateInclusive: LocalDate,
+    endDateExclusive: LocalDate,
+): List<PlaytimeActivity> {
+    val fromIso = startDateInclusive.toString()
+    val toExclusiveIso = endDateExclusive.toString()
+    val startMillis = startDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli() - DAY_MILLIS
+    val endMillis = endDateExclusive.atStartOfDay(zone).toInstant().toEpochMilli() + DAY_MILLIS
+    val hidden = hiddenAppIdsSnapshot().toSet()
+    val input = ActivityInput(
+        windowSessions = sessionsBetweenSnapshot(startMillis, endMillis),
+        hostSessions = hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
+        placements = timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
+        allocations = datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
+        recipes = activeRecoveryRecipesSnapshot(),
+    )
+    val relevantSessions = input.relevantSessions(hidden)
+    val relevantIds = relevantSessions.map(Session::id).distinct()
+    val allHostPlacements = activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
+    return PlaytimeReadProjector.datedActivityBetween(
+        sessions = relevantSessions.map(Session::toCredit),
+        timedShares = input.placements.filterNot { it.appId in hidden }
+            .map(TimedContributionPlacement::toCredit),
+        allocations = input.allocations.filterNot { it.appId in hidden }
+            .map(UnknownTimeAllocation::toCredit),
+        recipes = input.recipes.filterNot { it.appId in hidden }
+            .map(UnknownTimeAllocationRecipe::toCredit),
+        zone = zone,
+        startDateInclusive = startDateInclusive,
+        endDateExclusive = endDateExclusive,
+        allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+            .map(TimedContributionPlacement::toCredit),
+    )
+}
+
+/** Earliest visible date, including frozen funded shares and allocation-only activity. */
+internal suspend fun SessionDao.readEarliestCanonicalActivityDate(zone: ZoneId): LocalDate? {
+    val earliestSessionMillis = earliestVisibleSessionStartSnapshot()
+    val earliestAllocationDate = earliestDatedAllocationDateSnapshot()
+    val earliestTimedShareDate = earliestTimedShareDateSnapshot()
+    val hidden = hiddenAppIdsSnapshot().toSet()
+    val recipes = activeRecoveryRecipesSnapshot()
+    return buildSet {
+        earliestSessionMillis?.let { add(PlaytimeReadProjector.sessionDate(it, zone)) }
+        earliestAllocationDate?.toLocalDateOrNull()?.let(::add)
+        earliestTimedShareDate?.toLocalDateOrNull()?.let(::add)
+        recipes.filterNot { it.appId in hidden }
+            .mapNotNull { PlaytimeReadProjector.earliestPositiveRecipeDate(it.toCredit()) }
+            .forEach(::add)
+    }.minOrNull()
 }
 
 /** Window-scoped session+share+bucket inputs shared by the dated projections. */
@@ -838,7 +856,7 @@ private const val SESSION_ID_QUERY_CHUNK_SIZE = 900
 /** Backup preflight's latest plausible recovery date (2100-01-01), plus one for half-open windows. */
 private val MAX_SUPPORTED_ACTIVITY_DATE_EXCLUSIVE = LocalDate.of(2100, 1, 2)
 
-private fun Session.toDomain() = PlaySession(
+internal fun Session.toDomain() = PlaySession(
     id = id,
     appId = appId,
     startAt = startAt,

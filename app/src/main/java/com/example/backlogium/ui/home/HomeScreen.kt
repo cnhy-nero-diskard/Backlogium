@@ -99,6 +99,7 @@ import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
+import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.R
 import com.example.backlogium.data.local.PresenceMonitoringAvailability
 import com.example.backlogium.domain.CollectionBanner
@@ -179,6 +180,7 @@ fun HomeScreen(
             onOpenSmartCollection = onOpenSmartCollection,
             onOpenLibrary = onOpenLibrary,
             onOpenGame = onOpenGame,
+            onOpenDailyGame = { viewModel.openDailyGame(it, onOpenGame) },
             onReorderCollections = viewModel::reorderCollections,
         ),
     )
@@ -198,6 +200,7 @@ internal fun HomeFirstRunNavigation(state: HomeUiState, onOpenOnboarding: () -> 
 
 /** Actions raised by the stateless Home presentation. */
 internal data class HomeContentActions(
+    val onOpenDailyGame: (Long) -> Unit = {},
     val onOpenOnboarding: () -> Unit = {},
     val onAcknowledgeProgressEvent: (ProgressEvent) -> Unit = {},
     val onSyncNow: () -> Unit = {},
@@ -351,6 +354,7 @@ internal fun HomeContent(
             onOpenSmartCollection = actions.onOpenSmartCollection,
             onOpenLibrary = actions.onOpenLibrary,
             onOpenGame = actions.onOpenGame,
+            onOpenDailyGame = actions.onOpenDailyGame,
             scrollState = scrollState,
             scrollViewport = scrollViewport,
             onReorderCollections = actions.onReorderCollections,
@@ -373,6 +377,7 @@ private fun InnerHomeContent(
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenGame: (Long) -> Unit,
+    onOpenDailyGame: (Long) -> Unit,
     scrollState: ScrollState,
     scrollViewport: Rect?,
     onReorderCollections: (List<Long>) -> Unit,
@@ -577,18 +582,27 @@ private fun InnerHomeContent(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = stringResource(
-                            if (state.questMet) R.string.home_complete else R.string.home_in_progress,
+                            when {
+                                state.dailyActivity != null && state.dailyActivity.questMet == null -> R.string.activity_credit_unavailable
+                                state.questMet -> R.string.home_complete
+                                else -> R.string.home_in_progress
+                            },
                         ),
                         style = MaterialTheme.typography.bodyLarge,
                     )
                 }
                 Text(
                     text = stringResource(
-                        R.string.home_played_today,
+                        if (state.questMode == QuestMode.GOAL_ONLY) R.string.home_focus_played_today
+                        else R.string.home_played_today,
                         UiFormat.localizedMinutes(state.todayMinutes),
                         UiFormat.localizedMinutes(state.questThreshold),
                     ),
                     style = MaterialTheme.typography.bodySmall,
+                )
+                DailyActivityDisclosure(
+                    state.dailyActivityKey, state.dailyActivity, state.dailyDetailUnavailable,
+                    onOpenDailyGame,
                 )
             }
         }

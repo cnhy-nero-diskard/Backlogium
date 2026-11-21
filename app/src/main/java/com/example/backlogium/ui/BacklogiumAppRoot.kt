@@ -249,7 +249,8 @@ fun BacklogiumAppRoot(
                     )
                 }
                 composable(Destination.HISTORY.route) {
-                    HistoryScreen(onOpenCloudActivity = { navController.navigate(ROUTE_CLOUD_ACTIVITY) })
+                    HistoryScreen(onOpenCloudActivity = { navController.navigate(ROUTE_CLOUD_ACTIVITY) },
+                    onOpenGame = { appId -> navController.navigate(gameDetailRoute(appId)) })
                 }
                 composable(ROUTE_CLOUD_ACTIVITY) {
                     val historyEntry = remember(it) { navController.getBackStackEntry(Destination.HISTORY.route) }
@@ -258,7 +259,9 @@ fun BacklogiumAppRoot(
                         onBack = { navController.popBackStack() },
                     )
                 }
-                composable(Destination.ANALYTICS.route) { AnalyticsScreen() }
+                composable(Destination.ANALYTICS.route) {
+                    AnalyticsScreen(onOpenGame = { navController.navigate(gameDetailRoute(it)) })
+                }
                 navigation(
                     startDestination = SettingsRoutes.OVERVIEW,
                     route = SettingsRoutes.GRAPH,

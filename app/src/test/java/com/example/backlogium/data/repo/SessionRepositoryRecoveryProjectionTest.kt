@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.RecoveryReadStatusStore
+import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameRecoveryState
@@ -15,6 +16,7 @@ import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.TimedContributionPlacement
 import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.RecoveryDailyCreditCoordinator
 import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeActivity
@@ -39,6 +41,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -92,6 +95,50 @@ class SessionRepositoryRecoveryProjectionTest {
 
     @After
     fun tearDown() = db.close()
+
+    @Test
+    fun dailyBreakdownAndHistoryUseFrozenActivityAndAnAllocationOnlyPagingFloor() = runTest {
+        val old = day.minusDays(36)
+        val timedDate = day.minusDays(1)
+        val sessionId = db.sessionDao().insert(session(10L, day, minutes = 40))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("credited-share", 10L, 10))
+        recovery.insertTimedPlacements(
+            listOf(timed("timed-placement", "credited-share", 10L, sessionId, 10L, timedDate)),
+        )
+        recovery.insertContributionChecked(contribution("fallback", 11L, 20L))
+        recovery.insertAllocations(listOf(
+            allocation("allocation-leaf", "fallback", 11L, old, 20L, RecoveryAllocationMethods.SINGLE_DAY),
+        ))
+        db.dailyProgressDao().upsert(DailyProgress(timedDate.toString(), 40, 10, questMet = false))
+
+        // The device zone now puts the start on the prior date, while recovery dates stay frozen.
+        val changedZone = ZoneId.of("America/Los_Angeles")
+        val changedTime = object : TimeProvider {
+            override fun zone() = changedZone
+            override fun nowMillis() = at(day)
+            override fun today() = timedDate
+        }
+        val daily = DailyActivityRepository(db, changedTime)
+
+        val mixed = daily.observeDay(timedDate, account).first()
+        assertEquals(40L, mixed.recordedMinutes)
+        assertEquals(40L, mixed.storedMinutes)
+        assertEquals(10L, mixed.storedFocusMinutes)
+        assertEquals(false, mixed.questMet)
+        assertTrue(daily.observeDay(day, account).first().games.isEmpty())
+
+        val recent = daily.readWindow(day.minusDays(29), day, account)
+        assertTrue(recent.hasOlder)
+        val expanded = daily.readWindow(old, day, account)
+        assertFalse(expanded.hasOlder)
+        assertEquals(old, expanded.activities.filterIsInstance<PlaytimeActivity.DatedAllocation>().single().date)
+
+        val allocationOnly = daily.observeDay(old, account).first()
+        assertNull(allocationOnly.storedMinutes)
+        assertEquals(20L, allocationOnly.recordedMinutes)
+        assertEquals(old, allocationOnly.games.single().allocations.single().date)
+    }
 
     @Test
     fun mixedSessionCountsContributionsOncePlusItsUnlinkedRemainder() = runTest {

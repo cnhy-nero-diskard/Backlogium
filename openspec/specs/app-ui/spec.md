@@ -3208,7 +3208,7 @@ History SHALL provide concise contextual help explaining that session starts are
 - **THEN** the app explains the poll-quantized start time and tracked-minute semantics without implying data loss or an exact start-end interval
 
 ### Requirement: Analytics leads with an interpretable insight
-Analytics SHALL present a plain-language summary derived from the selected window before secondary chart configuration. It SHALL visually distinguish selected-window figures from all-time figures.
+Analytics SHALL present a plain-language summary derived from the selected window before secondary chart configuration. It SHALL visually distinguish selected-window figures from all-time figures. Essential insight meaning and its actual displayed period SHALL be visible as text as well as accessible semantics. A featured game's identity and minutes SHALL be visibly scoped to that game, while whole-period totals SHALL be labelled as covering all eligible visible games. Artwork SHALL NOT imply that the featured game owns aggregate figures, is currently being played, or has been completed without evidence.
 
 #### Scenario: Window contains activity
 - **WHEN** Analytics has tracked activity in the selected window
@@ -3217,6 +3217,44 @@ Analytics SHALL present a plain-language summary derived from the selected windo
 #### Scenario: Window contains no activity
 - **WHEN** the selected window has no tracked activity
 - **THEN** Analytics states that directly, retains period navigation, and does not present all-time achievements or streaks as if they described the empty window
+
+#### Scenario: Featured game and aggregate totals
+- **WHEN** the headline features the leading game with artwork and its minutes
+- **THEN** visible text identifies its most-played role and displayed period, and the aggregate figures identify their all-games scope separately
+
+#### Scenario: Current calendar period
+- **WHEN** a current month or year is only partly elapsed
+- **THEN** overview context identifies the represented dates through today without implying future days contributed to activity figures
+
+#### Scenario: Window is changing
+- **WHEN** the selected period changes while new figures are loading
+- **THEN** retained figures, featured identity/artwork, and scope labels remain attached to the same prior snapshot with an updating state until the replacement snapshot is available
+
+### Requirement: Featured-game presentation preserves evidence and fallback behavior
+Analytics SHALL bind featured identity, artwork, recorded minutes, and displayed scope to the same eligible leading game and snapshot. Missing artwork SHALL preserve the textual identity and meaning. A comparison or no-data headline SHALL NOT retain a stale featured-game panel. Existing deterministic headline priority and ranking, hidden-game exclusions, stored arithmetic, session attribution, and external request behavior SHALL remain unchanged.
+
+#### Scenario: Game artwork unavailable
+- **WHEN** the featured game's artwork cannot be loaded
+- **THEN** its name, most-played role, minutes, and period remain legible with the established artwork fallback
+
+#### Scenario: Equal leading totals
+- **WHEN** multiple games tie under the existing deterministic ranking
+- **THEN** the selected game's identity and artwork match its displayed minutes and the presentation makes no unsupported unique-leader claim
+
+#### Scenario: Different headline type
+- **WHEN** a comparable-period or empty-window headline replaces a leading-game headline
+- **THEN** no stale artwork or game-specific minutes remain attached to its aggregate statement
+
+### Requirement: Analytics scope is readable across accessibility contexts
+Visible labels and accessibility descriptions SHALL convey the same featured-game, all-games, selected-period, and lifetime scopes. Localized period text and quantities SHALL remain readable on narrow screens with larger fonts and in both themes. Scope SHALL NOT depend solely on artwork, color, or an explanation available only to assistive technology.
+
+#### Scenario: Screenshot or sighted inspection
+- **WHEN** the overview is read without opening an explanation or using a screen reader
+- **THEN** the featured game's role and the aggregate figures' scope are still understandable
+
+#### Scenario: Large fonts and assistive technology
+- **WHEN** text size is increased or the overview is read by assistive technology
+- **THEN** essential scope labels remain available and describe the same facts
 
 ### Requirement: Analytics chart inspection is accessible without precise touch
 Every day represented by the daily-playtime chart SHALL be inspectable through explicit previous/next-day controls and accessible semantics. Chart meaning SHALL also be available as text, including the selected date, minutes, goal state, and per-game breakdown.
@@ -3680,3 +3718,144 @@ Game detail SHALL show cached achievement objectives before play, load missing d
 #### Scenario: Collection overlay and accessibility
 - **WHEN** the same unplayed game is opened from a collection with TalkBack enabled
 - **THEN** catalogue availability, progress availability, and retry actions are understandable as in the Library entry point
+
+### Requirement: Today's quest expands into an evidence-aware game breakdown
+Home SHALL offer an initially collapsed per-game minute breakdown inside Today's quest while preserving the compact collapsed card. The expanded content SHALL identify its date, visible recorded subtotal, stored daily and Focus totals when available, and any reconciliation or unavailable allocation required by the daily-activity-breakdown capability. It SHALL not change the quest result or imply that recorded session minutes are exact elapsed play.
+
+#### Scenario: Breakdown expanded
+- **WHEN** the player expands Today's quest on a multi-game day
+- **THEN** each visible game's recorded minutes appear and the credit comparison explains how they relate to the card's quest total
+
+#### Scenario: No recorded activity
+- **WHEN** today's breakdown contains neither visible sessions nor stored credit
+- **THEN** Home shows a compact no-recorded-activity state rather than fabricating games
+
+#### Scenario: Per-game allocation unavailable
+- **WHEN** stored progress exists without visible dated game activity
+- **THEN** the expanded card explains the unavailable allocation and retains the authoritative quest total
+
+### Requirement: Daily breakdown actions remain accessible and account safe
+The expansion control SHALL announce its purpose and state. Visible game rows SHALL offer named detail actions with accessible touch targets. Home SHALL use localized text that remains readable with larger fonts and in both themes. The breakdown SHALL be keyed by account and date.
+
+#### Scenario: Detail navigation and return
+- **WHEN** the player opens a visible game from the expanded breakdown and returns on the same account and date
+- **THEN** the same day's breakdown remains expanded with current local data
+
+#### Scenario: Target becomes unavailable
+- **WHEN** a game is hidden or removed before its detail action executes
+- **THEN** Home provides a clear unavailable result and exposes no hidden game detail
+
+#### Scenario: Large-font or screen-reader use
+- **WHEN** the player inspects the card with larger fonts or assistive technology
+- **THEN** game names, minutes, reconciliation wording, and expansion/navigation actions remain understandable without color-only cues
+
+#### Scenario: Account or date changes
+- **WHEN** the active account or current local date changes
+- **THEN** stale rows are cleared or replaced under the correct identity and the new breakdown starts collapsed
+
+### Requirement: History session facts are individually understandable
+History SHALL identify each timestamped session's approximate local start, recorded minutes and open state with accessible textual equivalents. The approximate start and recorded minutes SHALL remain separate. Proven cloud contributions SHALL retain their individual qualifications.
+
+#### Scenario: Closed session
+- **WHEN** a closed session is expanded
+- **THEN** its approximate start and recorded minutes are explicitly labelled without an exact end-time-derived duration
+
+#### Scenario: Open session
+- **WHEN** an open session is shown
+- **THEN** the row identifies the live state and recorded amount without treating elapsed wall-clock time as additional recorded play
+
+#### Scenario: Overnight session
+- **WHEN** a session starts before midnight and continues into the next day
+- **THEN** the session appears on its local start date and any funded shares keep their frozen credited dates, with the displayed amounts explained
+
+#### Scenario: Cloud or legacy evidence
+- **WHEN** a session has proven cloud assistance or incomplete historical source evidence
+- **THEN** its contribution remains separately qualified or its source is described conservatively, without a blanket Steam-only claim
+
+### Requirement: History daily evidence and quest credit have distinct scopes
+History SHALL sum visible canonical dated activity for day and game totals and use the daily-activity-breakdown capability to reconcile those totals with stored daily play. Stored Focus minutes and quest outcomes SHALL retain their distinct scopes. A missing quest outcome SHALL appear as unavailable.
+
+#### Scenario: Visible sessions and credit disagree
+- **WHEN** a day's visible recorded total differs from its stored daily play total
+- **THEN** History identifies both scopes and their reconciliation while retaining the stored quest outcome
+
+#### Scenario: Progress-only date
+- **WHEN** stored daily progress exists without visible sessions or dated allocations
+- **THEN** the day retains its credit/outcome and explains that a game/session allocation is unavailable
+
+#### Scenario: Mixed or allocation-only day
+- **WHEN** a date contains credited recovery allocations or funded timed shares
+- **THEN** day and game totals include each visible amount once on its credited date
+- **AND** unknown-time allocations retain estimate or timing disclosures without a clock start or live state
+
+#### Scenario: Pending date-unknown quantity
+- **WHEN** recovery has credited minutes awaiting a valid date
+- **THEN** History preserves the separate recovery status and keeps those minutes outside dated totals
+
+#### Scenario: No recorded quest result
+- **WHEN** session evidence exists without a stored daily-progress outcome
+- **THEN** History shows the sessions with unavailable quest state instead of an invented failure
+
+#### Scenario: Gap between recorded sessions
+- **WHEN** displayed records have a temporal gap
+- **THEN** the presentation does not assert no play occurred or interpolate unsupported activity
+
+### Requirement: History grouping never implies a measured time axis
+The existing day/game/session presentation SHALL make its grouping and ordering understandable. Game rows SHALL be ordered by recorded minutes with deterministic ties, and a timeline-style gutter SHALL NOT imply that row position, line length, or spacing measures elapsed time. Sessions inside a game SHALL remain ordered by their approximate start. Its text and layout SHALL remain readable with larger fonts and in both themes.
+
+#### Scenario: Games interleave in time
+- **WHEN** one game's sessions occur before and after another game's sessions
+- **THEN** History identifies the game grouping rather than implying the game rows form one chronological sequence
+
+#### Scenario: Sparse day
+- **WHEN** few records span a long time interval
+- **THEN** gutter spacing is not presented as proportional duration or continuous observation
+
+### Requirement: History clarity preserves bounded navigation and reveal state
+History clarity changes SHALL preserve its bounded loaded date window, older-content action, explicit fully-loaded state, current-day expansion, valid expanded game/session state, and game-detail navigation. They SHALL preserve evidence-backed cloud marks, their explanations, and exact-session reveal with a clear unavailable fallback. Recomputations SHALL retain a coherent prior snapshot with an updating state; account replacement SHALL clear old content.
+
+#### Scenario: Older history loaded
+- **WHEN** the player loads another bounded window
+- **THEN** valid expanded rows remain stable and the older/fully-loaded state reflects both canonical dated activity, including allocation-only dates, and stored progress
+
+#### Scenario: Cloud activity reveals a session
+- **WHEN** a cloud activity item targets a session still present in the loaded window
+- **THEN** its exact day, game, and session remain revealable after the presentation change
+
+#### Scenario: Device timezone changes
+- **WHEN** the device timezone changes while History is open
+- **THEN** the visible window refreshes with local-start attribution for unlinked session minutes and retains frozen recovery dates
+
+#### Scenario: Account changes during loading
+- **WHEN** the active account changes while history recomputes
+- **THEN** the previous account's records are cleared and late results cannot repopulate them
+
+### Requirement: Analytics presents personal momentum with independent dated scope
+Analytics SHALL present a compact personal momentum card explicitly describing recorded personal activity over the last seven completed local days versus the preceding seven. Both actual date ranges and the fixed scope's independence from the main Analytics period selector SHALL be understandable in visible text and semantics. The card SHALL use the eligibility, ranking, limit, and caveats of personal-play-momentum, and distinguish growth from newly recorded activity. It SHALL not replace the main selected-window headline, label personal momentum as Steam community growth, or duplicate a recent-play collection's membership view.
+
+#### Scenario: Main period selector changes
+- **WHEN** the player selects a different Analytics month, year, or rolling window
+- **THEN** the personal card retains its own fixed dated comparison and clearly identifies that it describes the recent completed weeks
+
+#### Scenario: Candidate inspected
+- **WHEN** an eligible title appears
+- **THEN** its current/baseline recorded minutes, growth amount or newly-recorded reason, and both period scopes are inspectable
+
+#### Scenario: Learning or no qualifying increase
+- **WHEN** history is insufficient or no title qualifies
+- **THEN** the card shows the corresponding concise explanation without unsupported growth or community claims
+
+### Requirement: Personal momentum rows offer accessible safe detail navigation
+Momentum game rows SHALL offer named accessible detail actions with adequate touch targets, locale-aware amounts/dates, and textual growth meaning independent of color. Essential scope and caveats SHALL remain legible on narrow screens, larger fonts, and both themes. A title that becomes hidden or unavailable before navigation SHALL produce a clear unavailable result; returning to Analytics SHALL preserve its existing main-period selection.
+
+#### Scenario: Game detail opened and closed
+- **WHEN** the player opens a momentum title and returns
+- **THEN** the main Analytics selection is preserved and the personal comparison uses current local evidence
+
+#### Scenario: Target visibility changes
+- **WHEN** a title is hidden before its detail action executes
+- **THEN** no hidden detail is opened and the card refreshes its eligibility with clear action feedback
+
+#### Scenario: Screen reader or larger text
+- **WHEN** the player reads a momentum row with assistive technology or larger text
+- **THEN** game identity, both amounts, comparison reason, and detail action remain understandable

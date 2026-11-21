@@ -44,7 +44,7 @@ class AnalyticsHeadlineTest {
     @Test
     fun unavailableComparisonFallsBackToLeadingGame() {
         assertEquals(
-            AnalyticsHeadline.LeadingGame("Game X", 90),
+            AnalyticsHeadline.LeadingGame(game),
             deriveAnalyticsHeadline(
                 totalMinutes = 90,
                 activeDays = 1,

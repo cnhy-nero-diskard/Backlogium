@@ -1,31 +1,36 @@
 package com.example.backlogium.ui.history
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
-import com.example.backlogium.data.repo.CredentialsState
-import com.example.backlogium.data.repo.GameRepository
-import com.example.backlogium.data.repo.PlaySession
-import com.example.backlogium.data.repo.ProfileRepository
+import com.example.backlogium.data.repo.DailyActivityRepository
 import com.example.backlogium.data.repo.SessionRepository
-import com.example.backlogium.data.repo.CloudPresenceRepository
-import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.domain.CreditedAllocation
-import com.example.backlogium.domain.CurrentDateProvider
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
-import com.example.backlogium.domain.PlaytimeRecoveryStatus
-import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.PlaytimeReadProjector.toCreditedAllocation
+import com.example.backlogium.domain.PlaytimeRecoveryStatus
+import com.example.backlogium.data.repo.CloudPresenceRepository
+import com.example.backlogium.data.repo.CloudReadSummary
+import com.example.backlogium.domain.CurrentDateProvider
+import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.ui.util.observeCalendar
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
-import java.time.LocalDate
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 private const val HISTORY_WINDOW_STEP_DAYS = 30
@@ -60,6 +65,9 @@ enum class RecoveryStatusUi {
 
 data class HistoryUiState(
     val loading: Boolean = true,
+    val accountId: String = "",
+    val updating: Boolean = false,
+    val detailUnavailable: Boolean = false,
     val configured: Boolean = true,
     val days: List<HistoryDayGroup> = emptyList(),
     /** Today's local date (ISO), so the screen can expand it by default without its own clock. */
@@ -70,35 +78,24 @@ data class HistoryUiState(
     val cloudReaderConfigured: Boolean = false,
     val cloudReadSummary: CloudReadSummary = CloudReadSummary(),
     val statusNow: Long = 0L,
-    /** Honest recovery disclosure; see [RecoveryStatusUi]. */
     val recoveryStatus: RecoveryStatusUi = RecoveryStatusUi.KNOWN_GOOD,
-    /** Authorized minutes with no valid date window yet; disclosed separately from dated rows. */
     val pendingDateUnknownMinutes: Int = 0,
 )
 
 data class HistoryReveal(val date: String, val appId: Long, val sessionId: Long)
 
-/** One windowed snapshot feeding History: sessions, allocations, paging anchor and recovery. */
-private data class HistoryWindowedInputs(
-    val sessions: List<PlaySession>,
-    val activities: List<PlaytimeActivity>,
-    val earliestCanonicalDate: String?,
-    val pendingMinutes: Int,
-    val domainStatus: PlaytimeRecoveryStatus,
-)
-
 @HiltViewModel
 class HistoryViewModel @Inject constructor(
+    private val activity: DailyActivityRepository,
     private val sessionRepository: SessionRepository,
-    private val gameRepository: GameRepository,
-    private val profileRepository: ProfileRepository,
-    private val achievementRepository: AchievementRepository,
     private val credentials: CredentialsRepository,
     private val time: TimeProvider,
     private val currentDate: CurrentDateProvider,
     private val cloudPresence: CloudPresenceRepository,
+    @param:ApplicationContext context: Context,
 ) : ViewModel() {
 
+    private val detailUnavailable = MutableStateFlow(false)
     private val revealState = MutableStateFlow<HistoryReveal?>(null)
     val reveal: StateFlow<HistoryReveal?> = revealState
     private val statusTimeMillis = MutableStateFlow(time.nowMillis())
@@ -119,86 +116,79 @@ class HistoryViewModel @Inject constructor(
      */
     private val windowDays = MutableStateFlow(INITIAL_WINDOW_DAYS)
 
-    // Both the window cutoff and the expand-today anchor are dated, so the date joins the window as
-    // an input: crossing midnight has to re-derive them without waiting for a sync to arrive.
-    val uiState: StateFlow<HistoryUiState> = combine(windowDays, currentDate.currentDate, ::Pair)
-        .flatMapLatest { (window, today) ->
-            val cutoff = historyWindowCutoffMillis(window, today, time.zone())
-            val windowStartDate = today.minusDays((window - 1).toLong()).toString()
-            val windowEndExclusive = today.plusDays(1)
-            val windowEndMillis = windowEndExclusive.atStartOfDay(time.zone()).toInstant().toEpochMilli()
-            combine(
-                combine(
-                    sessionRepository.sessionsBetween(cutoff, windowEndMillis),
-                    sessionRepository.activityBetween(
-                        zone = time.zone(),
-                        startDateInclusive = LocalDate.parse(windowStartDate),
-                        endDateExclusive = windowEndExclusive,
-                    ),
-                    sessionRepository.earliestCanonicalActivityDate,
-                    combine(
-                        sessionRepository.pendingDateUnknownQuantity,
-                        sessionRepository.recoveryStatus,
-                    ) { pending, status ->
-                        pending to status
+    private val calendar = currentDate.observeCalendar(context)
+
+    private val recoveryDisclosure = combine(
+        sessionRepository.pendingDateUnknownQuantity,
+        sessionRepository.recoveryStatus,
+        ::Pair,
+    )
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val uiState: StateFlow<HistoryUiState> = credentials.steamIdFlow.distinctUntilChanged()
+        .flatMapLatest { accountId ->
+            windowDays.value = INITIAL_WINDOW_DAYS
+            revealState.value = null
+            detailUnavailable.value = false
+            if (accountId == null) return@flatMapLatest flowOf(HistoryUiState(loading = false, configured = false))
+            var previous: HistoryUiState? = null
+            combine(windowDays, calendar, ::Pair).flatMapLatest { (window, calendarDate) ->
+                val (today, zone) = calendarDate
+                val start = today.minusDays((window - 1).toLong())
+                activity.observeWindow(start, today, accountId, zone).map { snapshot ->
+                    HistoryUiState(
+                        loading = false,
+                        accountId = snapshot.accountId,
+                        days = groupHistory(
+                            sessions = snapshot.sessions,
+                            games = snapshot.games,
+                            dailyProgress = snapshot.progress,
+                            achievementUnlocks = snapshot.achievements,
+                            zone = snapshot.zone,
+                            sessionActivities = snapshot.activities.filterIsInstance<PlaytimeActivity.TimestampedSession>(),
+                            allocations = snapshot.activities.filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                                .map { it.toCreditedAllocation().toHistoryAllocationUi() },
+                            windowStartDate = snapshot.start.toString(),
+                            windowEndDate = snapshot.endInclusive.toString(),
+                            accountId = snapshot.accountId,
+                        ),
+                        today = snapshot.endInclusive.toString(), windowStartDate = snapshot.start.toString(),
+                        hasOlderHistory = snapshot.hasOlder, updating = snapshot.updating,
+                    ).also { previous = it }
+                }.flowOn(Dispatchers.Default).onStart {
+                    previous?.let { emit(it.copy(updating = true)) }
+                }
+            }.combine(recoveryDisclosure) { state, (pending, status) ->
+                state.copy(
+                    pendingDateUnknownMinutes = if (state.loading) 0 else pending,
+                    recoveryStatus = when {
+                        state.loading -> RecoveryStatusUi.KNOWN_GOOD
+                        pending > 0 -> RecoveryStatusUi.PENDING_DATE_QUANTITY
+                        else -> status.toRecoveryStatusUi()
                     },
-                ) { sessions, activities, earliestCanonicalDate, recovery ->
-                    HistoryWindowedInputs(
-                        sessions = sessions,
-                        activities = activities,
-                        earliestCanonicalDate = earliestCanonicalDate?.toString(),
-                        pendingMinutes = recovery.first,
-                        domainStatus = recovery.second,
-                    )
-                },
-                gameRepository.library,
-                profileRepository.dailyProgress,
-                achievementRepository.unlockedSince(cutoff),
-                credentials.credentialsStateFlow,
-            ) { windowed, games, dailyProgress, achievements, credState ->
-                HistoryUiState(
-                    loading = false,
-                    configured = credState is CredentialsState.Configured,
-                    days = groupHistory(
-                        sessions = windowed.sessions,
-                        sessionActivities = windowed.activities
-                            .filterIsInstance<PlaytimeActivity.TimestampedSession>(),
-                        games = games,
-                        dailyProgress = dailyProgress,
-                        achievementUnlocks = achievements,
-                        zone = time.zone(),
-                        allocations = windowed.activities
-                            .filterIsInstance<PlaytimeActivity.DatedAllocation>()
-                            .map { it.toCreditedAllocation().toHistoryAllocationUi() },
-                        windowStartDate = windowStartDate,
-                        windowEndDate = today.toString(),
-                    ),
-                    today = today.toString(),
-                    windowStartDate = windowStartDate,
-                    hasOlderHistory = historyHasOlderRecords(
-                        windowStartDate, null, dailyProgress, time.zone(),
-                        earliestAllocationDate = windowed.earliestCanonicalDate,
-                    ),
-                    recoveryStatus = if (windowed.pendingMinutes > 0) {
-                        RecoveryStatusUi.PENDING_DATE_QUANTITY
-                    } else {
-                        windowed.domainStatus.toRecoveryStatusUi()
-                    },
-                    pendingDateUnknownMinutes = windowed.pendingMinutes,
                 )
-            }.combine(cloudPresence.configuration) { state, reader ->
-                state.copy(cloudReaderConfigured = reader != null)
-            }.combine(cloudPresence.readSummary) { state, summary ->
-                state.copy(cloudReadSummary = summary)
-            }.combine(statusTimeMillis) { state, now ->
-                state.copy(statusNow = now)
+            }.onStart {
+                emit(HistoryUiState(accountId = accountId))
             }
+        }.combine(cloudPresence.configuration) { state, reader ->
+            state.copy(cloudReaderConfigured = reader != null)
+        }.combine(cloudPresence.readSummary) { state, summary -> state.copy(cloudReadSummary = summary) }
+        .combine(statusTimeMillis) { state, now -> state.copy(statusNow = now) }
+        .combine(detailUnavailable) { state, unavailable -> state.copy(detailUnavailable = unavailable) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
+
+    fun openGame(appId: Long, onOpen: (Long) -> Unit) {
+        viewModelScope.launch {
+            val account = uiState.value.accountId
+            if (credentials.currentCredentials()?.steamId == account && activity.detailAvailable(appId) &&
+                credentials.currentCredentials()?.steamId == account && uiState.value.accountId == account && uiState.value.days.any { day ->
+                    day.games.any { it.appId == appId && it.detailAvailable }
+                }) {
+                detailUnavailable.value = false
+                onOpen(appId)
+            } else detailUnavailable.value = true
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = HistoryUiState(),
-        )
+    }
 
     /** Widen the window by another 30 days, appending older days to the list. */
     fun loadOlder() {
@@ -210,17 +200,6 @@ class HistoryViewModel @Inject constructor(
     }
 }
 
-/**
- * Recovery mapping (recover-missed-playtime tasks 7.1/7.4): maps the canonical dated-activity
- * projection [CreditedAllocation] and the honest recovery-status vocabulary that the domain
- * agent exposes on [SessionRepository] into the History tree's leaf model and status enum.
- *
- * The landed flows are `datedAllocationsBetween(startInclusiveDate, endInclusiveDate)`,
- * `pendingDateUnknownQuantity`, `earliestCanonicalActivityDate` and `recoveryStatus`, with
- * [CreditedAllocation] and [PlaytimeRecoveryStatus] living in `com.example.backlogium.domain`.
- * Pending date-unknown quantity takes precedence over the persisted account-scoped domain status
- * in the status row; an observation instant is never presented as a gameplay boundary.
- */
 internal fun CreditedAllocation.toHistoryAllocationUi(): HistoryAllocationUi {
     val method = when (method) {
         PlaytimeAllocationMethod.SINGLE_DAY_ESTIMATE -> HistoryAllocationMethod.SINGLE_DAY_ESTIMATE

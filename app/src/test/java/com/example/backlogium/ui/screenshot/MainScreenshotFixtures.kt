@@ -17,6 +17,8 @@ import coil.request.Options
 import com.example.backlogium.data.repo.GameGenre
 import com.example.backlogium.data.repo.HltbMatchState
 import com.example.backlogium.data.repo.WishlistAvailability
+import com.example.backlogium.domain.DailyActivity
+import com.example.backlogium.domain.DailyActivityGame
 import com.example.backlogium.domain.CollectionAccent
 import com.example.backlogium.domain.CollectionMemberSignals
 import com.example.backlogium.domain.CollectionMode
@@ -413,6 +415,14 @@ private fun populatedHistoryState(): HistoryUiState {
         goalMinutesPlayed = 42,
         questMet = true,
         games = listOf(todayGame),
+        activity = DailyActivity(
+            date = FIXED_TODAY,
+            accountId = "screenshot-fixture",
+            games = listOf(DailyActivityGame(todayGame.appId, todayGame.name, 76, true)),
+            storedMinutes = 85,
+            questMet = true,
+            storedFocusMinutes = 42,
+        ),
         gameThumbnails = HistoryGameThumbnails(games = listOf(todayGame)),
         achievements = HistoryAchievements(
             iconUrls = listOf(fixtureArt("achievement-1")),
@@ -648,7 +658,7 @@ private fun analyticsState(
         isCurrentWindow = true,
         headline = when {
             empty -> AnalyticsHeadline.NoData
-            selectedDay -> AnalyticsHeadline.LeadingGame("Hades II", 95)
+            selectedDay -> AnalyticsHeadline.LeadingGame(games.first().copy(minutes = 95))
             else -> AnalyticsHeadline.Compared(currentMinutes = 395, previousMinutes = 320)
         },
         dailyMinutes = days,
@@ -729,7 +739,7 @@ private fun analyticsAllocationsOnlyState(): AnalyticsUiState {
         canStepEarlier = true,
         canStepLater = false,
         isCurrentWindow = true,
-        headline = AnalyticsHeadline.LeadingGame("Hades II", 105),
+        headline = AnalyticsHeadline.LeadingGame(game),
         dailyMinutes = days,
         questThreshold = 45,
         currentStreak = 0,
