@@ -23,5 +23,5 @@ All implementation and acceptance tasks below target the follow-up on current `m
 ## 4. Integrated acceptance
 
 - [ ] 4.1 Exercise real manual and periodic Steam polling, live monitoring, and the post-play handoff together on the integrated implementation. Capture redacted stage/work diagnostics and verify reuse, independent completion, and exactly-once credit. Record whether the original cascade is reproducible.
-- [ ] 4.2 Run the applicable device scenarios in [acceptance coverage](acceptance-coverage.md), covering network changes, denied notifications, process death, and account replacement. Record actual outcomes and evidence boundaries.
+- [x] 4.2 Run the applicable device scenarios in [acceptance coverage](acceptance-coverage.md), covering network changes, denied notifications, process death, and account replacement. Record actual outcomes and evidence boundaries.
 - [ ] 4.3 Run the relevant host, migration, instrumented, lint, and visual checks against the integrated implementation. Attach current results to the acceptance record and rerun strict OpenSpec validation before sync and archive.
