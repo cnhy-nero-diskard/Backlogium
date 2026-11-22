@@ -37,6 +37,9 @@ Changes are proposed, applied, and archived through the `opsx` skills
 `openspec/specs/` directly as part of implementation work — behaviour changes go
 through a change with a delta spec, which is then synced on archive.
 
+Read the change-naming guidance in [OpenSpec project context](openspec/config.yaml)
+before scaffolding a new change.
+
 ## Two build systems, one repo
 
 | Path | Toolchain | Command |

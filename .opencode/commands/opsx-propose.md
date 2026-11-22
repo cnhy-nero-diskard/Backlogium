@@ -30,7 +30,9 @@ When the user is ready to implement, they must start the apply workflow explicit
    If no input is provided, ask the user (open-ended, no preset options):
    > "What change do you want to work on? Describe what you want to build or fix."
 
-   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
+   Before choosing a new change name, run `openspec context --json` (with the selected `--store`, if any).
+   Read the project context in `openspec/config.yaml` or `openspec/config.yml` under the returned
+   `root.path`. Apply its change-naming guidance to the kebab-case ID before scaffolding.
 
    **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
 

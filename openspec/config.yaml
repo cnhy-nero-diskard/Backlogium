@@ -1,20 +1,47 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  OpenSpec change naming
+  Choose a lowercase kebab-case change ID during proposal or exploration, before
+  running openspec new change. Apply this to new folders under openspec/changes/
+  and keep existing change IDs and capability spec paths stable.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Use `[issueNNN-][<series-id>-<order>-]<change-name>-<impact>`.
+  Square brackets mark optional parts.
+
+  - Start issue-derived changes with the primary GitHub issue number, padded
+    to at least three digits (`issue007`, `issue042`, `issue1234`).
+  - Use a series identifier and order only for changes linked in a shared
+    implementation plan. Choose a short lower camelCase identifier such as
+    `syncCore` and record it in each linked proposal. Use its lowercase form
+    `synccore` in the folder ID, as OpenSpec requires lowercase change IDs.
+    Check that the lowercase identifier is unique among active and archived
+    series. Follow it immediately with the implementation position (1, 2, 3),
+    assigning prerequisites earlier numbers. Reuse the identifier and continue
+    numbering when extending the series.
+  - Generate the change name as `<type>-<topic>` for every change, including each
+    member of a series. Pick one type based on the primary intent. Use `fix` for
+    a bug, `refactor` for internal restructuring, `enhancement` for improving an
+    existing capability, `feature` for a new capability, `perf` for performance,
+    `security` for hardening or remediation, `docs` for documentation, `test`
+    for coverage or fixtures, `build` for build or packaging, `ci` for CI
+    workflows, `deps` for dependency updates, and `chore` for other maintenance.
+  - Use a short topic slug that identifies what the change does. Check that
+    the complete ID is unused among active and archived changes.
+  - End with `patch` for a compatible fix or maintenance, `minor` for
+    compatible new functionality or deprecation, or `major` for a breaking
+    change to a supported contract. Use the highest planned impact in the change.
+    Treat this suffix as an estimate for release planning.
+
+  Example change IDs
+  - fix-sync-retry-patch
+  - enhancement-library-filters-minor
+  - issue042-fix-session-restore-patch
+  - synccore-1-refactor-retry-policy-patch
+  - synccore-2-enhancement-retry-controls-minor
+  - issue1234-synccore-3-feature-replace-sync-api-major
+
+rules:
+  proposal:
+    - For a new change, link its source issue and identify the exact IDs of any
+      prerequisite changes when applicable.
