@@ -81,6 +81,19 @@ argument `setupDeviceScenario` with `prepare-consent` or `replace-account` on a 
 emulator. Force-stop after `prepare-consent`, then launch the app normally to exercise startup
 recovery. Keep the account-replacement fixture offline.
 
+### Integrated verification results
+
+| Check | Result |
+| --- | --- |
+| Debug APK and release Kotlin compilation | Passed. |
+| Host app tests | 2,486 passed, with no failures or skips. |
+| Gamification tests | 53 passed, with no failures or skips. |
+| Android instrumentation | 50 passed on the host-GPU API 37 emulator, including all 35 migration tests, setup recovery fixtures, and Settings presentation and navigation. Both opt-in durability scenarios also passed separately. |
+| Android lint | `lintDebug` passed with the repository baseline. |
+| Setup and history visuals | 40 of 40 Roborazzi checks passed. |
+| Full visual suite on macOS | 92 of 97 passed. The four populated Library captures and the standard dark Library selection capture also failed on the unchanged base `5ec74f39` under the same host and toolchain. The Library baselines were preserved. |
+| OpenSpec | `openspec validate stabilize-first-run-setup --strict` passed. |
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.
