@@ -116,4 +116,11 @@ class SetupStageRegistry @Inject constructor(
 
 internal fun librarySetupOutcome(data: androidx.work.Data): SetupOutcome =
     data.getString(SteamSyncWorker.KEY_SETUP_FAILURE)
-        ?.let { SetupOutcome.Failed(it) } ?: SetupOutcome.Succeeded
+        ?.let { SetupOutcome.Failed(it) }
+        ?: if (data.getString(SteamSyncWorker.KEY_POLL_RESULT) == SteamSyncWorker.POLL_COMMITTED &&
+            data.getString(SteamSyncWorker.KEY_POLL_OPERATION) != null
+        ) {
+            SetupOutcome.Succeeded
+        } else {
+            SetupOutcome.Failed("Library sync did not confirm a snapshot. Retry this step.")
+        }

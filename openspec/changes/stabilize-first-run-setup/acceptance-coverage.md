@@ -25,6 +25,16 @@ results for that implementation belong here as tasks 4.1–4.3 are executed.
 - The host Room and Steam response coverage verified rollback, account reset, confirmed empty
   versus unreadable responses, and retention of confirmation after a failed refresh.
 
+### Follow-up checkpoint 1.2
+
+- `SteamSyncLibraryEvidenceWorkerTest` ran the real worker and Room committer with fixture Steam
+  replies. Independent manual and periodic polls observed the same 20-minute increase concurrently
+  and credited it once. The suite also covered admission refusal, absent credentials, unreadable
+  replies, and retry after a failed refresh or a forced transaction rollback.
+- A database fault injected after the raw commit verified that a retry recovers the same manual
+  operation, finalizes it, and publishes its committed result without a second library fetch.
+  This is persistence-boundary evidence. OS process death and live Steam remain in M1–M7.
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.

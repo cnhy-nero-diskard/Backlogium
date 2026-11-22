@@ -5,7 +5,7 @@ All implementation and acceptance tasks below target the follow-up on current `m
 ## 1. Confirmed library evidence
 
 - [x] 1.1 Add account-scoped baseline and per-operation commit evidence on the current Room schema. Verify migration preserves imported offsets, recovered activity, cloud receipts, and existing achievement data. Exercise confirmed empty, private/unconfirmed, failed refresh, account reset, and uncertain legacy/restore states.
-- [ ] 1.2 Bind worker results to the exact admitted account and operation. Verify missing credentials, refused admission, overlapping polls, raw rollback, and interruption after raw commit before output. Assert one tracked credit for the same Steam increase.
+- [x] 1.2 Bind worker results to the exact admitted account and operation. Verify missing credentials, refused admission, overlapping polls, raw rollback, and interruption after raw commit before output. Assert one tracked credit for the same Steam increase.
 
 ## 2. Independent setup-stage recovery
 

@@ -32,6 +32,7 @@ import com.example.backlogium.data.remote.dto.validatedPlaytime2Weeks
 import com.example.backlogium.data.remote.dto.validatedPlaytimeForever
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.CloudPresencePlaytimePlacement
 import com.example.backlogium.domain.CloudReaderIdentity
@@ -48,6 +49,7 @@ import com.example.backlogium.domain.SharedGameConverter
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.mergePlayerIdentity
 import com.example.backlogium.domain.persistVersionChecked
+import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.UUID
@@ -182,7 +184,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val differ: SessionDiffer,
     private val gamificationUpdater: GamificationUpdater,
     private val achievementRepository: AchievementRepository,
-    private val backupRepository: BackupRepository,
+    private val backupRepository: Lazy<BackupRepository>,
     private val genreEnrichmentScheduler: GenreEnrichmentScheduler,
     private val reviewEnrichmentScheduler: ReviewEnrichmentScheduler,
     private val presenceServiceStarter: PresenceServiceStarter,
@@ -221,14 +223,15 @@ class SteamSyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val admission = syncCoordinator.withLock {
             accountChangeMarker.withAccountState {
-                accountChangeMarker.generation().takeIf { accountChangeMarker.pendingSteamId() == null }
+                if (accountChangeMarker.pendingSteamId() != null) return@withAccountState null
+                accountChangeMarker.generation() to credentials.currentCredentials()
             }
         } ?: return setupSkipped("An account change is still in progress. Retry when it finishes.")
-        accountGeneration = admission
-        return doWorkUnlocked()
+        accountGeneration = admission.first
+        return doWorkUnlocked(admission.second)
     }
 
-    private suspend fun doWorkUnlocked(): Result {
+    private suspend fun doWorkUnlocked(creds: CredentialsState.Configured?): Result {
         val scope = diagnostics.begin(trigger = trigger, attempt = runAttemptCount)
         var outcome = SyncOutcome.FAILED
         var error: String? = null
@@ -236,7 +239,6 @@ class SteamSyncWorker @AssistedInject constructor(
         var updated = 0
         var workerSteamId: String? = null
         return try {
-            val creds = credentials.currentCredentials()
             if (creds == null) {
                 recordErrorIfAccountActive(null, "Steam not configured")
                 outcome = SyncOutcome.SKIPPED_NO_CREDENTIALS
@@ -556,7 +558,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 database.libraryPollCommitDao().finalize(operationId)
 
                 // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
-                runCatching { backupRepository.writeAutoSnapshotIfDue() }
+                runCatching { backupRepository.get().writeAutoSnapshotIfDue() }
                 true
             }
         }
