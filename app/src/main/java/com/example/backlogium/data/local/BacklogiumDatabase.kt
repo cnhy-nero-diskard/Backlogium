@@ -27,6 +27,7 @@ import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.HltbDataDao
 import com.example.backlogium.data.local.dao.HltbDatasetDao
+import com.example.backlogium.data.local.dao.LibraryPollCommitDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.PlaytimeRecoveryDao
 import com.example.backlogium.data.local.dao.SessionDao
@@ -48,6 +49,7 @@ import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDatasetLength
 import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
+import com.example.backlogium.data.local.entity.LibraryPollCommit
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.local.entity.PendingCloudInterval
@@ -82,6 +84,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         Session::class,
         DailyProgress::class,
         PlayerProfile::class,
+        LibraryPollCommit::class,
         HltbData::class,
         HltbDatasetState::class,
         HltbDatasetMapping::class,
@@ -121,7 +124,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 46,
+    version = 47,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -131,6 +134,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun gameDao(): GameDao
     abstract fun sessionDao(): SessionDao
     abstract fun dailyProgressDao(): DailyProgressDao
+    abstract fun libraryPollCommitDao(): LibraryPollCommitDao
     abstract fun playerProfileDao(): PlayerProfileDao
     abstract fun hltbDataDao(): HltbDataDao
     abstract fun hltbDatasetDao(): HltbDatasetDao
@@ -1337,6 +1341,25 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `game_preferences` (" +
                         "`appId` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, " +
                         "`artworkVariant` TEXT, PRIMARY KEY(`appId`))",
+                )
+            }
+        }
+
+        val MIGRATION_46_47 = object : Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `library_poll_commits` (" +
+                        "`operationId` TEXT NOT NULL, `workId` TEXT NOT NULL, " +
+                        "`steamId` TEXT NOT NULL, `committedAt` INTEGER NOT NULL, " +
+                        "`gameCount` INTEGER NOT NULL, `finalized` INTEGER NOT NULL, PRIMARY KEY(`operationId`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_library_poll_commits_steamId` " +
+                        "ON `library_poll_commits` (`steamId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_library_poll_commits_workId_finalized` " +
+                        "ON `library_poll_commits` (`workId`, `finalized`)",
                 )
             }
         }

@@ -17,6 +17,7 @@ import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.LibraryPollCommit
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
@@ -49,6 +50,7 @@ import com.example.backlogium.domain.mergePlayerIdentity
 import com.example.backlogium.domain.persistVersionChecked
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
@@ -211,19 +213,22 @@ class SteamSyncWorker @AssistedInject constructor(
         val baselineEstablishedAppIds: Set<Long>,
     )
 
+    private val trigger = inputData.getString(KEY_TRIGGER) ?: TRIGGER_PERIODIC
+    private val workId = id.toString()
+    private val operationId = if (trigger == TRIGGER_MANUAL) workId else UUID.randomUUID().toString()
+    private var accountGeneration: Long? = null
+
     override suspend fun doWork(): Result {
-        // The account-change marker is the durable barrier between old credentials and old
-        // Room state. A worker that arrives after the marker is written must not poll or diff;
-        // the coordinator owns the reset and startup recovery.
-        return runAfterAccountChangeAdmission(
-            coordinator = syncCoordinator,
-            accountChangePending = { accountChangeMarker.pendingSteamId() != null },
-            work = { doWorkUnlocked() },
-        ) ?: setupSkipped("An account change is still in progress. Retry when it finishes.")
+        val admission = syncCoordinator.withLock {
+            accountChangeMarker.withAccountState {
+                accountChangeMarker.generation().takeIf { accountChangeMarker.pendingSteamId() == null }
+            }
+        } ?: return setupSkipped("An account change is still in progress. Retry when it finishes.")
+        accountGeneration = admission
+        return doWorkUnlocked()
     }
 
     private suspend fun doWorkUnlocked(): Result {
-        val trigger = inputData.getString(KEY_TRIGGER) ?: TRIGGER_PERIODIC
         val scope = diagnostics.begin(trigger = trigger, attempt = runAttemptCount)
         var outcome = SyncOutcome.FAILED
         var error: String? = null
@@ -249,6 +254,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The stored library belongs to a different Steam account.")
             }
+            var committed: LibraryPollCommit? = null
             val recoveryReady = syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
                     false
@@ -256,6 +262,16 @@ class SteamSyncWorker @AssistedInject constructor(
                     val resumeAt = time.nowMillis()
                     unknownTimeMaterializer.materializeAll(steamId, resumeAt)
                     recoveryDerivedFinalizer.resumePending(steamId, resumeAt)
+                    val commits = database.libraryPollCommitDao()
+                    committed = if (trigger == TRIGGER_MANUAL) {
+                        commits.get(operationId, steamId)
+                    } else {
+                        commits.unfinalized(workId, steamId)
+                    }
+                    committed?.takeUnless { it.finalized }?.let { receipt ->
+                        persistDerived(time.today(), settings.ruleConfigWithVersionFlow.first())
+                        commits.finalize(receipt.operationId)
+                    }
                     true
                 }
             }
@@ -263,6 +279,13 @@ class SteamSyncWorker @AssistedInject constructor(
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
+            committed?.let { receipt ->
+                examined = receipt.gameCount
+                updated = receipt.gameCount
+                outcome = SyncOutcome.SUCCESS
+                return committedResult(receipt.operationId)
+            }
+
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
@@ -336,16 +359,23 @@ class SteamSyncWorker @AssistedInject constructor(
             examined = games.size
             updated = games.size
             outcome = SyncOutcome.SUCCESS
-            Result.success()
+            committedResult(operationId)
         } catch (e: CancellationException) {
             outcome = SyncOutcome.INCOMPLETE
             throw e
         } catch (e: Exception) {
+            if (e is retrofit2.HttpException && e.code() in setOf(401, 403)) {
+                outcome = SyncOutcome.SKIPPED_EMPTY_OWNED_GAMES
+                val reason = "Steam did not allow access to the library. Check your API key and profile privacy."
+                recordErrorIfAccountActive(workerSteamId, reason)
+                return setupSkipped(reason)
+            }
             // Network / transient error: surface it, keep data, let WorkManager back off.
             // Guarded like every other unlocked account-owned write: an admitted old run that
             // fails after a reset completed must not stamp its error onto the new account.
             recordErrorIfAccountActive(workerSteamId, e.message ?: "Sync failed")
             error = e.message ?: "Sync failed"
+            setProgress(workDataOf(KEY_POLL_RESULT to POLL_FAILED, KEY_POLL_OPERATION to operationId))
             Result.retry()
         } finally {
             // NonCancellable: once cancelled, a plain suspend call here would throw at its first
@@ -473,22 +503,25 @@ class SteamSyncWorker @AssistedInject constructor(
                             )
                         }
                     }
-                    database.withTransaction {
-                        commitRawPoll(
-                            games = games,
-                            steamId = steamId,
-                            steamLevel = steamLevel,
-                            summary = summary,
-                            now = now,
-                            placement = validatedPlacement,
-                            pruningIdentity = pruningIdentity,
-                            achievementFetch = achievementFetch,
-                            ruleConfig = configAtCompute.config,
-                            ruleConfigVersion = configAtCompute.version,
-                            scope = scope,
-                        )
+                    accountChangeMarker.withAccountState {
+                        if (!isAccountActive(steamId)) return@withAccountState null
+                        database.withTransaction {
+                            commitRawPoll(
+                                games = games,
+                                steamId = steamId,
+                                steamLevel = steamLevel,
+                                summary = summary,
+                                now = now,
+                                placement = validatedPlacement,
+                                pruningIdentity = pruningIdentity,
+                                achievementFetch = achievementFetch,
+                                ruleConfig = configAtCompute.config,
+                                ruleConfigVersion = configAtCompute.version,
+                                scope = scope,
+                            )
+                        }
                     }
-                }
+                } ?: return@withLock false
 
                 // The arrivals the commit itself stamped, carried out rather than queried again: a
                 // second read would have to guess which games now carrying `firstSeenAt` this poll
@@ -520,6 +553,8 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (rawCommit.finalizationOperationId == null) {
                     persistDerived(today, configAtCompute)
                 }
+                database.libraryPollCommitDao().finalize(operationId)
+
                 // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
                 runCatching { backupRepository.writeAutoSnapshotIfDue() }
                 true
@@ -528,7 +563,7 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     private suspend fun isAccountActive(expectedSteamId: String?): Boolean =
-        isSyncForActiveAccount(
+        accountChangeMarker.generation() == accountGeneration && isSyncForActiveAccount(
             markerSteamId = accountChangeMarker.pendingSteamId(),
             currentSteamId = credentials.currentCredentials()?.steamId,
             expectedSteamId = expectedSteamId,
@@ -707,6 +742,9 @@ class SteamSyncWorker @AssistedInject constructor(
         // This is the only achievement write path for an inline poll, and it is deliberately
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
+        database.libraryPollCommitDao().insert(
+            LibraryPollCommit(operationId, workId, steamId, now, games.size),
+        )
 
         return RawCommitResult(
             arrivedAppIds = arrivedAppIds,
@@ -771,10 +809,22 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     private fun setupSkipped(reason: String): Result =
-        Result.success(workDataOf(KEY_SETUP_FAILURE to reason))
+        Result.success(workDataOf(
+            KEY_SETUP_FAILURE to reason,
+            KEY_POLL_RESULT to POLL_NOT_PERFORMED,
+            KEY_POLL_OPERATION to operationId,
+        ))
+
+    private fun committedResult(committedOperationId: String): Result =
+        Result.success(workDataOf(KEY_POLL_RESULT to POLL_COMMITTED, KEY_POLL_OPERATION to committedOperationId))
 
     companion object {
         const val KEY_SETUP_FAILURE = "setup_failure"
+        const val KEY_POLL_RESULT = "poll_result"
+        const val KEY_POLL_OPERATION = "poll_operation"
+        const val POLL_COMMITTED = "committed"
+        const val POLL_NOT_PERFORMED = "not_performed"
+        const val POLL_FAILED = "failed"
         const val UNIQUE_PERIODIC_NAME = "steam_sync_periodic"
         const val ONE_TIME_NAME = "steam_sync_now"
         /** Input key carrying the scheduler trigger; retries never overwrite it. */

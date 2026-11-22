@@ -101,6 +101,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_43_44,
         BacklogiumDatabase.MIGRATION_44_45,
         BacklogiumDatabase.MIGRATION_45_46,
+        BacklogiumDatabase.MIGRATION_46_47,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -1856,6 +1857,63 @@ class MigrationTest {
                 migrated.query("SELECT * FROM game_preferences").use { assertFalse(it.moveToFirst()) }
             }
         } finally { context.deleteDatabase(databaseName) }
+    }
+
+    @Test
+    fun v46ToV47PreservesLocalDataWithoutInferringLibraryConfirmation() {
+        val databaseName = "migration-v46-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(databaseName, 46).use { db ->
+                db.execSQL(
+                    "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                        "lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+                        "VALUES (10, 'Ten', '', 120, 0, 120, 1, 10, 40, 'STEAM_OWNED', 0)",
+                )
+                db.execSQL(
+                    "INSERT INTO playtime_contributions (contributionId, account, appId, baselineEpoch, " +
+                        "fromMinutes, toMinutes, windowEndAt, authorizedMinutes, revision, provenance, createdAt) " +
+                        "VALUES ('credit', 'fixture', 10, 1, 100, 120, 10, 20, 1, 'SYNC', 10)",
+                )
+                db.execSQL(
+                    "INSERT INTO achievements (appId, apiName, unlocked, fetchedAt, hidden, retired) " +
+                        "VALUES (10, 'won', 1, 10, 0, 0)",
+                )
+                db.execSQL(
+                    "INSERT INTO cloud_historical_operations (operationId, account, readerGeneration, " +
+                        "endpointIdentity, selectedStartAt, fromAt, throughAt, pagesFetched, " +
+                        "transitionsFetched, acquisitionComplete, state, createdAt, updatedAt) " +
+                        "VALUES ('history', 'fixture', 1, 'reader', 0, 0, 10, 1, 1, 1, 'COMPLETE', 0, 10)",
+                )
+                db.execSQL(
+                    "INSERT INTO cloud_historical_journals (operationId, account, readerGeneration, " +
+                        "endpointIdentity, state, payloadVersion, payloadJson, updatedAt) " +
+                        "VALUES ('history', 'fixture', 1, 'reader', 'PREPARED', 1, '{}', 10)",
+                )
+            }
+            migrationTestHelper.runMigrationsAndValidate(
+                databaseName, 47, true, BacklogiumDatabase.MIGRATION_46_47,
+            ).use { db ->
+                db.query("SELECT backfillMinutes FROM games WHERE appId = 10").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(40, it.getInt(0))
+                }
+                db.query("SELECT authorizedMinutes FROM playtime_contributions WHERE contributionId = 'credit'").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(20, it.getInt(0))
+                }
+                db.query("SELECT unlocked FROM achievements WHERE apiName = 'won'").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(1, it.getInt(0))
+                }
+                db.query("SELECT payloadJson FROM cloud_historical_journals WHERE operationId = 'history'").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals("{}", it.getString(0))
+                }
+                db.query("SELECT * FROM library_poll_commits").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
     }
 
     @Test

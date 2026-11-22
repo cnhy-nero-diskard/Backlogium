@@ -17,6 +17,14 @@ records the shipped setup fix's separate host and fake-response emulator results
 M1–M7 below are procedures for the integrated build. Current validation, host, visual, and device
 results for that implementation belong here as tasks 4.1–4.3 are executed.
 
+### Follow-up checkpoint 1.1
+
+- Schema 47 migration passed all 35 `MigrationTest` scenarios on the GPU-verified API 37
+  emulator. The 46 → 47 fixture retained the imported offset, recovered contribution,
+  cloud apply journal, and achievement unlock, and started with no confirmation evidence.
+- The host Room and Steam response coverage verified rollback, account reset, confirmed empty
+  versus unreadable responses, and retention of confirmation after a failed refresh.
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.
