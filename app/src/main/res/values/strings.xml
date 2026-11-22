@@ -243,6 +243,10 @@
     <string name="settings_different_account_title">Different Steam account</string>
     <string name="settings_different_account_message">This backup belongs to a different Steam account (SteamID %1$s), while you\u0027re signed in as %2$s. Importing will merge its history, XP, and streaks into your current account; it will not change the configured SteamID. Continue?</string>
     <string name="settings_import_anyway">Import anyway</string>
+    <string name="settings_history_needs_sync">Sync your Steam library before importing history.</string>
+    <string name="settings_history_syncing">Syncing library…</string>
+    <string name="settings_history_pending">Steam history import is pending.</string>
+    <string name="settings_history_resume">Resume history import</string>
     <string name="settings_history_title">Steam history</string>
     <string name="settings_history_imported">History imported</string>
     <string name="settings_history_imported_description">Past playtime already counts toward your XP.</string>

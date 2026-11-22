@@ -220,7 +220,7 @@ and SHALL NOT gate access to any part of the app.
   presented again unprompted
 
 ### Requirement: Ongoing work is not a failed stage
-Setup SHALL distinguish waiting, running, and retry backoff from terminal succeeded, failed, and skipped outcomes. Waiting for scheduling, constraints, or another operation, and an automatic retry pending after a transient error, SHALL NOT alone fail a stage. An actual failure SHALL identify the affected stage and its reason.
+Setup SHALL show waiting, running, and retry backoff separately from terminal succeeded, failed, cancelled, and skipped outcomes. Scheduler activity alone SHALL NOT establish failure or success. Actual failures and cancellations SHALL identify the affected stage and its reason.
 
 #### Scenario: Work waits before its first attempt
 - **WHEN** a selected stage's work is queued or blocked before execution
@@ -242,7 +242,7 @@ Setup SHALL distinguish waiting, running, and retry backoff from terminal succee
 
 #### Scenario: Actual terminal failure
 - **WHEN** observed work fails or is cancelled before completion
-- **THEN** setup reports the affected stage's failure and reason, and the remaining selected stages can still run
+- **THEN** setup identifies the affected stage, its failure or cancellation, and the reason, and the remaining selected stages can still run
 
 ### Requirement: Onboarding recovery preserves successful work
 After a setup attempt settles, onboarding SHALL allow retrying a failed stage and editing the selection for another attempt. Recovery SHALL preserve unrelated outcomes and SHALL NOT rerun successful stages automatically. Duplicate requests during an active attempt SHALL NOT queue an additional setup run. Explicit stage reruns from Settings SHALL remain available.
@@ -262,7 +262,7 @@ After a setup attempt settles, onboarding SHALL allow retrying a failed stage an
 - **THEN** the active attempt remains authoritative and no second setup run is queued behind it
 
 ### Requirement: Leaving setup preserves durable recovery
-Setup SHALL offer a clear exit or continue action before and during execution, including waiting and retry backoff. Leaving an active run SHALL NOT cancel its work or relabel it skipped. After process death, outstanding work SHALL be reconciled by its recorded identity before any replacement is requested, and successful outcomes SHALL remain intact.
+Setup SHALL offer Continue before and during execution without cancelling or relabelling admitted work. Independent selected stages SHALL be admitted in registry order as observation settles. Pending work SHALL remain observable by exact identity after Continue and restart. Recovery SHALL preserve recorded outcomes and offer explicit retry when admission cannot be established.
 
 #### Scenario: Continue during backoff
 - **WHEN** the user continues while a stage is waiting for an automatic retry
@@ -284,5 +284,28 @@ Setup SHALL offer a clear exit or continue action before and during execution, i
 
 #### Scenario: Missing durable work
 - **WHEN** recovery cannot find the recorded outstanding work
-- **THEN** it reconciles the missing attempt through the underlying operation's idempotent start path or exposes an actionable stage-specific failure
-- **AND** it neither waits forever on a missing identity nor reports completion without evidence
+- **THEN** it explains that the stage needs a new request and offers explicit recovery without assuming completion or automatically triggering replacement work
+
+#### Scenario: An earlier stage remains pending
+- **WHEN** one stage is queued, in retry backoff, detached after durable admission, or still running at the end of the foreground wait
+- **THEN** setup proceeds with later independent selected stages in registry order while retaining the earlier stage's pending state
+
+#### Scenario: User continues while admission is in progress
+- **WHEN** the user chooses Continue during an active attempt
+- **THEN** the surface advances, admitted work remains active, and any remaining selected stages are still admitted in order
+
+#### Scenario: Several stages survive a restart
+- **WHEN** the process ends with several admitted stages pending
+- **THEN** each stage reconciles against its own work and remaining selected stages continue admission without duplicating work
+
+#### Scenario: Crash between admission and association
+- **WHEN** a saved request may have reached the scheduler before its exact work association was persisted
+- **THEN** recovery resolves that request by attributable evidence or offers explicit recovery if admission cannot be established
+
+#### Scenario: An older attempt reports late
+- **WHEN** an older attempt or a previous account reports progress or completion
+- **THEN** its result cannot change the replacement attempt or the active account's stage state
+
+#### Scenario: Legacy setup records upgrade
+- **WHEN** an upgrade finds historical outcomes or a legacy active work ID
+- **THEN** known outcomes remain visible and any attributable active work is reconciled by identity

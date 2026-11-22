@@ -40,6 +40,9 @@ class SetupConcurrentWorkDeviceTest {
                 val account = "76561198000000001"
                 db.playerProfileDao().upsert(com.example.backlogium.data.local.entity.PlayerProfile(
                     steamId = account, lastSyncAt = 1L))
+                db.libraryPollCommitDao().insert(
+                    com.example.backlogium.data.local.entity.LibraryPollCommit("fixture-poll", "fixture-work", account, 1L, 1),
+                )
                 db.gameDao().upsertAll(listOf(com.example.backlogium.data.local.entity.Game(
                     appId = 10L, name = "Fixture game", iconUrl = "", playtimeForever = 120,
                     playtime2Weeks = 0, lastPlaytime = 120)))
@@ -56,7 +59,7 @@ class SetupConcurrentWorkDeviceTest {
                         com.example.backlogium.work.SteamSyncCoordinator(), boundary,
                         object : com.example.backlogium.data.repo.CredentialsProvider {
                             override suspend fun currentCredentials() = com.example.backlogium.data.repo.CredentialsState.Configured("fixture-key", account)
-                        }, com.example.backlogium.data.credentials.AccountChangeMarkerStore(context))
+                        }, com.example.backlogium.data.credentials.AccountChangeMarkerStore(context), db.libraryPollCommitDao())
                 val interrupted = object : com.example.backlogium.data.backup.DatabaseTransactionScope {
                     override suspend fun <R> run(block: suspend () -> R): R {
                         transaction.run(block)

@@ -10,6 +10,7 @@ import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.work.SteamAssetDownloadWorker
 import com.example.backlogium.work.SteamSyncWorker
 import com.example.backlogium.work.SyncScheduler
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -107,9 +108,10 @@ class SetupStageRegistryTest {
     @Test
     fun decliningSetupOverTheRealRegistryStartsNoWork() = runTest {
         val store = FakeSetupStateStore()
-        val coordinator = SetupCoordinator(registry, store, schedulerScope)
+        val coordinator = SetupCoordinator(registry, store, FakeSetupAccounts(), schedulerScope)
 
         coordinator.ensureLoaded()
+        coordinator.state.first { it.loaded }
         coordinator.skipAll()
 
         registry.stages.forEach { stage ->
@@ -121,23 +123,25 @@ class SetupStageRegistryTest {
     }
 
     @Test
-    fun completionTimesUsesItsOwnDurableWorker() {
+    fun completionTimesUsesItsOwnDurableWorker() = runTest {
         scheduler.ensureCompletionTimes()
 
-        val info = workManager.enqueuedUnder(HltbDatasetWorker.UNIQUE_WORK_NAME).single()
+        val info = workManager.getWorkInfosForUniqueWorkFlow(HltbDatasetWorker.UNIQUE_WORK_NAME)
+            .first { it.isNotEmpty() }.single()
         assertEquals(WorkInfo.State.ENQUEUED, info.state)
         val spec = WorkManagerImpl.getInstance()!!.workDatabase.workSpecDao().getWorkSpec(info.id.toString())!!
         assertEquals(HltbDatasetWorker::class.java.name, spec.workerClassName)
     }
 
     @Test
-    fun aStageStartedTwiceDoesNotStackDuplicateWork() {
+    fun aStageStartedTwiceDoesNotStackDuplicateWork() = runTest {
         // Retry is re-running the stage's work, and the wrapped job's own unique name plus KEEP is
         // the whole of setup's concurrency story — this asserts that mechanism rather than a second
         // layer on top of it, which is exactly what the design refuses to add.
-        scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
-        scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
+        val first = scheduler.admitSteamAssets(java.util.UUID.randomUUID(), SteamAssetDownloadMode.DOWNLOAD_MISSING)
+        val kept = scheduler.admitSteamAssets(java.util.UUID.randomUUID(), SteamAssetDownloadMode.DOWNLOAD_MISSING)
 
+        assertEquals(first, kept)
         assertEquals(1, workManager.enqueuedUnder(SteamAssetDownloadWorker.UNIQUE_WORK_NAME).size)
     }
 

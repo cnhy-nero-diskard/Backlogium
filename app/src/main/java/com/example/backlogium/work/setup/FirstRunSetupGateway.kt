@@ -1,6 +1,8 @@
 package com.example.backlogium.work.setup
 
+import com.example.backlogium.data.setup.SetupOwner
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 enum class FirstRunPhase { SETUP, HISTORY }
@@ -15,9 +17,13 @@ interface FirstRunSetupGateway {
     val firstRunPhase: Flow<FirstRunPhase?>
         get() = firstRunSetupActive.map { if (it) FirstRunPhase.SETUP else null }
 
+    val firstRunOwner: Flow<SetupOwner?> get() = flowOf(null)
+
     suspend fun claimFirstRunSetup()
 
     suspend fun releaseFirstRunSetup()
+
+    suspend fun releaseFirstRunSetup(owner: SetupOwner?) = releaseFirstRunSetup()
 
     suspend fun advanceToHistory() = releaseFirstRunSetup()
 }

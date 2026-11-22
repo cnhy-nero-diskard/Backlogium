@@ -1,29 +1,32 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.setup.SetupOwner
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class HistoryImportReadinessTest {
-    private val credentials = CredentialsState.Configured("fixture-key", "76561198000000001")
+    private val owner = SetupOwner("fixture-account", 3)
 
-    @Test fun aSuccessfulSnapshotRatherThanLibrarySizeAuthorizesImport() {
-        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(null, credentials))
-        val profile = PlayerProfile(steamId = credentials.steamId)
-        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(profile, credentials))
-        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(
-            profile.copy(lastSyncError = "Private library"), credentials))
-        assertEquals(HistoryImportReadiness.READY, historyImportReadinessFor(
-            profile.copy(lastSyncAt = 1L), credentials))
+    @Test fun legacySyncTimestampIsUnconfirmedAndConfirmedEmptyIsReady() {
+        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(null, owner, false))
+        val profile = PlayerProfile(steamId = owner.steamId, lastSyncAt = 1L, lastSyncError = "Private library")
+        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(profile, owner, false))
+        assertEquals(HistoryImportReadiness.READY, historyImportReadinessFor(profile, owner, true))
     }
 
-    @Test fun completionIsAccountScopedAndPendingDerivedWorkRemainsRecoverable() {
-        val imported = PlayerProfile(steamId = credentials.steamId, lastSyncAt = 1L, playtimeBackfilled = true)
-        assertEquals(HistoryImportReadiness.IMPORTED, historyImportReadinessFor(imported, credentials))
-        assertEquals(HistoryImportReadiness.READY, historyImportReadinessFor(
-            imported.copy(pendingImportRecompute = true), credentials))
+    @Test fun completionAndRecoverableConsentAreAccountScoped() {
+        val profile = PlayerProfile(steamId = owner.steamId)
+        val consented = profile.copy(historyImportRequestId = "request", historyImportGeneration = owner.generation)
+        val imported = profile.copy(playtimeBackfilled = true)
+        assertEquals(HistoryImportReadiness.IMPORTED, historyImportReadinessFor(imported, owner, false))
+        assertEquals(HistoryImportReadiness.PENDING, historyImportReadinessFor(consented, owner, true))
+        assertEquals(HistoryImportReadiness.PENDING, historyImportReadinessFor(
+            imported.copy(pendingImportRecompute = true), owner, false,
+        ))
         assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(
-            imported.copy(steamId = "76561198000000002"), credentials))
-        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(imported, CredentialsState.Unconfigured))
+            consented, owner.copy(generation = 4), false,
+        ))
+        assertEquals(HistoryImportReadiness.NEEDS_SYNC, historyImportReadinessFor(imported, null, true))
     }
 }

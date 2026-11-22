@@ -37,6 +37,7 @@ import com.example.backlogium.data.repo.FamilySharedGameRepository
 import com.example.backlogium.data.repo.ManualImportUnavailableAt
 import com.example.backlogium.data.repo.ManualSharedGameImportResult
 import com.example.backlogium.data.repo.PlayerDataProbe
+import com.example.backlogium.data.repo.HistoryImportReadiness
 import com.example.backlogium.data.repo.ProfileRepository
 import com.example.backlogium.data.repo.RemovedSharedGame
 import com.example.backlogium.data.repo.HltbDatasetCheckResult
@@ -257,6 +258,7 @@ data class SettingsUiState(
     val achievementWatch: com.example.backlogium.domain.AchievementWatchPreferences = com.example.backlogium.domain.AchievementWatchPreferences(),
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
+    val historyReadiness: HistoryImportReadiness = HistoryImportReadiness.NEEDS_SYNC,
     val isImportingHistory: Boolean = false,
     /** The persisted rules — what "discard" returns to and what a change is measured against. */
     val savedConfig: RuleConfig = RuleConfig(),
@@ -490,6 +492,8 @@ class SettingsViewModel @Inject constructor(
         state.copy(cloudPresenceTransferApplied = transferApplied)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
+    }.combine(profileRepository.historyImportReadiness) { state, readiness ->
+        state.copy(historyReadiness = readiness)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
         state.copy(isReconciling = reconciling)
     }.combine(steamAssets.storageState) { state, asset ->
@@ -1497,6 +1501,8 @@ class SettingsViewModel @Inject constructor(
 
     /** Run the one-time historical-playtime import. Idempotent in the use case. */
     fun importSteamHistory() = runHistoryOp { profileRepository.importSteamHistory() }
+
+    fun resumeHistoryImport() = runHistoryOp { profileRepository.resumeSteamHistory() }
 
     /** Undo a prior import so it can be run again (recovery / opt-out). */
     fun resetHistoryImport() = runHistoryOp {

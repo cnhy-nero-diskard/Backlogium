@@ -94,7 +94,7 @@ private fun StageRow(
                 Checkbox(
                     checked = stage.selected,
                     onCheckedChange = { onToggle(stage.id, it) },
-                    enabled = enabled && stage.selectable,
+                    enabled = enabled && stage.selectable && !stage.running,
                 )
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -121,15 +121,21 @@ private fun StageRow(
 
             if (stage.running) RunningProgress(stage)
 
-            (stage.outcome as? SetupOutcome.Failed)?.let { failed ->
+            val reason = when (val outcome = stage.outcome) {
+                is SetupOutcome.Failed -> outcome.reason
+                SetupOutcome.Cancelled -> "Cancelled before it finished."
+                SetupOutcome.RecoveryRequired -> "The previous request could not be found. Retry this step."
+                else -> null
+            }
+            if (reason != null && !stage.running) {
                 Text(
-                    text = failed.reason,
+                    text = reason,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            if (showRetry && stage.available && stage.outcome !is SetupOutcome.NeverRun) {
+            if (showRetry && stage.available && !stage.running && stage.outcome != SetupOutcome.NeverRun) {
                 TextButton(onClick = { onRetry(stage.id) }, enabled = retryEnabled) {
                     Text(if (stage.outcome is SetupOutcome.Succeeded) "Run again" else "Retry")
                 }
@@ -176,7 +182,14 @@ private fun OutcomeBadge(stage: SetupStageUi) {
             modifier = Modifier.size(20.dp),
         )
 
-        is SetupOutcome.Failed -> Icon(
+        SetupOutcome.Cancelled -> Icon(
+            TablerIcons.Minus,
+            contentDescription = "Cancelled",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+
+        is SetupOutcome.Failed, SetupOutcome.RecoveryRequired -> Icon(
             TablerIcons.AlertCircle,
             contentDescription = "Failed",
             tint = MaterialTheme.colorScheme.error,
@@ -208,7 +221,7 @@ fun SetupSummary(state: SetupUiState, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (state.finished) {
             Text(
-                text = "Setup complete",
+                text = if (state.hasPendingWork) "Setup status" else "Setup complete",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -216,7 +229,7 @@ fun SetupSummary(state: SetupUiState, modifier: Modifier = Modifier) {
                 Text(text = line, style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (state.detachedStillRunning) {
+        if (state.hasPendingWork) {
             Text(
                 text = "The remaining steps keep running in the background — you can use the app " +
                     "while they do.",

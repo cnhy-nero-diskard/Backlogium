@@ -112,6 +112,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
 
     @Inject
     lateinit var pendingImportRecompute: PendingImportRecomputeUseCase
+    @Inject
+    lateinit var historyImportRecovery: dagger.Lazy<com.example.backlogium.domain.PlaytimeBackfillUseCase>
+
 
     @Inject
     lateinit var setupRecovery: dagger.Lazy<com.example.backlogium.work.setup.SetupCoordinator>
@@ -220,6 +223,8 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
             runCatching { diagnosticHistoryMigration.purgeLegacyIdentifiersIfNeeded() }
                 .onFailure { Timber.e(it, "Diagnostic history migration failed") }
             correctHistoricalDailyTotals()
+            runCatching { historyImportRecovery.get().resume() }
+                .onFailure { Timber.e(it, "History import remains pending") }
             if (!resolvePendingImportRecompute()) return@launch
             syncScheduler.ensurePeriodicSync()
             syncScheduler.ensurePeriodicReconciliation()

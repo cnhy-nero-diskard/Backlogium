@@ -6,27 +6,37 @@ import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
+import androidx.work.await
 import androidx.work.workDataOf
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.di.ApplicationScope
 import com.example.backlogium.work.setup.HltbDatasetWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** User-facing state for the independent, best-effort Steam Store genre backfill. */
+private const val SETUP_ACCOUNT_TAG = "setup-account:"
+
 enum class GenreEnrichmentStatus {
     IDLE,
     QUEUED,
@@ -65,6 +75,7 @@ internal fun steamAssetStatusFor(infos: List<WorkInfo>): SteamAssetDownloadStatu
 class SyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
     @ApplicationScope private val applicationScope: CoroutineScope,
+    private val accountMarker: AccountChangeMarkerStore = AccountChangeMarkerStore(context),
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
 
@@ -181,17 +192,21 @@ class SyncScheduler @Inject constructor(
      * separate from the periodic request so WorkManager KEEP cannot drop a player action.
      */
     fun syncNow() {
-        val request = OneTimeWorkRequestBuilder<SteamSyncWorker>()
+        enqueueSetupControl { admitLibrarySync(it) }
+    }
+
+    internal suspend fun admitLibrarySync(id: UUID, generation: Long? = null): UUID =
+        admitSetupWork(SteamSyncWorker.ONE_TIME_NAME, generation) {
+        OneTimeWorkRequestBuilder<SteamSyncWorker>()
+            .setId(id)
+            .addTag(setupAccountTag(it))
             .setConstraints(networkConstraints)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .setInputData(workDataOf(SteamSyncWorker.KEY_TRIGGER to SteamSyncWorker.TRIGGER_MANUAL))
+            .setInputData(workDataOf(
+                SteamSyncWorker.KEY_TRIGGER to SteamSyncWorker.TRIGGER_MANUAL,
+                SteamSyncWorker.KEY_ACCOUNT_GENERATION to it,
+            ))
             .build()
-
-        workManager.enqueueUniqueWork(
-            SteamSyncWorker.ONE_TIME_NAME,
-            ExistingWorkPolicy.KEEP,
-            request,
-        )
     }
 
     /**
@@ -243,25 +258,40 @@ class SyncScheduler @Inject constructor(
 
     /** Starts the independent asset worker; duplicate taps keep the admitted job. */
     fun downloadSteamAssets(mode: com.example.backlogium.data.steamassets.SteamAssetDownloadMode) {
+        enqueueSetupControl { admitSteamAssets(it, mode) }
+    }
+
+    internal suspend fun admitSteamAssets(
+        id: UUID,
+        mode: com.example.backlogium.data.steamassets.SteamAssetDownloadMode,
+        generation: Long? = null,
+    ): UUID = admitSetupWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME, generation) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .setRequiresStorageNotLow(true)
             .build()
-        val request = OneTimeWorkRequestBuilder<SteamAssetDownloadWorker>()
+        OneTimeWorkRequestBuilder<SteamAssetDownloadWorker>()
+            .setId(id)
+            .addTag(setupAccountTag(it))
             .setConstraints(constraints)
             .setInputData(workDataOf(
                 SteamAssetDownloadWorker.KEY_MODE to mode.name,
                 SteamAssetDownloadWorker.KEY_STARTED_AT to System.currentTimeMillis(),
             ))
             .build()
-        workManager.enqueueUniqueWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
     }
 
     fun cancelSteamAssetDownload() = workManager.cancelUniqueWork(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
 
-    /** Enqueue a one-time completion-times dataset check. Duplicate requests keep the admitted job. */
     fun ensureCompletionTimes() {
-        val request = OneTimeWorkRequestBuilder<HltbDatasetWorker>()
+        enqueueSetupControl { admitCompletionTimes(it) }
+    }
+
+    internal suspend fun admitCompletionTimes(id: UUID, generation: Long? = null): UUID =
+        admitSetupWork(HltbDatasetWorker.UNIQUE_WORK_NAME, generation) {
+        OneTimeWorkRequestBuilder<HltbDatasetWorker>()
+            .setId(id)
+            .addTag(setupAccountTag(it))
             .setConstraints(networkConstraints)
             .setBackoffCriteria(
                 BackoffPolicy.EXPONENTIAL,
@@ -269,13 +299,49 @@ class SyncScheduler @Inject constructor(
                 TimeUnit.MILLISECONDS,
             )
             .build()
-
-        workManager.enqueueUniqueWork(
-            HltbDatasetWorker.UNIQUE_WORK_NAME,
-            ExistingWorkPolicy.KEEP,
-            request,
-        )
     }
+
+    private val setupAdmission = Mutex()
+
+    private fun enqueueSetupControl(admit: suspend (UUID) -> UUID) {
+        applicationScope.launch {
+            try {
+                admit(UUID.randomUUID())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                timber.log.Timber.w(error, "Could not enqueue background setup work")
+            }
+        }
+    }
+
+    /** A live KEEP candidate is the admitted job even if it finishes before the caller observes it. */
+    private suspend fun admitSetupWork(
+        name: String,
+        expectedGeneration: Long?,
+        build: (Long) -> OneTimeWorkRequest,
+    ): UUID = setupAdmission.withLock {
+        accountMarker.withAccountState {
+            val generation = accountMarker.generation()
+            check(accountMarker.pendingSteamId() == null &&
+                (expectedGeneration == null || expectedGeneration == generation)
+            ) { "An account change interrupted setup. Select this step again." }
+            val active = workManager.getWorkInfosForUniqueWorkFlow(name).first()
+                .firstOrNull { !it.state.isFinished }
+            if (active != null) {
+                val tagged = active.tags.firstOrNull { it.startsWith(SETUP_ACCOUNT_TAG) }
+                check(tagged == setupAccountTag(generation) || (tagged == null && generation == 0L)) {
+                    "A previous account's background work is settling. Retry this step shortly."
+                }
+                return@withAccountState active.id
+            }
+            val request = build(generation)
+            workManager.enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, request).await()
+            request.id
+        }
+    }
+
+    private fun setupAccountTag(generation: Long) = SETUP_ACCOUNT_TAG + generation
 
     /**
      * Enqueue a one-time reconciliation pass. [force] bypasses the charging/unmetered

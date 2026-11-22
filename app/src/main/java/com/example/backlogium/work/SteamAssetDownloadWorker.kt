@@ -11,6 +11,8 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.backlogium.R
+import com.example.backlogium.data.local.dao.LibraryPollCommitDao
+import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.steamassets.SteamAssetDownloadMode
 import com.example.backlogium.data.steamassets.SteamAssetRepository
 import dagger.assisted.Assisted
@@ -22,6 +24,8 @@ class SteamAssetDownloadWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val repository: SteamAssetRepository,
+    private val libraryPollCommits: LibraryPollCommitDao,
+    private val credentials: CredentialsProvider,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val mode = runCatching {
@@ -30,6 +34,9 @@ class SteamAssetDownloadWorker @AssistedInject constructor(
         val startedAt = inputData.getLong(KEY_STARTED_AT, System.currentTimeMillis())
         setForeground(createForegroundInfo("Preparing Steam assets"))
         return try {
+            val steamId = credentials.currentCredentials()?.steamId ?: return Result.retry()
+            // An empty inventory before the first committed poll is not evidence of an empty library.
+            if (!libraryPollCommits.hasBaseline(steamId)) return Result.retry()
             repository.run(mode, startedAt) { processed, total, label, counts ->
                 setProgress(workDataOf(
                     KEY_PROCESSED to processed,

@@ -42,19 +42,18 @@ data class SetupUiState(
     /** False only on the Settings entry with no credentials: stages cannot succeed without them. */
     val credentialsConfigured: Boolean = true,
     val editing: Boolean = false,
+    val allowEmptySelection: Boolean = true,
 ) {
-    /** Starting with nothing selected is legitimate — it completes immediately, all skipped. */
-    val canStart: Boolean get() = !loading && !running && (!finished || editing) && credentialsConfigured
+    val canStart: Boolean
+        get() = !loading && !running && (!finished || editing) && credentialsConfigured &&
+            (allowEmptySelection || stages.any { it.selected && !it.running })
 
     /** Whether starting this selection will detach work, so the notification request is warranted. */
     val willDetachWork: Boolean
         get() = stages.any { it.selected && it.execution == SetupStageExecution.DETACHED }
 
-    val detachedStillRunning: Boolean
-        get() = running && stages.any {
-            it.selected && it.execution == SetupStageExecution.DETACHED &&
-                it.outcome is SetupOutcome.NeverRun
-        }
+    val hasPendingWork: Boolean get() = stages.any { it.running }
+
 }
 
 /**
@@ -69,7 +68,9 @@ internal fun setupStagesUi(
     run: SetupRunState,
     editing: Boolean = false,
 ): List<SetupStageUi> = stages.map { stage ->
-    val running = run.running && run.currentStageId == stage.id
+    val inForeground = run.running && run.currentStageId == stage.id
+    val running = stage.id in run.pending || inForeground
+    val progress = run.stageProgress[stage.id] ?: run.progress?.takeIf { inForeground }
     SetupStageUi(
         id = stage.id,
         title = stage.title,
@@ -81,8 +82,8 @@ internal fun setupStagesUi(
         selected = if (run.running || (run.finished && !editing)) stage.id in run.selected else stage.id in selection,
         outcome = run.outcomes[stage.id] ?: SetupOutcome.NeverRun,
         running = running,
-        progress = run.progress?.takeIf { running && it.isDeterminate && it.activity == SetupStageActivity.RUNNING },
-        activity = run.progress?.activity?.takeIf { running },
+        progress = progress?.takeIf { it.isDeterminate && it.activity == SetupStageActivity.RUNNING },
+        activity = progress?.activity,
     )
 }
 
@@ -96,6 +97,8 @@ fun setupSummaryLines(stages: List<SetupStageUi>): List<String> = stages.map { s
     when (val outcome = stage.outcome) {
         SetupOutcome.Succeeded -> "${stage.title} — done"
         SetupOutcome.Skipped -> "${stage.title} — skipped"
+        SetupOutcome.Cancelled -> "${stage.title} — cancelled"
+        SetupOutcome.RecoveryRequired -> "${stage.title} — retry required"
         SetupOutcome.NeverRun ->
             if (stage.available) "${stage.title} — not run" else "${stage.title} — unavailable"
         is SetupOutcome.Failed -> "${stage.title} — ${outcome.reason}"

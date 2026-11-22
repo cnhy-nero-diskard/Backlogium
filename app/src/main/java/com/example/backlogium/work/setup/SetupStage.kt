@@ -85,6 +85,19 @@ fun interface SetupStageRunner {
         onWorkStarted: suspend (workId: String) -> Unit,
     ): SetupOutcome = run(onProgress)
 
+    suspend fun runRequest(
+        requestId: String,
+        accountGeneration: Long,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkStarted: suspend (workId: String) -> Unit,
+    ): SetupOutcome = run(onProgress, onWorkStarted)
+
+    suspend fun recoverRequest(
+        workId: String,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkFound: suspend (String) -> Unit,
+    ): SetupOutcome? = recover(workId, onProgress)
+
     /** Reattaches to an already-started job without enqueueing another one. */
     suspend fun recover(
         workId: String,

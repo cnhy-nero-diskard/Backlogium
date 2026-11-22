@@ -1,85 +1,51 @@
 package com.example.backlogium.work.setup
 
-import com.example.backlogium.data.setup.ActiveSetupStage
+import com.example.backlogium.data.setup.FirstRunSetupRecord
+import com.example.backlogium.data.setup.SetupAccounts
+import com.example.backlogium.data.setup.SetupJournal
+import com.example.backlogium.data.setup.SetupOwner
 import com.example.backlogium.data.setup.SetupStateStore
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 
-/** In-memory [SetupStateStore]: the coordinator's persistence, observable by a test. */
+val fixtureSetupOwner = SetupOwner("fixture-account", 0)
+
+class FakeSetupAccounts : SetupAccounts {
+    override val owners = MutableStateFlow<SetupOwner?>(fixtureSetupOwner)
+    override suspend fun <T> ifCurrent(owner: SetupOwner, block: suspend () -> T): T? =
+        if (owner == owners.value) block() else null
+}
+
 class FakeSetupStateStore(
-    private val initialOutcomes: MutableMap<String, SetupOutcome> = mutableMapOf(),
-    private val initialOptIns: MutableMap<String, Boolean> = mutableMapOf(),
-    private var activeStage: ActiveSetupStage? = null,
-    private val storedOutcomesGate: CompletableDeferred<Unit>? = null,
-    private val outcomeWriteGate: CompletableDeferred<Unit>? = null,
+    var journal: SetupJournal = SetupJournal(fixtureSetupOwner),
+    private val loadGate: CompletableDeferred<Unit>? = null,
 ) : SetupStateStore {
+    val outcomes get() = journal.stages.mapValues { it.value.outcome }
+    override val firstRunRecordFlow = MutableStateFlow<FirstRunSetupRecord?>(null)
 
-    private val completedState = MutableStateFlow(false)
-    private val firstRunActiveState = MutableStateFlow(false)
-    private val phase = MutableStateFlow<FirstRunPhase?>(null)
-    override val firstRunPhaseFlow: Flow<FirstRunPhase?> = phase
-    override suspend fun advanceToHistory() {
-        if (phase.value == FirstRunPhase.SETUP) phase.value = FirstRunPhase.HISTORY
+    override suspend fun update(
+        owner: SetupOwner,
+        finishRun: Boolean,
+        transform: (SetupJournal) -> SetupJournal,
+    ): SetupJournal {
+        loadGate?.await()
+        journal = transform(journal.takeIf { it.owner == owner } ?: SetupJournal(owner))
+        if (finishRun) advanceToHistory(owner)
+        return journal
     }
 
-    val outcomes: Map<String, SetupOutcome> get() = initialOutcomes
-    val optIns: Map<String, Boolean> get() = initialOptIns
-    val completed: Boolean get() = completedState.value
-    val active: ActiveSetupStage? get() = activeStage
-
-    override val completedFlow: Flow<Boolean> = completedState
-
-    override val firstRunSetupActiveFlow: Flow<Boolean> = firstRunActiveState
-
-    val firstRunSetupActive: Boolean get() = firstRunActiveState.value
-
-    override suspend fun storedOutcomes(): Map<String, SetupOutcome> {
-        storedOutcomesGate?.await()
-        return initialOutcomes.toMap()
+    override suspend fun advanceToHistory(owner: SetupOwner?) {
+        val record = firstRunRecordFlow.value ?: return
+        if (record.phase == FirstRunPhase.SETUP && (owner == null || record.belongsTo(owner))) {
+            firstRunRecordFlow.value = record.copy(phase = FirstRunPhase.HISTORY)
+        }
     }
 
-    override suspend fun storedOptIns(): Map<String, Boolean> = initialOptIns.toMap()
-
-    override suspend fun storedActiveStage(): ActiveSetupStage? = activeStage
-
-    override suspend fun beginRun(firstStageId: String, selectedStageIds: Set<String>) {
-        activeStage = ActiveSetupStage(firstStageId, null, selectedStageIds)
-        selectedStageIds.forEach { initialOutcomes[it] = SetupOutcome.NeverRun }
-    }
-
-    override suspend fun markStageStarted(
-        stageId: String,
-        selectedStageIds: Set<String>,
-    ) {
-        activeStage = ActiveSetupStage(stageId, null, selectedStageIds)
-        initialOutcomes[stageId] = SetupOutcome.NeverRun
-    }
-
-    override suspend fun markStageWorkStarted(stageId: String, workId: String) {
-        if (activeStage?.stageId == stageId) activeStage = activeStage?.copy(workId = workId)
-    }
-
-    override suspend fun clearActiveStage() {
-        activeStage = null
-    }
-
-    override suspend fun writeOutcome(stageId: String, outcome: SetupOutcome) {
-        outcomeWriteGate?.await()
-        initialOutcomes[stageId] = outcome
-    }
-
-    override suspend fun writeOptIn(stageId: String, optIn: Boolean) {
-        initialOptIns[stageId] = optIn
-    }
-
-    override suspend fun markCompleted() {
-        completedState.value = true
-    }
-
-    override suspend fun setFirstRunSetupActive(active: Boolean) {
-        firstRunActiveState.value = active
-        phase.value = if (active) FirstRunPhase.SETUP else null
+    override suspend fun setFirstRunSetupActive(active: Boolean, owner: SetupOwner?) {
+        if (active) firstRunRecordFlow.value = FirstRunSetupRecord(FirstRunPhase.SETUP, owner)
+        else if (owner == null || firstRunRecordFlow.value?.belongsTo(owner) == true) {
+            firstRunRecordFlow.value = null
+        }
     }
 }
 
@@ -102,6 +68,31 @@ class FakeStageRunner(
     fun emitting(vararg progress: SetupStageProgress): FakeStageRunner {
         progressToEmit += progress
         return this
+    }
+
+    var attempts = 0
+        private set
+    val recoveredIds = mutableListOf<String>()
+
+    override suspend fun runRequest(
+        requestId: String,
+        accountGeneration: Long,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkStarted: suspend (String) -> Unit,
+    ): SetupOutcome {
+        attempts++
+        onWorkStarted("work-$requestId")
+        return run(onProgress)
+    }
+
+    override suspend fun recoverRequest(
+        workId: String,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkFound: suspend (String) -> Unit,
+    ): SetupOutcome {
+        recoveredIds += workId
+        onWorkFound(workId)
+        return run(onProgress)
     }
 
     override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome {

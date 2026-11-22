@@ -30,6 +30,7 @@ class AccountRoomReset @Inject constructor(
             database.collectionDao().deleteAll()
             database.dailyProgressDao().deleteAll()
             database.diagnosticsDao().deleteAll()
+            database.libraryPollCommitDao().clear()
             // Cloud read audit rows describe one account's accepted timeline. Keeping them
             // would leave the previous account's success visible as Healthy in Settings and
             // its intervals visible in Diagnostics until the new account reads.

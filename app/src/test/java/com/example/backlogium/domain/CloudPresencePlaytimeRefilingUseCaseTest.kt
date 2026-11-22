@@ -92,6 +92,7 @@ class CloudPresencePlaytimeRefilingUseCaseTest {
             },
             accountChangeMarker = com.example.backlogium.data.credentials.AccountChangeMarkerStore(
                 org.robolectric.RuntimeEnvironment.getApplication()),
+            libraryCommits = database.libraryPollCommitDao(),
         )
         val fromAt = utc("2026-07-25T00:00:00Z")
         val throughAt = utc("2026-07-26T12:00:00Z")

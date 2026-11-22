@@ -1,6 +1,8 @@
 package com.example.backlogium.di
 
+import com.example.backlogium.data.setup.CredentialSetupAccounts
 import com.example.backlogium.data.setup.DataStoreSetupStateStore
+import com.example.backlogium.data.setup.SetupAccounts
 import com.example.backlogium.data.setup.SetupStateStore
 import com.example.backlogium.work.setup.SetupStageRegistry
 import com.example.backlogium.work.setup.SetupStageSource
@@ -25,6 +27,9 @@ abstract class SetupModule {
 
     @Binds
     abstract fun bindSetupStageSource(impl: SetupStageRegistry): SetupStageSource
+
+    @Binds
+    abstract fun bindSetupAccounts(impl: CredentialSetupAccounts): SetupAccounts
 
     @Binds
     abstract fun bindSetupStateStore(impl: DataStoreSetupStateStore): SetupStateStore

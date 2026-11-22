@@ -7,9 +7,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class LibrarySetupOutcomeTest {
+    private val committed = workDataOf(
+        SteamSyncWorker.KEY_POLL_RESULT to SteamSyncWorker.POLL_COMMITTED,
+        SteamSyncWorker.KEY_POLL_OPERATION to "poll",
+    )
+
+    @Test
+    fun schedulerSuccessAloneDoesNotConfirmTheLibrary() {
+        assertEquals(
+            SetupOutcome.Failed("Library sync did not confirm a snapshot. Retry this step."),
+            librarySetupOutcome(Data.EMPTY),
+        )
+    }
+
     @Test
     fun successfulSnapshotIncludingConfirmedEmptyLibraryHasNoSetupError() {
-        assertEquals(SetupOutcome.Succeeded, librarySetupOutcome(Data.EMPTY))
+        assertEquals(SetupOutcome.Succeeded, librarySetupOutcome(committed))
     }
 
     @Test
@@ -19,6 +32,6 @@ class LibrarySetupOutcomeTest {
                 workDataOf(SteamSyncWorker.KEY_SETUP_FAILURE to reason)))
         }
         // A later result does not consult/reuse a previous attempt's profile error.
-        assertEquals(SetupOutcome.Succeeded, librarySetupOutcome(Data.EMPTY))
+        assertEquals(SetupOutcome.Succeeded, librarySetupOutcome(committed))
     }
 }

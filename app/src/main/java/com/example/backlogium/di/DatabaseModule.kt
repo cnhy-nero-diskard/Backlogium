@@ -86,11 +86,16 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_43_44,
                 BacklogiumDatabase.MIGRATION_44_45,
                 BacklogiumDatabase.MIGRATION_45_46,
+                BacklogiumDatabase.MIGRATION_46_47,
+                BacklogiumDatabase.MIGRATION_47_48,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
             // mismatch should surface so the app can use its explicit backup/restore path.
             .build()
+
+    @Provides
+    fun provideLibraryPollCommitDao(db: BacklogiumDatabase) = db.libraryPollCommitDao()
 
     @Provides
     fun provideGameDao(db: BacklogiumDatabase): GameDao = db.gameDao()

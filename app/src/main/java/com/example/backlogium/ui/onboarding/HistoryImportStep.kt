@@ -22,37 +22,63 @@ import com.example.backlogium.data.repo.HistoryImportReadiness
 @Composable
 fun HistoryImportStep(onDone: () -> Unit, viewModel: HistoryImportViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    BackHandler(enabled = state.importing) {
-        // The import owns a committed pending-recompute marker until derived XP is persisted.
-        // Keep this navigation-scoped ViewModel alive until that recovery boundary is cleared.
+    BackHandler(enabled = state.importing || state.readiness == HistoryImportReadiness.PENDING) {
+        viewModel.skip()
     }
     LaunchedEffect(state.completed) { if (state.completed) onDone() }
-    HistoryImportContent(state, onImport = viewModel::importHistory, onSkip = viewModel::skip)
+    HistoryImportContent(
+        state,
+        onImport = viewModel::importHistory,
+        onSkip = viewModel::skip,
+        onSync = viewModel::syncLibrary,
+        onResume = viewModel::resumeHistory,
+    )
 }
 
 @Composable
-fun HistoryImportContent(state: HistoryImportUiState, onImport: () -> Unit, onSkip: () -> Unit) {
+fun HistoryImportContent(
+    state: HistoryImportUiState,
+    onImport: () -> Unit,
+    onSkip: () -> Unit,
+    onSync: () -> Unit = {},
+    onResume: () -> Unit = {},
+) {
+    val pending = state.readiness == HistoryImportReadiness.PENDING
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Count your pre-existing Steam playtime toward XP. This optional import credits each game's past hours once.")
-        Text("Steam lifetime totals have no historical session timestamps. This won't create dated sessions or daily progress.", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (state.readiness == HistoryImportReadiness.NEEDS_SYNC) {
-            Text("Finish your library sync first, or skip and import later from Settings.", style = MaterialTheme.typography.bodyMedium)
-        }
+        Text(
+            "Steam lifetime totals have no historical session timestamps.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = onImport,
-            enabled = !state.importing && !state.completed && state.readiness == HistoryImportReadiness.READY,
-            modifier = Modifier.fillMaxWidth()) {
-            if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            else Text(if (state.error != null) "Retry import" else "Import Steam history")
+        when (state.readiness) {
+            HistoryImportReadiness.NEEDS_SYNC -> {
+                Text("Sync your Steam library before importing history.", style = MaterialTheme.typography.bodyMedium)
+                Button(onClick = onSync, enabled = !state.syncingLibrary, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (state.syncingLibrary) "Syncing library…" else "Sync Steam library")
+                }
+            }
+            HistoryImportReadiness.PENDING -> {
+                Text("History import is pending. You can continue and check its progress in Settings.")
+                TextButton(onClick = onResume, enabled = !state.importing) { Text("Resume history import") }
+            }
+            HistoryImportReadiness.IMPORTED -> Text("Steam history imported.")
+            HistoryImportReadiness.READY -> Button(
+                onClick = onImport,
+                enabled = !state.importing && !state.completed,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text(if (state.error != null) "Retry import" else "Import Steam history")
+            }
         }
         TextButton(
             onClick = onSkip,
-            enabled = !state.importing && !state.completed,
+            enabled = (!state.importing || pending) && !state.completed,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Skip")
+            Text(if (pending || state.readiness == HistoryImportReadiness.IMPORTED) "Continue" else "Skip")
         }
-        Text("You can import or undo this later in Settings.", style = MaterialTheme.typography.bodySmall)
     }
 }

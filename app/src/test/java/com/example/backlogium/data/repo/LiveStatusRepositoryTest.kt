@@ -1302,6 +1302,18 @@ class LiveStatusRepositoryTest {
         override suspend fun updateGamification(totalXp: Long, level: Int, currentStreak: Int, longestStreak: Int, gamificationConfigVersion: Long) = error("not used")
         override suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean) = error("not used")
         override suspend fun updateLastSyncError(message: String) = error("not used")
+        override suspend fun recordHistoryConsent(account: String, requestId: String, generation: Long) {
+            error("History consent is outside this fixture")
+        }
+
+        override suspend fun markHistoryImportCaptured(account: String, requestId: String) {
+            error("History capture is outside this fixture")
+        }
+
+        override suspend fun finishHistoryImport(account: String, requestId: String) {
+            error("History finalization is outside this fixture")
+        }
+
         override suspend fun markPendingImportRecompute() = error("not used")
         override suspend fun raiseLongestStreak(longestStreak: Int) = error("not used")
     }

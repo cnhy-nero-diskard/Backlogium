@@ -238,8 +238,9 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `syncNow enqueues under its own name with connectivity constraints`() {
+    fun `syncNow enqueues under its own name with connectivity constraints`() = runTest {
         scheduler.syncNow()
+        workManager.getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME).first { it.isNotEmpty() }
 
         val info = workInfosFor(SteamSyncWorker.ONE_TIME_NAME).single()
         assertEquals(WorkInfo.State.ENQUEUED, info.state)
@@ -247,9 +248,10 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `periodic and manual sync requests carry distinct trigger inputs`() {
+    fun `periodic and manual sync requests carry distinct trigger inputs`() = runTest {
         scheduler.ensurePeriodicSync()
         scheduler.syncNow()
+        workManager.getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME).first { it.isNotEmpty() }
 
         assertEquals(
             SteamSyncWorker.TRIGGER_PERIODIC,
@@ -264,9 +266,10 @@ class SyncSchedulerTest {
     }
 
     @Test
-    fun `syncNow does not collide with the periodic Steam sync's work name`() {
+    fun `syncNow does not collide with the periodic Steam sync's work name`() = runTest {
         scheduler.ensurePeriodicSync()
         scheduler.syncNow()
+        workManager.getWorkInfosForUniqueWorkFlow(SteamSyncWorker.ONE_TIME_NAME).first { it.isNotEmpty() }
 
         assertEquals(1, workInfosFor(SteamSyncWorker.UNIQUE_PERIODIC_NAME).size)
         assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)

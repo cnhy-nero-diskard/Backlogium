@@ -370,7 +370,7 @@ private fun SetupStep(onDone: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text(if (state.detachedStillRunning) "Continue to the app" else "Done")
+                Text("Continue")
             }
         }
     } else {

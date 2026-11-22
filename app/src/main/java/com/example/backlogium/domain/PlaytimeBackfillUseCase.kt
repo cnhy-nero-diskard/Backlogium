@@ -1,15 +1,19 @@
 package com.example.backlogium.domain
 
-import com.example.backlogium.data.local.SettingsDataStore
-import com.example.backlogium.data.local.dao.GameDao
-import com.example.backlogium.data.local.dao.PlayerProfileDao
-import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
+import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.LibraryPollCommitDao
+import com.example.backlogium.data.local.dao.PlayerProfileDao
+import com.example.backlogium.data.local.dao.SessionDao
+import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.setup.SetupOwner
 import com.example.backlogium.work.SteamSyncCoordinator
-import kotlinx.coroutines.flow.first
+import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.flow.first
 
 enum class PlaytimeBackfillResetResult {
     RESET,
@@ -17,23 +21,9 @@ enum class PlaytimeBackfillResetResult {
     NO_OP,
 }
 
-/**
- * One-time, opt-in import of historical Steam playtime into XP (add-playtime-backfill).
- *
- * For each game it freezes the historical portion —
- * `backfillMinutes = max(0, playtimeForever − creditedMinutes(appId))` — onto the `Game` row,
- * marks the profile flag, and triggers a recompute. Freezing the offset (rather than feeding
- * the live, ever-growing `playtimeForever`) makes the import genuinely one-time: ongoing
- * tracked sessions accrue on top, and later syncs never re-import.
- *
- * The subtraction uses the *canonical credited* total (`SessionDao.creditedMinutesByGame()`,
- * recover-missed-playtime Decision 7), so a recovery bucket is never double-counted against the
- * frozen lifetime offset; on the reset path the cleared offset is simply dropped.
- *
- * The engine is unchanged: [GamificationUpdater.recompute] simply feeds
- * `backfillMinutes + creditedMinutes` as one cumulative total, which the existing per-game
- * taper bounds naturally.
- */
+data class HistoryImportRequest(val id: String, val owner: SetupOwner)
+
+/** Explicit consent and frozen history capture shared by onboarding and Settings. */
 class PlaytimeBackfillUseCase @Inject constructor(
     private val gameDao: GameDao,
     private val sessionDao: SessionDao,
@@ -46,55 +36,74 @@ class PlaytimeBackfillUseCase @Inject constructor(
     private val transaction: DatabaseTransactionScope,
     private val credentials: CredentialsProvider,
     private val accountChangeMarker: AccountChangeMarkerStore,
+    private val libraryCommits: LibraryPollCommitDao,
 ) {
+    suspend operator fun invoke(): Boolean {
+        val request = request() ?: return false
+        return resume(request)
+    }
 
-    /**
-     * Import historical playtime if not already done.
-     *
-     * @return `true` if this call performed the import, `false` if it was a no-op because
-     *   history had already been imported (idempotence guarantee).
-     */
-    suspend operator fun invoke(): Boolean = syncCoordinator.withLock {
-        check(accountChangeMarker.pendingSteamId() == null) { "An account change is still in progress." }
-        val account = credentials.currentCredentials()?.steamId
-            ?: error("Connect your Steam account before importing history.")
-        derivedStateWrites.withLock {
-            // The offsets, completion flag and pending-derived marker commit together. Sharing the
-            // raw ledger transaction prevents an overlapping poll from being subtracted halfway.
-            // Lock order matches sync: raw-ledger admission before derived-state writes.
-            val imported = transaction.run {
-                val profile = playerProfileDao.get()
-                check(profile?.steamId == account && profile.lastSyncAt > 0L) {
-                    "Finish syncing your Steam library before importing history."
-                }
-                if (profile.playtimeBackfilled) {
-                    false
-                } else {
-                    val trackedByGame = sessionDao.creditedMinutesByGame().associate { it.appId to it.minutes }
-                    val backfillByAppId = gameDao.getAll().associate { game ->
-                        val tracked = trackedByGame[game.appId] ?: 0
-                        game.appId to (game.playtimeForever - tracked).coerceAtLeast(0)
-                    }
-                    gameDao.applyBackfill(backfillByAppId)
-                    playerProfileDao.updatePlaytimeBackfilled(true)
-                    playerProfileDao.markPendingImportRecompute()
-                    true
-                }
+    /** The user may leave as soon as this returns. The request is durable before any capture. */
+    suspend fun request(expectedOwner: SetupOwner? = null): HistoryImportRequest? = syncCoordinator.withLock {
+        accountChangeMarker.withAccountState {
+            val owner = checkNotNull(activeOwner()) { "Connect your Steam account before importing history." }
+            check(expectedOwner == null || owner == expectedOwner) { "The Steam account changed." }
+            val profile = playerProfileDao.get()
+            val activeProfile = profile?.takeIf { it.steamId == owner.steamId }
+            activeProfile?.requestFor(owner)?.let { return@withAccountState it }
+            if (activeProfile?.playtimeBackfilled == true) return@withAccountState null
+            check(activeProfile != null && libraryCommits.hasBaseline(owner.steamId)) {
+                "Finish syncing your Steam library before importing history."
             }
-            // Repeating an interrupted import must finish derived work, not just return a no-op.
-            // Startup also resumes this existing Room marker via PendingImportRecomputeUseCase.
-            if (playerProfileDao.get()?.pendingImportRecompute == true) recompute()
-            imported
+
+            val request = HistoryImportRequest(UUID.randomUUID().toString(), owner)
+            playerProfileDao.recordHistoryConsent(owner.steamId, request.id, owner.generation)
+            request
         }
     }
 
-    /**
-     * Undo the import: clear every frozen offset, unset the flag, and recompute so XP falls
-     * back to tracked-only. After this the import can be offered — and run — again, which
-     * refreezes the same historical portion (`playtimeForever − trackedMinutes` is a set, not
-     * an add, so re-importing is safe and restores the prior result). Tracked sessions, daily
-     * progress, and streaks are untouched.
-     */
+    /** Called on startup and from either surface's recovery action. Returns true for a new capture. */
+    suspend fun resume(
+        expected: HistoryImportRequest? = null,
+        expectedOwner: SetupOwner? = expected?.owner,
+    ): Boolean = syncCoordinator.withLock {
+        derivedStateWrites.withLock {
+            var request: HistoryImportRequest? = null
+            val captured = accountChangeMarker.withAccountState account@{
+                val owner = activeOwner() ?: return@account false
+                if (expectedOwner != null && expectedOwner != owner) return@account false
+                val profile = playerProfileDao.get() ?: return@account false
+                val admitted = profile.requestFor(owner) ?: return@account false
+                if (expected != null && admitted != expected) return@account false
+                request = admitted
+                if (profile.playtimeBackfilled) {
+                    if (!profile.historyImportCaptured && !profile.pendingImportRecompute) {
+                        playerProfileDao.finishHistoryImport(owner.steamId, admitted.id)
+                        request = null
+                    }
+                    return@account false
+                }
+                if (!libraryCommits.hasBaseline(owner.steamId)) {
+                    request = null
+                    return@account false
+                }
+
+                transaction.run {
+                    val credited = sessionDao.creditedMinutesByGame().associate { it.appId to it.minutes }
+                    val offsets = gameDao.getAll().associate { game ->
+                        val historical = (game.playtimeForever - (credited[game.appId] ?: 0)).coerceAtLeast(0)
+                        game.appId to (game.backfillMinutes.takeIf { it > 0 } ?: historical)
+                    }
+                    gameDao.applyBackfill(offsets)
+                    playerProfileDao.markHistoryImportCaptured(owner.steamId, admitted.id)
+                }
+                true
+            }
+            request?.let { recompute(it.id) }
+            captured
+        }
+    }
+
     suspend fun reset(): PlaytimeBackfillResetResult = syncCoordinator.withLock {
         derivedStateWrites.withLock {
             val refilingApplied = settings.cloudPresenceRefilingAppliedFlow.first()
@@ -104,7 +113,9 @@ class PlaytimeBackfillUseCase @Inject constructor(
             }
 
             val profile = playerProfileDao.get()
-            if (profile == null) return@withLock PlaytimeBackfillResetResult.NO_OP
+            if (profile == null || profile.historyImportRequestId != null) {
+                return@withLock PlaytimeBackfillResetResult.NO_OP
+            }
 
             transaction.run {
                 gameDao.applyBackfill(gameDao.getAll().associate { it.appId to 0 })
@@ -116,13 +127,23 @@ class PlaytimeBackfillUseCase @Inject constructor(
         }
     }
 
-    private suspend fun recompute() {
+    private suspend fun activeOwner(): SetupOwner? {
+        if (accountChangeMarker.pendingSteamId() != null) return null
+        val account = credentials.currentCredentials()?.steamId ?: return null
+        return SetupOwner(account, accountChangeMarker.generation())
+    }
+
+    private fun PlayerProfile.requestFor(owner: SetupOwner): HistoryImportRequest? =
+        historyImportRequestId?.takeIf { steamId == owner.steamId && historyImportGeneration == owner.generation }
+            ?.let { HistoryImportRequest(it, owner) }
+
+    private suspend fun recompute(operationId: String? = null) {
         val rules = settings.ruleConfigWithVersionFlow.first()
-        gamificationUpdater.recompute(
-            today = time.today(),
-            source = RecomputeSource.BACKFILL,
-            config = rules.config,
-            configVersion = rules.version,
+        gamificationUpdater.persist(
+            gamificationUpdater.compute(today = time.today(), config = rules.config),
+            RecomputeSource.BACKFILL,
+            rules.version,
+            operationId,
         )
     }
 }

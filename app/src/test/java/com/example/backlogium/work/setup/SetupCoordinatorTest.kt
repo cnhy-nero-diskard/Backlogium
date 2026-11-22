@@ -1,15 +1,15 @@
 package com.example.backlogium.work.setup
 
-import com.example.backlogium.data.setup.ActiveSetupStage
+import com.example.backlogium.data.setup.SetupJournal
+import com.example.backlogium.data.setup.SetupOwner
+import com.example.backlogium.data.setup.SetupStageRecord
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -18,486 +18,253 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The coordinator's contract: run what was selected in registered order, record each stage's own
- * terminal outcome, and never let one stage's failure reach another.
- *
- * Runners here are latches rather than real work, so ordering and isolation are asserted directly
- * instead of being inferred from how long something took.
- */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SetupCoordinatorTest {
-
     @Test
-    fun duplicateStartsDoNotQueueAnotherRun() = runTest {
-        var calls = 0
-        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val runner = SetupStageRunner { calls++; gate.await(); SetupOutcome.Succeeded }
-        val subject = coordinator(listOf(fakeStage("sync", runner)), scope = this)
-        subject.start(setOf("sync"))
-        subject.start(setOf("sync"))
-        advanceUntilIdle()
-        subject.start(setOf("sync"))
-        gate.complete(Unit)
-        advanceUntilIdle()
-        assertEquals(1, calls)
-        assertTrue(subject.state.value.finished)
-    }
+    fun runningLibraryWaitsTwoMinutesWhileDuplicateTapsAreIgnored() = runTest {
+        val library = pendingRunner(SetupStageActivity.RUNNING)
+        val later = FakeStageRunner()
+        val subject = coordinator(listOf(fakeStage("library", library), fakeStage("later", later)))
 
-    @Test
-    fun recoveryCannotBeReplacedByAnEarlyStart() = runTest {
-        val held = FakeStageRunner().also { it.autoComplete = false }
-        val store = FakeSetupStateStore(activeStage = ActiveSetupStage("sync", null, setOf("sync")))
-        val subject = coordinator(listOf(fakeStage("sync", held)), store, this)
-        subject.ensureLoaded()
-        subject.start(emptySet())
-        advanceUntilIdle()
+        subject.start(setOf("library", "later"))
+        subject.start(setOf("library"))
+        runCurrent()
         assertTrue(subject.state.value.running)
-        assertEquals(setOf("sync"), subject.state.value.selected)
-        held.gate.complete(Unit)
-        advanceUntilIdle()
-    }
+        assertEquals("library", subject.state.value.currentStageId)
+        assertEquals(1, library.attempts)
+        advanceTimeBy(119_999)
+        runCurrent()
+        assertFalse(later.started)
 
-    private fun coordinator(
-        stages: List<SetupStage>,
-        store: FakeSetupStateStore = FakeSetupStateStore(),
-        scope: TestScope,
-    ) = SetupCoordinator(FakeStageSource(stages), store, scope)
-
-    @Test
-    fun runsOnlySelectedStagesAndRecordsTheRestSkipped() = runTest(StandardTestDispatcher()) {
-        val first = FakeStageRunner()
-        val second = FakeStageRunner()
-        val store = FakeSetupStateStore()
-        val subject = coordinator(
-            listOf(fakeStage("a", first), fakeStage("b", second)),
-            store,
-            this,
-        )
-
-        subject.start(setOf("a"))
-        advanceUntilIdle()
-
-        assertTrue(first.started)
-        assertFalse("a deselected stage must not enqueue its work", second.started)
-        assertEquals(SetupOutcome.Succeeded, store.outcomes["a"])
-        assertEquals(SetupOutcome.Skipped, store.outcomes["b"])
+        advanceTimeBy(1)
+        runCurrent()
+        assertTrue(later.started)
         assertTrue(subject.state.value.finished)
-        assertTrue(store.completed)
+        assertEquals(setOf("library"), subject.state.value.pending)
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["later"])
+        library.gate.complete(Unit)
+        runCurrent()
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["library"])
+        assertTrue(subject.state.value.pending.isEmpty())
     }
 
     @Test
-    fun decliningSetupRunsNothingAndSkipsEverything() = runTest(StandardTestDispatcher()) {
-        val first = FakeStageRunner()
-        val second = FakeStageRunner()
-        val store = FakeSetupStateStore()
-        val subject = coordinator(
-            listOf(fakeStage("a", first), fakeStage("b", second)),
-            store,
-            this,
-        )
+    fun queuedAndBackingOffStagesSettleTheWaitInRegistryOrder() = runTest {
+        val first = pendingRunner(SetupStageActivity.WAITING)
+        val second = pendingRunner(SetupStageActivity.RETRY_BACKOFF)
+        val third = FakeStageRunner()
+        val subject = coordinator(listOf(fakeStage("first", first), fakeStage("second", second), fakeStage("third", third)))
 
-        subject.ensureLoaded()
-        advanceUntilIdle()
-        subject.skipAll()
-        advanceUntilIdle()
+        subject.start(setOf("third", "first", "second"))
+        runCurrent()
 
-        assertFalse(first.started)
-        assertFalse(second.started)
-        assertEquals(SetupOutcome.Skipped, store.outcomes["a"])
-        assertEquals(SetupOutcome.Skipped, store.outcomes["b"])
-        // Setup completes rather than sitting unresolved: declining is an answer, not an omission.
+        assertTrue(subject.state.value.inScreenSettled)
+        assertEquals(setOf("first", "second"), subject.state.value.pending)
+        assertEquals(listOf("first", "second"), subject.state.value.stageProgress.keys.toList())
+        assertEquals(SetupStageActivity.RETRY_BACKOFF, subject.state.value.stageProgress["second"]?.activity)
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["third"])
+        assertEquals(1, third.attempts)
+    }
+
+    @Test
+    fun continueAllowsLaterAdmissionsWhileTheEarlierWorkerStaysPending() = runTest {
+        val library = pendingRunner(SetupStageActivity.RUNNING)
+        val later = pendingRunner(SetupStageActivity.RUNNING)
+        val subject = coordinator(listOf(
+            fakeStage("library", library),
+            fakeStage("detached", later, execution = SetupStageExecution.DETACHED),
+        ))
+        subject.claimFirstRunSetup()
+        subject.start(setOf("library", "detached"))
+        runCurrent()
+        assertFalse(later.started)
+
+        subject.advanceToHistory()
+        runCurrent()
+
+        assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+        assertEquals(setOf("library", "detached"), subject.state.value.pending)
+        assertEquals(1, later.attempts)
         assertTrue(subject.state.value.finished)
-        assertFalse(subject.state.value.running)
+        subject.releaseFirstRunSetup()
+        later.gate.complete(Unit)
+        runCurrent()
+        assertNull(subject.firstRunPhase.first())
     }
 
     @Test
-    fun declineDoesNotAdvanceHistoryUntilSkippedOutcomesAreDurableAcrossRestart() =
-        runTest(StandardTestDispatcher()) {
-            val outcomeWriteGate = kotlinx.coroutines.CompletableDeferred<Unit>()
-            val store = FakeSetupStateStore(
-                initialOutcomes = mutableMapOf(
-                    "a" to SetupOutcome.NeverRun,
-                    "b" to SetupOutcome.NeverRun,
-                ),
-                initialOptIns = mutableMapOf("a" to true, "b" to true),
-                outcomeWriteGate = outcomeWriteGate,
-            )
-            val stages = listOf(fakeStage("a"), fakeStage("b"))
-            val firstProcess = coordinator(stages, store, this)
+    fun restartAttachesMultiplePendingStagesAndAdmitsTheRemainingSelectedStage() = runTest {
+        val before = SetupJournal(
+            owner = fixtureSetupOwner,
+            stages = linkedMapOf(
+                "earlier" to SetupStageRecord(encodedOutcome = "ok"),
+                "library" to SetupStageRecord("req-library", "kept-work"),
+                "assets" to SetupStageRecord("req-assets"),
+                "times" to SetupStageRecord(encodedOutcome = "ok"),
+            ),
+            selected = setOf("library", "assets", "times"),
+            remaining = listOf("times"),
+            runOpen = true,
+        )
+        val store = FakeSetupStateStore(before)
+        val library = pendingRunner(SetupStageActivity.WAITING)
+        val assets = pendingRunner(SetupStageActivity.RUNNING)
+        val times = FakeStageRunner()
+        val subject = coordinator(listOf(
+            fakeStage("earlier"), fakeStage("library", library), fakeStage("assets", assets), fakeStage("times", times),
+        ), store)
 
-            firstProcess.claimFirstRunSetup()
-            firstProcess.ensureLoaded()
-            advanceUntilIdle()
-            val interruptedSkip = launch { firstProcess.skipAll() }
-            runCurrent()
-
-            assertEquals(FirstRunPhase.SETUP, firstProcess.firstRunPhase.first())
-            assertEquals(
-                mapOf("a" to SetupOutcome.NeverRun, "b" to SetupOutcome.NeverRun),
-                store.outcomes,
-            )
-
-            // Simulate process death while the first outcome write is held. A new coordinator
-            // must still see SETUP and can finish the decline rather than resuming at history.
-            interruptedSkip.cancelAndJoin()
-            val restarted = coordinator(stages, store, this)
-            restarted.ensureLoaded()
-            advanceUntilIdle()
-            val resumedSkip = async { restarted.skipAll() }
-            runCurrent()
-
-            assertFalse("skip remains suspended on the held outcome write", resumedSkip.isCompleted)
-            assertEquals(FirstRunPhase.SETUP, restarted.firstRunPhase.first())
-            assertEquals(
-                mapOf("a" to SetupOutcome.NeverRun, "b" to SetupOutcome.NeverRun),
-                store.outcomes,
-            )
-
-            outcomeWriteGate.complete(Unit)
-            assertTrue(resumedSkip.await())
-            advanceUntilIdle()
-
-            assertEquals(
-                mapOf("a" to SetupOutcome.Skipped, "b" to SetupOutcome.Skipped),
-                store.outcomes,
-            )
-            assertEquals(FirstRunPhase.HISTORY, restarted.firstRunPhase.first())
-        }
+        assertEquals(listOf("kept-work"), library.recoveredIds)
+        assertEquals(listOf("req-assets"), assets.recoveredIds)
+        assertEquals(0, library.attempts + assets.attempts)
+        assertEquals(1, times.attempts)
+        assertEquals("req-assets", store.journal.stages["assets"]?.workId)
+        assertEquals(setOf("library", "assets"), subject.state.value.pending)
+        assertEquals(SetupOutcome.Succeeded, store.outcomes["earlier"])
+        assertEquals(SetupOutcome.Succeeded, store.outcomes["times"])
+    }
 
     @Test
-    fun aFailingStageLeavesLaterStagesRunningAndEarlierResultsIntact() =
-        runTest(StandardTestDispatcher()) {
-            val ok = FakeStageRunner(SetupOutcome.Succeeded)
-            val bad = FakeStageRunner(SetupOutcome.Failed("service was slow"))
-            val after = FakeStageRunner(SetupOutcome.Succeeded)
-            val store = FakeSetupStateStore()
-            val subject = coordinator(
-                listOf(fakeStage("ok", ok), fakeStage("bad", bad), fakeStage("after", after)),
-                store,
-                this,
-            )
+    fun lostAdmissionRequiresExplicitRecoveryAndDoesNotBlockTheRemainingStage() = runTest {
+        val store = FakeSetupStateStore(SetupJournal(
+            owner = fixtureSetupOwner,
+            stages = mapOf("library" to SetupStageRecord(requestId = "never-enqueued")),
+            selected = setOf("library", "times"),
+            remaining = listOf("times"),
+            runOpen = true,
+        ))
+        var attempts = 0
+        val library = SetupStageRunner { attempts++; SetupOutcome.Succeeded }
+        val subject = coordinator(listOf(fakeStage("library", library), fakeStage("times")), store)
 
-            subject.start(setOf("ok", "bad", "after"))
-            advanceUntilIdle()
-
-            assertTrue("a later stage must still run after a failure", after.started)
-            assertEquals(SetupOutcome.Succeeded, store.outcomes["ok"])
-            assertEquals(SetupOutcome.Failed("service was slow"), store.outcomes["bad"])
-            assertEquals(SetupOutcome.Succeeded, store.outcomes["after"])
-            // Setup completes; it does not itself fail. "Setup failed" is never the right report
-            // when the stages are unrelated and only one of them went wrong.
-            assertTrue(subject.state.value.finished)
-        }
+        assertEquals(0, attempts)
+        assertEquals(SetupOutcome.RecoveryRequired, subject.state.value.outcomes["library"])
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["times"])
+        subject.start(setOf("library"), recordUnselectedAsSkipped = false)
+        runCurrent()
+        assertEquals(1, attempts)
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["library"])
+        assertEquals(SetupOutcome.Succeeded, subject.state.value.outcomes["times"])
+    }
 
     @Test
-    fun aRunnerThatThrowsIsThatStagesFailureAndNoOnesElse() = runTest(StandardTestDispatcher()) {
-        val throwing = FakeStageRunner(throws = IllegalStateException("boom"))
+    fun replacementAccountSupersedesAnOlderCallback() = runTest {
+        val ownerChanges = FakeSetupAccounts()
+        val store = FakeSetupStateStore()
+        var previousProgress: ((SetupStageProgress) -> Unit)? = null
+        val original = SetupStageRunner { onProgress ->
+            if (previousProgress == null) previousProgress = onProgress
+            SetupOutcome.Succeeded
+        }
+        val subject = coordinator(listOf(fakeStage("library", original)), store, ownerChanges)
+        subject.start(setOf("library"))
+        runCurrent()
+        assertEquals(SetupOutcome.Succeeded, store.outcomes["library"])
+
+        ownerChanges.owners.value = null
+        runCurrent()
+        ownerChanges.owners.value = SetupOwner(fixtureSetupOwner.steamId, 2)
+        runCurrent()
+        subject.start(setOf("library"), recordUnselectedAsSkipped = false)
+        runCurrent()
+        previousProgress?.invoke(SetupStageProgress(1, 2))
+        runCurrent()
+
+        assertEquals(2L, store.journal.owner.generation)
+        assertEquals(SetupOutcome.Succeeded, store.outcomes["library"])
+        assertTrue(subject.state.value.stageProgress.isEmpty())
+    }
+
+    @Test
+    fun staleHistoryCompletionCannotDismissTheReplacementAccountsDecision() = runTest {
+        val owners = FakeSetupAccounts()
+        val subject = coordinator(listOf(fakeStage("library")), accounts = owners)
+        subject.claimFirstRunSetup()
+        subject.advanceToHistory()
+        val oldOwner = subject.firstRunOwner.first()
+
+        owners.owners.value = SetupOwner("replacement", 1)
+        runCurrent()
+        assertNull(subject.firstRunPhase.first())
+        subject.claimFirstRunSetup()
+        subject.advanceToHistory()
+        subject.releaseFirstRunSetup(oldOwner)
+
+        assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+        assertEquals("replacement", subject.firstRunOwner.first()?.steamId)
+    }
+
+    @Test
+    fun unavailableAndUnselectedStagesNeverStartAndFailuresAreIsolated() = runTest {
+        val throwing = FakeStageRunner(throws = IllegalStateException("fixture failure"))
+        val blocked = FakeStageRunner()
+        val unselected = FakeStageRunner()
         val after = FakeStageRunner()
         val store = FakeSetupStateStore()
-        val subject = coordinator(
-            listOf(fakeStage("throwing", throwing), fakeStage("after", after)),
-            store,
-            this,
-        )
+        val subject = coordinator(listOf(
+            fakeStage("throwing", throwing),
+            fakeStage("blocked", blocked, unavailableReason = "Unavailable"),
+            fakeStage("unselected", unselected),
+            fakeStage("after", after),
+        ), store)
 
-        subject.start(setOf("throwing", "after"))
-        advanceUntilIdle()
+        subject.start(setOf("throwing", "blocked", "after"))
+        runCurrent()
 
-        assertEquals(SetupOutcome.Failed("boom"), store.outcomes["throwing"])
-        assertTrue(after.started)
-        assertTrue(subject.state.value.finished)
-    }
-
-    @Test
-    fun anUnavailableStageCannotRunAndDoesNotBlockTheOthers() = runTest(StandardTestDispatcher()) {
-        val blocked = FakeStageRunner()
-        val other = FakeStageRunner()
-        val store = FakeSetupStateStore()
-        val subject = coordinator(
-            listOf(
-                fakeStage("blocked", blocked, unavailableReason = "Needs a capability this build lacks"),
-                fakeStage("other", other),
-            ),
-            store,
-            this,
-        )
-
-        // Even handed in explicitly — a stale selection from a recreated surface — it must not run.
-        subject.start(setOf("blocked", "other"))
-        advanceUntilIdle()
-
+        assertEquals(SetupOutcome.Failed("fixture failure"), store.outcomes["throwing"])
+        assertEquals(SetupOutcome.Skipped, store.outcomes["unselected"])
         assertFalse(blocked.started)
-        assertTrue(other.started)
-        assertEquals(SetupOutcome.Succeeded, store.outcomes["other"])
-        assertTrue(subject.state.value.finished)
+        assertFalse(unselected.started)
+        assertTrue(after.started)
+        assertEquals(SetupOutcome.Succeeded, store.outcomes["after"])
     }
 
     @Test
-    fun aStageInProgressIsReportedWithItsProgress() = runTest(StandardTestDispatcher()) {
-        val running = FakeStageRunner().emitting(SetupStageProgress(3, 10, "Portal"))
-        running.autoComplete = false
-        val subject = coordinator(listOf(fakeStage("running", running)), scope = this)
+    fun decliningSetupRecordsSkippedAndAdvancesTheFirstRunPhase() = runTest {
+        val runner = FakeStageRunner()
+        val store = FakeSetupStateStore()
+        val subject = coordinator(listOf(fakeStage("library", runner)), store)
 
-        subject.start(setOf("running"))
-        advanceUntilIdle()
+        assertNull(subject.firstRunPhase.first())
+        subject.claimFirstRunSetup()
+        assertTrue(subject.skipAll())
 
-        val state = subject.state.value
-        assertEquals("running", state.currentStageId)
-        assertEquals(SetupStageProgress(3, 10, "Portal"), state.progress)
-        assertTrue(state.running)
-        assertFalse(state.finished)
-
-        running.gate.complete(Unit)
-        advanceUntilIdle()
-        assertTrue(subject.state.value.finished)
+        assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+        assertEquals(SetupOutcome.Skipped, store.outcomes["library"])
+        assertFalse(runner.started)
+        subject.releaseFirstRunSetup()
+        assertNull(subject.firstRunPhase.first())
     }
 
     @Test
-    fun theAppCanBeEnteredOnceInScreenStagesSettle() = runTest(StandardTestDispatcher()) {
-        val inScreen = FakeStageRunner()
-        val detached = FakeStageRunner()
-        detached.autoComplete = false
-        val subject = coordinator(
-            listOf(
-                fakeStage("sync", inScreen, execution = SetupStageExecution.IN_SCREEN),
-                fakeStage("assets", detached, execution = SetupStageExecution.DETACHED),
-            ),
-            scope = this,
-        )
+    fun restartAfterAnAdmissionIntentDoesNotReenqueueIt() = runTest {
+        val store = FakeSetupStateStore()
+        val dyingScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val interrupted = SetupStageRunner { kotlinx.coroutines.awaitCancellation() }
+        val first = coordinator(listOf(fakeStage("a", interrupted), fakeStage("b")), store, scope = dyingScope)
+        first.start(setOf("b", "a"))
+        runCurrent()
+        assertNull(store.journal.stages["a"]?.workId)
+        assertEquals(listOf("b"), store.journal.remaining)
+        dyingScope.cancel()
 
-        subject.start(setOf("sync", "assets"))
-        advanceUntilIdle()
+        val later = FakeStageRunner()
+        val recovered = coordinator(listOf(fakeStage("a", interrupted), fakeStage("b", later)), store)
 
-        val state = subject.state.value
-        assertTrue("in-screen work is done, so the app is usable", state.inScreenSettled)
-        assertFalse("the detached stage is still going", state.finished)
-
-        // Release the latch so the test scope has nothing left suspended on it.
-        detached.gate.complete(Unit)
-        advanceUntilIdle()
+        assertEquals(SetupOutcome.RecoveryRequired, recovered.state.value.outcomes["a"])
+        assertTrue(later.started)
     }
 
-    @Test
-    fun aSettingsReRunReplacesOnlyItsOwnStagesOutcomes() = runTest(StandardTestDispatcher()) {
-        val store = FakeSetupStateStore(
-            initialOutcomes = mutableMapOf(
-                "a" to SetupOutcome.Succeeded,
-                "b" to SetupOutcome.Failed("earlier failure"),
-            ),
-        )
-        val subject = coordinator(
-            listOf(fakeStage("a"), fakeStage("b", FakeStageRunner(SetupOutcome.Succeeded))),
-            store,
-            this,
-        )
-        subject.ensureLoaded()
-        advanceUntilIdle()
+    private fun pendingRunner(activity: SetupStageActivity) =
+        FakeStageRunner().emitting(SetupStageProgress(0, 0, activity = activity)).also { it.autoComplete = false }
 
-        subject.start(setOf("b"), recordUnselectedAsSkipped = false)
-        advanceUntilIdle()
-
-        assertEquals(SetupOutcome.Succeeded, store.outcomes["b"])
-        // Retrying one stage from Settings is a decision about that stage. Recording the rest
-        // skipped would erase the outcomes that list exists to show.
-        assertEquals(SetupOutcome.Succeeded, store.outcomes["a"])
+    private fun TestScope.coordinator(
+        stages: List<SetupStage>,
+        store: FakeSetupStateStore = FakeSetupStateStore(),
+        accounts: FakeSetupAccounts = FakeSetupAccounts(),
+        scope: CoroutineScope = backgroundScope,
+    ) = SetupCoordinator(FakeStageSource(stages), store, accounts, scope).also {
+        it.ensureLoaded()
+        runCurrent()
     }
-
-    @Test
-    fun storedOutcomesForStagesThisBuildDoesNotKnowAreIgnored() = runTest(StandardTestDispatcher()) {
-        val store = FakeSetupStateStore(
-            initialOutcomes = mutableMapOf(
-                "known" to SetupOutcome.Succeeded,
-                "stage_from_a_later_version" to SetupOutcome.Failed("whatever"),
-            ),
-        )
-        val subject = coordinator(listOf(fakeStage("known")), store, this)
-
-        subject.ensureLoaded()
-        advanceUntilIdle()
-
-        val state = subject.state.value
-        assertTrue("setup still renders", state.loaded)
-        assertEquals(setOf("known"), state.outcomes.keys)
-    }
-
-    @Test
-    fun aStoredSelectionIsRestoredSoARecreatedSurfaceKnowsWhatTheRunCovered() =
-        runTest(StandardTestDispatcher()) {
-            val store = FakeSetupStateStore(
-                initialOptIns = mutableMapOf("a" to true, "b" to false),
-            )
-            val subject = coordinator(listOf(fakeStage("a"), fakeStage("b")), store, this)
-
-            subject.ensureLoaded()
-            advanceUntilIdle()
-
-            assertEquals(setOf("a"), subject.state.value.selected)
-        }
-
-    @Test
-    fun recoversDetachedWorkAndContinuesTheRemainingStages() =
-        runTest(StandardTestDispatcher()) {
-            var recoveredWorkId: String? = null
-            val recovering = object : SetupStageRunner {
-                override suspend fun run(
-                    onProgress: (SetupStageProgress) -> Unit,
-                ): SetupOutcome = error("recovery should not enqueue a new job")
-
-                override suspend fun recover(
-                    workId: String,
-                    onProgress: (SetupStageProgress) -> Unit,
-                ): SetupOutcome {
-                    recoveredWorkId = workId
-                    return SetupOutcome.Succeeded
-                }
-            }
-            val later = FakeStageRunner()
-            val store = FakeSetupStateStore(
-                initialOutcomes = mutableMapOf(
-                    "sync" to SetupOutcome.NeverRun,
-                    "assets" to SetupOutcome.NeverRun,
-                ),
-                initialOptIns = mutableMapOf(
-                    "sync" to true,
-                    "assets" to true,
-                ),
-                activeStage = ActiveSetupStage(
-                    stageId = "sync",
-                    workId = "detached-work-id",
-                    selectedStageIds = setOf("sync", "assets"),
-                ),
-            )
-            val subject = coordinator(
-                listOf(
-                    fakeStage("sync", recovering),
-                    fakeStage("assets", later, execution = SetupStageExecution.DETACHED),
-                ),
-                store,
-                this
-            )
-
-            subject.ensureLoaded()
-            advanceUntilIdle()
-
-            assertEquals("detached-work-id", recoveredWorkId)
-            assertEquals(SetupOutcome.Succeeded, store.outcomes["sync"])
-            assertTrue(later.started)
-            assertEquals(SetupOutcome.Succeeded, store.outcomes["assets"])
-            assertNull(store.active)
-            assertTrue(subject.state.value.finished)
-        }
-
-    @Test
-    fun aRunResetsEveryStagesStoredOutcomeBeforeTheFirstOneStarts() =
-        runTest(StandardTestDispatcher()) {
-            val held = FakeStageRunner().also { it.autoComplete = false }
-            val store = FakeSetupStateStore(
-                initialOutcomes = mutableMapOf(
-                    "a" to SetupOutcome.Succeeded,
-                    "b" to SetupOutcome.Succeeded,
-                ),
-            )
-            val subject = coordinator(
-                listOf(fakeStage("a", held), fakeStage("b")),
-                store,
-                this,
-            )
-
-            subject.start(setOf("a", "b"), recordUnselectedAsSkipped = false)
-            advanceUntilIdle()
-
-            // Both selected stages are durably NeverRun while the first is still going. A stale
-            // `Succeeded` left on "b" here is what recovery would read as "already done this run".
-            assertEquals(SetupOutcome.NeverRun, store.outcomes["a"])
-            assertEquals(SetupOutcome.NeverRun, store.outcomes["b"])
-
-            held.gate.complete(Unit)
-            advanceUntilIdle()
-        }
-
-    @Test
-    fun recoveryRunsALaterSelectedStageThatSucceededInAnEarlierRun() =
-        runTest(StandardTestDispatcher()) {
-            val store = FakeSetupStateStore(
-                initialOutcomes = mutableMapOf(
-                    "a" to SetupOutcome.Succeeded,
-                    "b" to SetupOutcome.Succeeded,
-                ),
-            )
-
-            // The process that starts the re-run and dies while the first stage is still going.
-            val dyingProcess = TestScope(StandardTestDispatcher(testScheduler))
-            val held = FakeStageRunner().also { it.autoComplete = false }
-            SetupCoordinator(
-                FakeStageSource(listOf(fakeStage("a", held), fakeStage("b"))),
-                store,
-                dyingProcess,
-            ).start(setOf("a", "b"), recordUnselectedAsSkipped = false)
-            advanceUntilIdle()
-            dyingProcess.cancel()
-
-            val recoveredA = FakeStageRunner()
-            val recoveredB = FakeStageRunner()
-            val next = coordinator(
-                listOf(fakeStage("a", recoveredA), fakeStage("b", recoveredB)),
-                store,
-                this,
-            )
-            next.ensureLoaded()
-            advanceUntilIdle()
-
-            assertTrue("the stage the old process died on is resumed", recoveredA.started)
-            // The reported defect: "b" still held its previous run's Succeeded, so recovery read it
-            // as complete and the re-run silently dropped it.
-            assertTrue("a later selected stage is not skipped by a stale outcome", recoveredB.started)
-            assertEquals(SetupOutcome.Succeeded, store.outcomes["b"])
-            assertTrue(next.state.value.finished)
-        }
-
-    @Test
-    fun theFirstRunTakeoverIsClaimedDurablyAndReleasedOnlyWhenDismissed() =
-        runTest(StandardTestDispatcher()) {
-            val store = FakeSetupStateStore()
-            val subject = coordinator(listOf(fakeStage("a")), store, this)
-
-            assertFalse(
-                "an install that predates the flag is not sent to setup",
-                subject.firstRunSetupActive.first(),
-            )
-
-            subject.claimFirstRunSetup()
-            assertTrue(subject.firstRunSetupActive.first())
-
-            // Setup completion advances durably to the optional history decision, not another
-            // checklist. That decision keeps the first-run claim until explicitly dismissed.
-            subject.start(setOf("a"))
-            advanceUntilIdle()
-            assertTrue(subject.firstRunSetupActive.first())
-            assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
-            subject.releaseFirstRunSetup()
-            assertFalse(subject.firstRunSetupActive.first())
-        }
-
-    @Test
-    fun leavingMidRunReleasesTheTakeoverWithoutWaitingForTheRunToFinish() =
-        runTest(StandardTestDispatcher()) {
-            val held = FakeStageRunner().also { it.autoComplete = false }
-            val store = FakeSetupStateStore()
-            val subject = coordinator(listOf(fakeStage("a", held)), store, this)
-
-            subject.claimFirstRunSetup()
-            subject.start(setOf("a"))
-            advanceUntilIdle()
-            assertTrue("the run is still going", subject.state.value.running)
-
-            // "Skip setup" while a stage runs: the run is deliberately not cancelled, so nothing
-            // else would release the claim for minutes.
-            subject.releaseFirstRunSetup()
-            assertFalse(subject.firstRunSetupActive.first())
-
-            held.gate.complete(Unit)
-            advanceUntilIdle()
-        }
-
 }

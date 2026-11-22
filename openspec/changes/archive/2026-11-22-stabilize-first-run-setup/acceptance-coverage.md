@@ -17,6 +17,98 @@ records the shipped setup fix's separate host and fake-response emulator results
 M1–M7 below are procedures for the integrated build. Current validation, host, visual, and device
 results for that implementation belong here as tasks 4.1–4.3 are executed.
 
+### Follow-up checkpoint 1.1
+
+- Schema 47 migration passed all 35 `MigrationTest` scenarios on the GPU-verified API 37
+  emulator. The 46 → 47 fixture retained the imported offset, recovered contribution,
+  cloud apply journal, and achievement unlock, and started with no confirmation evidence.
+- The host Room and Steam response coverage verified rollback, account reset, confirmed empty
+  versus unreadable responses, and retention of confirmation after a failed refresh.
+
+### Follow-up checkpoint 1.2
+
+- `SteamSyncLibraryEvidenceWorkerTest` ran the real worker and Room committer with fixture Steam
+  replies. Independent manual and periodic polls observed the same 20-minute increase concurrently
+  and credited it once. The suite also covered admission refusal, absent credentials, unreadable
+  replies, and retry after a failed refresh or a forced transaction rollback.
+- A database fault injected after the raw commit verified that a retry recovers the same manual
+  operation, finalizes it, and publishes its committed result without a second library fetch.
+  This is persistence-boundary evidence. OS process death and live Steam remain in M1–M7.
+
+### Follow-up checkpoints 2.1–2.3
+
+- Host checks covered legacy active-work migration, exact association after immediate completion,
+  KEEP reuse, missing admission, account-generation fencing, duplicate taps, queued work, retry
+  backoff, a 120-second foreground wait, early Continue, and restart with several pending stages.
+- The setup Roborazzi suite recorded and verified 32 light/dark captures across narrow and
+  standard widths, including a Settings projection with two pending stages and one cancellation.
+- On the API 37 emulator, a configured Settings checklist started with all stages unselected.
+  After denying notification permission, the real completion-times stage showed Running in the
+  checklist after its foreground wait had settled, then durably recorded success under the same
+  request and work ID. The process was stopped after completion for this check.
+
+### Follow-up checkpoints 3.1–3.4
+
+- Host tests verified consent replay across recreation, stale consent and dismissal after an
+  account replacement, baseline-required and confirmed-empty imports, and a pending request
+  that permits Continue without a second crediting action.
+- Both dated and date-unknown recovery cases froze 40 minutes from 120 lifetime minus 60 session
+  and 20 already-credited minutes. Concurrent capture and poll writes preserved both the frozen
+  offset and all newly tracked credit. Converted offsets, legacy completion, and the cloud
+  reversal-before-reset guard remained intact.
+- Injected faults exercised rollback and replay after raw capture. Sync, rule, and backup-derived
+  writers preserved the request's BACKFILL provenance with one offset capture and no earned
+  progress event in the host fixture.
+- Roborazzi verified 40 setup and history captures, including the new pending history states in
+  onboarding and Settings on both themes and widths.
+
+### Integrated device evidence
+
+The integrated debug build ran on API 37 emulators with the verified host GPU renderer. The
+second emulator was disposable and isolated from the emulator observing live Steam presence.
+
+| Scenario | Observed result |
+| --- | --- |
+| M1 live sync and setup | Manual and periodic Steam polls committed independently, with separate receipts. Setup request `b5ff272b` reused running manual work `d7a1e9f4` and reported success. Completion times independently finished as work `8c5b4b8a`. Live monitoring remained active and subsequent diagnostics reported `monitoring_already_running`. The original cascade did not reproduce. The follow-up below records the natural post-play handoff and live credit. |
+| M2 and M4 connectivity and restart | With airplane mode enabled and Wi-Fi off, library work `874c8f03` and completion-times work `b6762022` both stayed waiting after the foreground attempt settled. After a force-stop and cold launch, Settings reconciled the same two IDs and showed both still waiting. Restoring connectivity let both finish under those IDs. The controlled two-minute running case was verified on the host. |
+| M3 notification denial | The live completion-times worker ran and completed with notification permission denied. The Settings checklist kept showing the worker after its foreground wait settled. |
+| M5 consent and restart | The opt-in device fixture recorded consent on the synced test app without starting import. A Room read confirmed a pending request and zero captured offsets. After force-stop, a different process resumed the request, captured offsets, and opened Home. A second restart preserved the same aggregate offsets and XP. This exercises OS death after consent and before capture. Fault injection covers rollback and the raw-commit-to-recompute gap separately. |
+| M6 account replacement | The offline fixture queued real WorkManager library work, then invoked the app's production account replacement coordinator. The queued old ID remained identifiable. The replacement had no inherited stage status, history request, or baseline readiness, and the prior owner's dismissal could not clear the replacement owner's phase. The replacement used a local fixture identity and made no Steam request. |
+| M7 Settings recovery | A configured Settings checklist initially showed every stage unselected. After restart, the same route showed the pending stages and then their own outcomes. Existing-install and credential-edit behavior also passed onboarding host coverage. |
+
+The two opt-in fixture cases are in `SetupDurabilityAcceptanceTest` and use the instrumentation
+argument `setupDeviceScenario` with `prepare-consent` or `replace-account` on a disposable
+emulator. Force-stop after `prepare-consent`, then launch the app normally to exercise startup
+recovery. Keep the account-replacement fixture offline.
+
+### Live Steam session exit
+
+The recorded presence transition moved from `in_game` to `not_playing`, and the real post-play
+worker succeeded on its first attempt under WorkManager ID `6b4ca7a5`. The periodic poll
+had already committed 30 minutes during the session. The post-play worker committed the
+remaining 8 minutes. Expressed relative to the starting total, the active credit ranges
+were `0 → 30` and `30 → 38`, with no overlap. The game baseline and recovery high-water
+matched Steam's reported cumulative total.
+
+A later periodic read recorded receipt `e1533434` at the same high-water and left the ledger at
+two contributions totaling 38 minutes. After an emulator restart, the worker finalized that
+same receipt without another Steam fetch. The live manual and periodic poll bodies ran at
+different times during the monitored session. The host worker test covers simultaneous reads
+of the same increase.
+
+### Integrated verification results
+
+| Check | Result |
+| --- | --- |
+| Debug APK and release Kotlin compilation | Passed. |
+| Host app tests | 2,486 passed, with no failures or skips. |
+| Gamification tests | 53 passed, with no failures or skips. |
+| Android instrumentation | 50 passed on the host-GPU API 37 emulator, including all 35 migration tests, setup recovery fixtures, and Settings presentation and navigation. Both opt-in durability scenarios also passed separately. |
+| Android lint | `lintDebug` passed with the repository baseline. |
+| Setup and history visuals | 40 of 40 Roborazzi checks passed. |
+| Full visual suite on macOS | 92 of 97 passed. The four populated Library captures and the standard dark Library selection capture also failed on the unchanged base `5ec74f39` under the same host and toolchain. The Library baselines were preserved. |
+| OpenSpec | `openspec validate stabilize-first-run-setup --strict` passed. |
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.
