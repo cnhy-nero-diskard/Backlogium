@@ -35,6 +35,18 @@ results for that implementation belong here as tasks 4.1–4.3 are executed.
   operation, finalizes it, and publishes its committed result without a second library fetch.
   This is persistence-boundary evidence. OS process death and live Steam remain in M1–M7.
 
+### Follow-up checkpoints 2.1–2.3
+
+- Host checks covered legacy active-work migration, exact association after immediate completion,
+  KEEP reuse, missing admission, account-generation fencing, duplicate taps, queued work, retry
+  backoff, a 120-second foreground wait, early Continue, and restart with several pending stages.
+- The setup Roborazzi suite recorded and verified 32 light/dark captures across narrow and
+  standard widths, including a Settings projection with two pending stages and one cancellation.
+- On the API 37 emulator, a configured Settings checklist started with all stages unselected.
+  After denying notification permission, the real completion-times stage showed Running in the
+  checklist after its foreground wait had settled, then durably recorded success under the same
+  request and work ID. The process was stopped after completion for this check.
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.

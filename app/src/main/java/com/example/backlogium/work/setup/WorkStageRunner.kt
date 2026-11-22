@@ -26,10 +26,11 @@ import kotlinx.coroutines.flow.mapNotNull
 class WorkStageRunner(
     private val workManager: WorkManager,
     private val uniqueWorkName: String,
-    private val trigger: suspend () -> Unit,
+    private val trigger: (suspend () -> Unit)? = null,
     private val progressOf: (Data) -> SetupStageProgress?,
     private val failureReason: String,
     private val successOutcome: (Data) -> SetupOutcome = { SetupOutcome.Succeeded },
+    private val admit: (suspend (UUID, Long?) -> UUID)? = null,
 ) : SetupStageRunner {
 
     override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome =
@@ -39,6 +40,11 @@ class WorkStageRunner(
         onProgress: (SetupStageProgress) -> Unit,
         onWorkStarted: suspend (workId: String) -> Unit,
     ): SetupOutcome {
+        if (admit != null) {
+            val observed = admit.invoke(UUID.randomUUID(), null).toString()
+            onWorkStarted(observed)
+            return recover(observed, onProgress) ?: SetupOutcome.RecoveryRequired
+        }
         // Finished records under a unique name may belong to a previous run. The new work is the
         // first id that was not present before this trigger; if KEEP admits an existing live job,
         // that live id is the one the stage must observe instead.
@@ -46,7 +52,7 @@ class WorkStageRunner(
             .first()
             .map { it.id }
             .toSet()
-        trigger()
+        checkNotNull(trigger).invoke()
 
         var observedId: UUID? = null
         return workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
@@ -59,25 +65,44 @@ class WorkStageRunner(
                     onWorkStarted(candidate.id.toString())
                 }
                 val info = infos.firstOrNull { it.id == observedId }
-                    ?: return@mapNotNull SetupOutcome.Failed("The background job is no longer available. Retry this step.")
+                    ?: return@mapNotNull SetupOutcome.RecoveryRequired
                 reportActivity(info, onProgress)
                 info.takeIf { it.state.isFinished }?.let(::outcomeOf)
             }
             .first()
     }
 
+    override suspend fun runRequest(
+        requestId: String,
+        accountGeneration: Long,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkStarted: suspend (workId: String) -> Unit,
+    ): SetupOutcome {
+        val enqueue = admit ?: return run(onProgress, onWorkStarted)
+        val observed = enqueue(UUID.fromString(requestId), accountGeneration).toString()
+        onWorkStarted(observed)
+        return recover(observed, onProgress) ?: SetupOutcome.RecoveryRequired
+    }
+
     override suspend fun recover(
         workId: String,
         onProgress: (SetupStageProgress) -> Unit,
+    ): SetupOutcome? = recoverRequest(workId, onProgress) {}
+
+    override suspend fun recoverRequest(
+        workId: String,
+        onProgress: (SetupStageProgress) -> Unit,
+        onWorkFound: suspend (String) -> Unit,
     ): SetupOutcome? {
         val id = runCatching { UUID.fromString(workId) }.getOrNull() ?: return null
         val initial = workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName).first()
         if (initial.none { it.id == id }) return null
+        onWorkFound(workId)
 
         return workManager.getWorkInfosForUniqueWorkFlow(uniqueWorkName)
             .mapNotNull { infos ->
                 val info = infos.firstOrNull { it.id == id }
-                    ?: return@mapNotNull SetupOutcome.Failed("The background job is no longer available. Retry this step.")
+                    ?: return@mapNotNull SetupOutcome.RecoveryRequired
                 reportActivity(info, onProgress)
                 info.takeIf { it.state.isFinished }?.let(::outcomeOf)
             }
@@ -107,7 +132,7 @@ class WorkStageRunner(
         WorkInfo.State.SUCCEEDED -> successOutcome(info.outputData)
         // Cancellation is reported rather than swallowed: a user who cancelled an asset download
         // from Settings should see that stage as unfinished, not as having succeeded.
-        WorkInfo.State.CANCELLED -> SetupOutcome.Failed("Cancelled before it finished")
+        WorkInfo.State.CANCELLED -> SetupOutcome.Cancelled
         else -> SetupOutcome.Failed(failureReason)
     }
 }

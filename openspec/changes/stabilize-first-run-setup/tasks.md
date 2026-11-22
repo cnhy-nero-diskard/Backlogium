@@ -9,9 +9,9 @@ All implementation and acceptance tasks below target the follow-up on current `m
 
 ## 2. Independent setup-stage recovery
 
-- [ ] 2.1 Persist each stage's latest request and exact work association, including immediate completion and KEEP reuse. Verify legacy active-ID migration, interruption before and after enqueue, duplicate taps, missing work, and stale generation or account callbacks.
-- [ ] 2.2 Bound foreground observation and resume independent selected admissions from durable state. Verify queued work, backoff, running past the wait budget, explicit Continue, and restart with several admitted stages. Assert that pending work remains pending and registry order and successful siblings are preserved.
-- [ ] 2.3 Update onboarding and Settings projections and affected screenshots. Verify distinct cancellation, per-stage pending/recovery actions, editable next-run selection, a truthful summary, and detached completion-times recovery when notifications are denied.
+- [x] 2.1 Persist each stage's latest request and exact work association, including immediate completion and KEEP reuse. Verify legacy active-ID migration, interruption before and after enqueue, duplicate taps, missing work, and stale generation or account callbacks.
+- [x] 2.2 Bound foreground observation and resume independent selected admissions from durable state. Verify queued work, backoff, running past the wait budget, explicit Continue, and restart with several admitted stages. Assert that pending work remains pending and registry order and successful siblings are preserved.
+- [x] 2.3 Update onboarding and Settings projections and affected screenshots. Verify distinct cancellation, per-stage pending/recovery actions, editable next-run selection, a truthful summary, and detached completion-times recovery when notifications are denied.
 
 ## 3. Durable history consent and recomputation
 

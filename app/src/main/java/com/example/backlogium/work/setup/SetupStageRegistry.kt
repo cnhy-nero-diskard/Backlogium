@@ -42,7 +42,7 @@ class SetupStageRegistry @Inject constructor(
             run = WorkStageRunner(
                 workManager = workManager,
                 uniqueWorkName = SteamSyncWorker.ONE_TIME_NAME,
-                trigger = { scheduler.syncNow() },
+                admit = scheduler::admitLibrarySync,
                 // The sync worker publishes no per-item progress, so this stage is deliberately
                 // indeterminate rather than showing a total it does not have.
                 progressOf = { null },
@@ -63,7 +63,9 @@ class SetupStageRegistry @Inject constructor(
                 uniqueWorkName = SteamAssetDownloadWorker.UNIQUE_WORK_NAME,
                 // Missing-only: setup is a first run, so there is nothing to refresh, and
                 // re-downloading what is already stored would spend the user's data for nothing.
-                trigger = { scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING) },
+                admit = { id, generation ->
+                    scheduler.admitSteamAssets(id, SteamAssetDownloadMode.DOWNLOAD_MISSING, generation)
+                },
                 progressOf = { data ->
                     SetupStageProgress(
                         processed = data.getInt(SteamAssetDownloadWorker.KEY_PROCESSED, 0),
@@ -88,7 +90,7 @@ class SetupStageRegistry @Inject constructor(
             run = WorkStageRunner(
                 workManager = workManager,
                 uniqueWorkName = HltbDatasetWorker.UNIQUE_WORK_NAME,
-                trigger = { scheduler.ensureCompletionTimes() },
+                admit = scheduler::admitCompletionTimes,
                 progressOf = { data ->
                     data.getString(HltbDatasetWorker.KEY_LABEL)?.let { label ->
                         SetupStageProgress(

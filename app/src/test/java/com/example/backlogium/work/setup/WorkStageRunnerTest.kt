@@ -2,6 +2,8 @@ package com.example.backlogium.work.setup
 
 import android.content.Context
 import androidx.work.Configuration
+import androidx.work.await
+import java.util.UUID
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -56,6 +58,24 @@ class WorkStageRunnerTest {
     }
 
     @Test
+    fun explicitRequestIdResolvesEvenWhenWorkCompletesBeforeAssociation() = runTest {
+        val requested = UUID.randomUUID()
+        var associated: String? = null
+        val runner = WorkStageRunner(
+            workManager, NAME_OK, progressOf = { null }, failureReason = REASON,
+            admit = { id, _ ->
+                val request = OneTimeWorkRequestBuilder<SucceedingWorker>().setId(id).build()
+                workManager.enqueueUniqueWork(NAME_OK, ExistingWorkPolicy.KEEP, request).await()
+                workManager.getWorkInfoByIdFlow(id).first { it?.state?.isFinished == true }
+                id
+            },
+        )
+        assertEquals(SetupOutcome.Succeeded, runner.runRequest(requested.toString(), 0, {}) { associated = it })
+        assertEquals(requested.toString(), associated)
+        assertEquals(SetupOutcome.Succeeded, runner.recover(requested.toString()) {})
+    }
+
+    @Test
     fun succeededWorkIsASucceededStage() = runTest {
         val runner = runnerFor(NAME_OK) { enqueue<SucceedingWorker>(NAME_OK) }
         assertEquals(SetupOutcome.Succeeded, runner.run { })
@@ -84,7 +104,7 @@ class WorkStageRunnerTest {
         }
 
         val outcome = runner.run { }
-        assertEquals(SetupOutcome.Failed("Cancelled before it finished"), outcome)
+        assertEquals(SetupOutcome.Cancelled, outcome)
     }
 
     @Test
@@ -168,7 +188,7 @@ class WorkStageRunnerTest {
         assertTrue(activities.any { it.activity == SetupStageActivity.RETRY_BACKOFF && it.attemptCount > 0 })
         assertEquals(WorkInfo.State.ENQUEUED, workManager.getWorkInfoById(request.id).get().state)
         workManager.cancelUniqueWork("retry").result.get()
-        assertEquals(SetupOutcome.Failed("Cancelled before it finished"), attempt.await())
+        assertEquals(SetupOutcome.Cancelled, attempt.await())
     }
 
     @Test

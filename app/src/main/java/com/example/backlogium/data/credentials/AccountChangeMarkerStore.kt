@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -22,6 +23,10 @@ class AccountChangeMarkerStore @Inject constructor(
     private val pendingSteamIdKey = stringPreferencesKey("reset_pending_for")
     private val generationKey = longPreferencesKey("account_generation")
     private val commitMutex = Mutex()
+
+    val activeGeneration = context.accountChangeDataStore.data.map { prefs ->
+        if (prefs[pendingSteamIdKey] == null) prefs[generationKey] ?: 0L else null
+    }
 
     suspend fun generation(): Long = context.accountChangeDataStore.data.first()[generationKey] ?: 0L
 

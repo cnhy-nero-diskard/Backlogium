@@ -224,7 +224,11 @@ class SteamSyncWorker @AssistedInject constructor(
         val admission = syncCoordinator.withLock {
             accountChangeMarker.withAccountState {
                 if (accountChangeMarker.pendingSteamId() != null) return@withAccountState null
-                accountChangeMarker.generation() to credentials.currentCredentials()
+                val generation = accountChangeMarker.generation()
+                if (inputData.getLong(KEY_ACCOUNT_GENERATION, generation) != generation) {
+                    return@withAccountState null
+                }
+                generation to credentials.currentCredentials()
             }
         } ?: return setupSkipped("An account change is still in progress. Retry when it finishes.")
         accountGeneration = admission.first
@@ -354,7 +358,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            if (!persistPoll(trustedGames, apiKey, steamId, steamLevel, summary, scope)) {
+            if (!persistPoll(trustedGames, games.size, apiKey, steamId, steamLevel, summary, scope)) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
@@ -397,6 +401,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
     private suspend fun persistPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
+        observedGameCount: Int,
         apiKey: String,
         steamId: String,
         steamLevel: Int,
@@ -510,6 +515,7 @@ class SteamSyncWorker @AssistedInject constructor(
                         database.withTransaction {
                             commitRawPoll(
                                 games = games,
+                                observedGameCount = observedGameCount,
                                 steamId = steamId,
                                 steamLevel = steamLevel,
                                 summary = summary,
@@ -610,6 +616,7 @@ class SteamSyncWorker @AssistedInject constructor(
      */
     private suspend fun commitRawPoll(
         games: List<com.example.backlogium.data.remote.dto.OwnedGameDto>,
+        observedGameCount: Int,
         steamId: String,
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
@@ -745,7 +752,7 @@ class SteamSyncWorker @AssistedInject constructor(
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
         database.libraryPollCommitDao().insert(
-            LibraryPollCommit(operationId, workId, steamId, now, games.size),
+            LibraryPollCommit(operationId, workId, steamId, now, observedGameCount),
         )
 
         return RawCommitResult(
@@ -821,6 +828,7 @@ class SteamSyncWorker @AssistedInject constructor(
         Result.success(workDataOf(KEY_POLL_RESULT to POLL_COMMITTED, KEY_POLL_OPERATION to committedOperationId))
 
     companion object {
+        internal const val KEY_ACCOUNT_GENERATION = "account_generation"
         const val KEY_SETUP_FAILURE = "setup_failure"
         const val KEY_POLL_RESULT = "poll_result"
         const val KEY_POLL_OPERATION = "poll_operation"

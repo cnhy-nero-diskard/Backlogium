@@ -1,387 +1,300 @@
 package com.example.backlogium.work.setup
 
-import com.example.backlogium.data.setup.ActiveSetupStage
+import com.example.backlogium.data.setup.SetupAccounts
+import com.example.backlogium.data.setup.SetupJournal
+import com.example.backlogium.data.setup.SetupOwner
+import com.example.backlogium.data.setup.SetupStageRecord
 import com.example.backlogium.data.setup.SetupStateStore
 import com.example.backlogium.di.ApplicationScope
-import kotlinx.coroutines.CoroutineScope
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import javax.inject.Singleton
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * Everything a setup surface needs to render, derived from the registry plus stored state.
- *
- * Finished stages keep their outcomes in [outcomes] while later ones run, which is what lets the
- * surface show the whole run rather than only its current step.
- */
 data class SetupRunState(
-    /** False until stored outcomes have been read; the surface shows nothing definite before that. */
     val loaded: Boolean = false,
+    /** A cohort still has foreground observation or admissions to settle. */
     val running: Boolean = false,
-    /** The stage currently being observed, or null between stages and when idle. */
     val currentStageId: String? = null,
-    /** The current stage's progress, or null when it has not published a usable one. */
     val progress: SetupStageProgress? = null,
     val outcomes: Map<String, SetupOutcome> = emptyMap(),
-    /** What the run covers. Persisted, so a surface recreated in a new process still knows. */
     val selected: Set<String> = emptySet(),
-    /**
-     * True once every selected in-screen stage has settled. The surface offers entry into the app
-     * from this point — detached stages keep running and reporting in their own notifications.
-     */
     val inScreenSettled: Boolean = false,
-    /** True once every selected stage has reached a terminal outcome, or setup was declined. */
+    /** The cohort has settled. Its admitted workers may still be pending. */
     val finished: Boolean = false,
+    val pending: Set<String> = emptySet(),
+    val stageProgress: Map<String, SetupStageProgress> = emptyMap(),
 )
 
-/**
- * Runs the selected setup stages in registered order and records what each one did.
- *
- * A singleton on the application scope, deliberately: the setup surface can be recreated — rotated,
- * navigated away from, re-entered — without restarting the run or losing the stage it was on, and a
- * detached stage's observation is not tied to a composition that no longer exists.
- *
- * Failure is isolated by construction. Each stage's runner produces its own terminal outcome, the
- * loop records it and continues, and setup completes reporting the per-stage summary. It never
- * cancels a sibling and never discards a result: the stages are unrelated, so aborting a
- * nearly-complete artwork download because a different service timed out would throw away real work
- * for no reason.
- */
 @Singleton
 class SetupCoordinator @Inject constructor(
     private val source: SetupStageSource,
     private val store: SetupStateStore,
+    private val accounts: SetupAccounts,
     @ApplicationScope private val scope: CoroutineScope,
 ) : FirstRunSetupGateway {
     private val _state = MutableStateFlow(SetupRunState())
     val state: StateFlow<SetupRunState> = _state.asStateFlow()
+    override val firstRunSetupActive = store.firstRunSetupActiveFlow
+    override val firstRunPhase = store.firstRunPhaseFlow
 
-    /**
-     * Whether the app still owes the user a first-run setup surface. Durable, so the takeover is
-     * restored on a cold launch after the process is killed mid-setup — at which point credentials
-     * are already stored and nothing else distinguishes that install from a long-configured one.
-     */
-    override val firstRunSetupActive: Flow<Boolean> = store.firstRunSetupActiveFlow
-    override val firstRunPhase: Flow<FirstRunPhase?> = store.firstRunPhaseFlow
-    override suspend fun advanceToHistory() = store.advanceToHistory()
-
-    /** Claim before launch so duplicate taps cannot queue a second run behind this one. */
-    private val runClaimed = AtomicBoolean(false)
+    @Volatile private var current: AccountSession? = null
     private var loadJob: Job? = null
 
-    /**
-     * Read stored state once. If the process died during a run, the active stage and exact
-     * WorkManager id are recovered before the surface is allowed to report a finished run.
-     */
+    @Synchronized
     fun ensureLoaded() {
-        if (_state.value.loaded || loadJob?.isActive == true) return
+        if (loadJob?.isActive == true) return
         loadJob = scope.launch {
-            val stages = source.stages
-            val registeredIds = stages.map { it.id }
-            val outcomes = projectSetupOutcomes(store.storedOutcomes(), registeredIds)
-            val optIns = store.storedOptIns()
-            val storedActive = store.storedActiveStage()
-            val persistedSelection = storedActive?.selectedStageIds
-                ?.takeIf { it.isNotEmpty() }
-                ?: registeredIds.filter { optIns[it] == true }.toSet()
-            val selectedIds = persistedSelection.intersect(registeredIds.toSet())
-            val selectedStages = stages.filter { it.isAvailable && it.id in selectedIds }
-            val active = storedActive?.takeIf { marker ->
-                selectedStages.any { it.id == marker.stageId }
-            }
-
-            // A marker for a stage that no longer exists or is no longer available cannot be resumed.
-            if (storedActive != null && active == null) store.clearActiveStage()
-
-            _state.update { current ->
-                if (current.loaded) {
-                    current
-                } else {
-                    current.copy(
-                        loaded = true,
-                        running = active != null,
-                        currentStageId = active?.stageId,
-                        outcomes = outcomes,
-                        selected = selectedIds,
-                        inScreenSettled = inScreenStagesSettled(selectedStages, outcomes),
-                        finished = false,
-                    )
+            accounts.owners.collectLatest { owner ->
+                _state.value = SetupRunState(loaded = owner == null)
+                if (owner == null) return@collectLatest
+                supervisorScope {
+                    val session = AccountSession(owner, this)
+                    if (!session.edit { it }) return@supervisorScope
+                    current = session
+                    try {
+                        session.resume()
+                        awaitCancellation()
+                    } finally {
+                        current = null
+                    }
                 }
             }
-
-            active?.let { recoverRun(it, selectedStages) }
         }
     }
 
-    /**
-     * Start [selectedIds], in registered order.
-     *
-     * Nothing selected is a complete answer, not an error: setup finishes immediately, which with
-     * [recordUnselectedAsSkipped] is exactly what declining setup does.
-     *
-     * [recordUnselectedAsSkipped] separates the two surfaces that start a run. Going through the
-     * onboarding checklist is a decision about *every* stage, so the ones left unticked are recorded
-     * skipped. Re-running one stage from Settings is a decision about that stage alone — recording
-     * the rest skipped there would erase the outcomes the Settings list exists to show.
-     */
     fun start(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean = true) {
-        if (loadJob?.isActive == true || !runClaimed.compareAndSet(false, true)) return
-        scope.launch {
-            try {
-                run(selectedIds, recordUnselectedAsSkipped)
-            } finally {
-                runClaimed.set(false)
-            }
-        }
+        val session = current ?: return
+        if (_state.value.running || !session.claim()) return
+        session.scope.launch { session.start(selectedIds, recordUnselectedAsSkipped) }
     }
 
-    /**
-     * Decline setup: nothing runs, every stage is recorded skipped, and the app is fully usable.
-     * Returns true only after that decision is durable; false means another load/run owns setup.
-     */
     suspend fun skipAll(): Boolean {
-        // The surface only calls this for a loaded, idle checklist. Let the load coroutine finish
-        // its final bookkeeping before claiming the run; an active recovery is exposed as running
-        // and is handled as Continue by the surface instead.
-        if (!_state.value.loaded || _state.value.running) return false
-        loadJob?.takeIf { it.isActive }?.join()
-        if (_state.value.running || !runClaimed.compareAndSet(false, true)) return false
-        try {
-            run(emptySet(), recordUnselectedAsSkipped = true)
-            return true
-        } finally {
-            runClaimed.set(false)
-        }
+        val session = current ?: return false
+        if (_state.value.running || !session.claim()) return false
+        session.start(emptySet(), recordUnselectedAsSkipped = true)
+        return true
     }
 
-    private suspend fun run(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean) {
-        val stages = source.stages
-        // An unavailable stage cannot be selected in any surface, but a stale selection
-        // handed in from a recreated one must not slip past that.
-        val toRun = stages.filter { it.isAvailable && it.id in selectedIds }
-        val runIds = toRun.map { it.id }.toSet()
-        val previous = _state.value.outcomes
-
-        stages.forEach { stage ->
-            if (stage.id in runIds || recordUnselectedAsSkipped) {
-                store.writeOptIn(stage.id, stage.id in runIds)
-            }
-        }
-        if (toRun.isNotEmpty()) {
-            // Establish the durable recovery point before the first enqueue can happen.
-            // Every stage in the run is reset here, not just the first: recovery skips a
-            // selected stage that already holds a terminal outcome, so a stage left
-            // `Succeeded` by an earlier run would be mistaken for one this run finished.
-            store.beginRun(toRun.first().id, runIds)
-        } else {
-            store.clearActiveStage()
-        }
-        _state.update { current ->
-            current.copy(
-                loaded = true,
-                running = runIds.isNotEmpty(),
-                selected = runIds,
-                finished = false,
-                currentStageId = null,
-                progress = null,
-                // A stage in this run starts from a clean slate rather than showing a
-                // previous verdict; one outside it keeps whatever it last recorded, unless
-                // this run is the decision that it was skipped.
-                outcomes = stages.associate { stage ->
-                    stage.id to when {
-                        stage.id in runIds -> SetupOutcome.NeverRun
-                        recordUnselectedAsSkipped -> SetupOutcome.Skipped
-                        else -> previous[stage.id] ?: SetupOutcome.NeverRun
-                    }
-                },
-                inScreenSettled = toRun.none {
-                    it.execution == SetupStageExecution.IN_SCREEN
-                },
-            )
-        }
-        if (recordUnselectedAsSkipped) {
-            stages.filterNot { it.id in runIds }
-                .forEach { store.writeOutcome(it.id, SetupOutcome.Skipped) }
-        }
-
-        toRun.forEach { stage -> runStage(stage, remaining = toRun) }
-        completeRun()
+    override suspend fun advanceToHistory() {
+        store.advanceToHistory()
+        current?.continueWaiting()
     }
 
-    /**
-     * Claim the first-run takeover, as credentials are persisted on a first configuration. Suspends
-     * so the caller can advance the flow only once the claim is durable — otherwise a kill in the
-     * gap would leave a configured install with no record that setup was still owed.
-     */
     override suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
 
-    /** Resolve the first-run takeover after Import/Skip without cancelling outstanding setup work. */
-    override suspend fun releaseFirstRunSetup() = store.setFirstRunSetupActive(false)
-
-    /**
-     * Reconcile the stage marker left by an older process, then continue any later selected stages
-     * that had not started yet.
-     */
-    private suspend fun recoverRun(
-        active: ActiveSetupStage,
-        selectedStages: List<SetupStage>,
-    ) {
-        if (!runClaimed.compareAndSet(false, true)) return
-        try {
-            val activeIndex = selectedStages.indexOfFirst { it.id == active.stageId }
-            if (activeIndex < 0) {
-                store.clearActiveStage()
-                _state.update {
-                    it.copy(
-                        running = false,
-                        currentStageId = null,
-                        progress = null,
-                    )
-                }
-                return
-            }
-
-            for (stage in selectedStages.drop(activeIndex)) {
-                val storedOutcome = _state.value.outcomes[stage.id] ?: SetupOutcome.NeverRun
-                if (storedOutcome !is SetupOutcome.NeverRun) continue
-
-                val recovered = if (stage.id == active.stageId && active.workId != null) {
-                    recoverStage(stage, active.workId)
-                } else {
-                    null
-                }
-                if (recovered != null) {
-                    recordOutcome(stage, recovered, selectedStages)
-                } else {
-                    // No persisted job id (or a pruned job) means the trigger was not admitted;
-                    // run the stage normally and capture the new exact id.
-                    runStage(stage, selectedStages)
-                }
-            }
-            completeRun()
-        } finally {
-            runClaimed.set(false)
-        }
+    override suspend fun releaseFirstRunSetup() {
+        store.setFirstRunSetupActive(false)
+        current?.continueWaiting()
     }
 
-    private suspend fun recoverStage(
-        stage: SetupStage,
-        workId: String,
-    ): SetupOutcome? {
-        _state.update {
-            it.copy(
-                running = true,
-                finished = false,
-                currentStageId = stage.id,
-                progress = null,
-            )
+    private inner class AccountSession(val owner: SetupOwner, val scope: CoroutineScope) {
+        private val writes = Mutex()
+        private val claimed = AtomicBoolean(false)
+        private var exit = CompletableDeferred<Unit>()
+        private lateinit var journal: SetupJournal
+        private var foregroundStage: String? = null
+
+        fun claim(): Boolean {
+            if (!claimed.compareAndSet(false, true)) return false
+            exit = CompletableDeferred()
+            return true
         }
-        return try {
-            stage.run.recover(
-                workId = workId,
-                onProgress = { progress ->
-                    _state.update { current ->
-                        if (current.currentStageId == stage.id) {
-                            current.copy(progress = progress)
-                        } else {
-                            current
+
+        fun continueWaiting() {
+            exit.complete(Unit)
+        }
+
+        suspend fun edit(
+            finishRun: Boolean = false,
+            transform: (SetupJournal) -> SetupJournal,
+        ): Boolean = writes.withLock {
+            accounts.ifCurrent(owner) {
+                journal = store.update(owner, finishRun, transform)
+                publish()
+                true
+            } ?: false
+        }
+
+        fun resume() {
+            val restored = journal
+            if (restored.runOpen) claim()
+            source.stages.filter { it.isAvailable }.forEach { stage ->
+                restored.stages[stage.id]?.takeIf { it.pending }?.let { observe(stage, it, restoring = true) }
+            }
+            if (restored.runOpen) scope.launch {
+                try {
+                    admitRemaining(restored.remaining)
+                } finally {
+                    claimed.set(false)
+                }
+            }
+        }
+
+        suspend fun start(selectedIds: Set<String>, recordUnselectedAsSkipped: Boolean) {
+            try {
+                var remaining = emptyList<String>()
+                if (!edit { saved ->
+                        remaining = source.stages
+                            .filter { it.isAvailable && it.id in selectedIds && saved.stages[it.id]?.pending != true }
+                            .map { it.id }
+                        val skipped = if (recordUnselectedAsSkipped) {
+                            source.stages.filter { it.id !in selectedIds && saved.stages[it.id]?.pending != true }
+                                .associate { it.id to SetupStageRecord(encodedOutcome = encodeSetupOutcome(SetupOutcome.Skipped)) }
+                        } else emptyMap()
+                        saved.copy(
+                            stages = saved.stages + skipped,
+                            selected = remaining.toSet(),
+                            remaining = remaining,
+                            runOpen = true,
+                            settled = false,
+                        )
+                    }
+                ) return
+                admitRemaining(remaining)
+            } finally {
+                claimed.set(false)
+            }
+        }
+
+        private suspend fun admitRemaining(remaining: List<String>) {
+            for (stage in source.stages.filter { it.isAvailable && it.id in remaining }) {
+                val attempt = SetupStageRecord(requestId = UUID.randomUUID().toString())
+                if (!edit {
+                        foregroundStage = stage.id
+                        it.copy(
+                            stages = it.stages + (stage.id to attempt),
+                            remaining = it.remaining - stage.id,
+                        )
+                    }
+                ) return
+                val (admitted, settled) = observe(stage, attempt, restoring = false)
+                admitted.await()
+                withTimeoutOrNull(FOREGROUND_BUDGET_MILLIS) {
+                    select<Unit> {
+                        settled.onAwait { }
+                        exit.onAwait { }
+                    }
+                }
+            }
+            edit(finishRun = true) {
+                foregroundStage = null
+                it.copy(remaining = emptyList(), runOpen = false, settled = true)
+            }
+        }
+
+        private fun observe(
+            stage: SetupStage,
+            attempt: SetupStageRecord,
+            restoring: Boolean,
+        ): Pair<CompletableDeferred<Unit>, CompletableDeferred<Unit>> {
+            val admitted = CompletableDeferred<Unit>()
+            val settled = CompletableDeferred<Unit>()
+            val requestId = checkNotNull(attempt.requestId)
+            val recoveredId = attempt.workId ?: requestId
+            var admittedWorkId = attempt.workId
+
+            fun onProgress(progress: SetupStageProgress) {
+                scope.launch {
+                    writes.withLock {
+                        accounts.ifCurrent(owner) {
+                            if (journal.stages[stage.id]?.requestId == requestId &&
+                                journal.stages[stage.id]?.pending == true
+                            ) {
+                                _state.update { state ->
+                                    state.copy(
+                                        stageProgress = state.stageProgress + (stage.id to progress),
+                                        progress = if (state.currentStageId == stage.id) progress else state.progress,
+                                    )
+                                }
+                            }
                         }
                     }
-                },
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            SetupOutcome.Failed(error.message ?: "Didn't finish")
-        }
-    }
+                }
+                if (progress.activity != SetupStageActivity.RUNNING) settled.complete(Unit)
+                if (stage.execution == SetupStageExecution.DETACHED) settled.complete(Unit)
+            }
 
-    private suspend fun runStage(stage: SetupStage, remaining: List<SetupStage>) {
-        // This is atomic with the persisted NeverRun outcome, so a new process knows this attempt
-        // is incomplete even if it ends before WorkManager reports its id.
-        store.markStageStarted(stage.id, remaining.map { it.id }.toSet())
-        _state.update {
-            it.copy(
-                running = true,
-                finished = false,
-                currentStageId = stage.id,
-                progress = null,
-            )
-        }
-        val outcome = try {
-            stage.run.run(
-                onProgress = { progress ->
-                    _state.update { current ->
-                        // A late progress callback from a stage we have already moved past must not
-                        // overwrite the current one's bar.
-                        if (current.currentStageId == stage.id) {
-                            current.copy(progress = progress)
+            scope.launch {
+                try {
+                    val outcome = try {
+                        if (restoring) {
+                            stage.run.recoverRequest(recoveredId, ::onProgress) { workId ->
+                                admittedWorkId = workId
+                                edit { it.updateAttempt(stage.id, requestId) { record -> record.copy(workId = workId) } }
+                            } ?: SetupOutcome.RecoveryRequired
                         } else {
-                            current
+                            stage.run.runRequest(requestId, owner.generation, ::onProgress) { workId ->
+                                admittedWorkId = workId
+                                edit { it.updateAttempt(stage.id, requestId) { record -> record.copy(workId = workId) } }
+                                admitted.complete(Unit)
+                                if (stage.execution == SetupStageExecution.DETACHED) settled.complete(Unit)
+                            }
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        SetupOutcome.Failed(error.message ?: "Didn't finish")
+                    }
+                    edit { saved ->
+                        saved.updateAttempt(stage.id, requestId) {
+                            it.copy(workId = admittedWorkId, encodedOutcome = encodeSetupOutcome(outcome))
                         }
                     }
-                },
-                onWorkStarted = { workId ->
-                    store.markStageWorkStarted(stage.id, workId)
-                },
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            // A runner that throws is this stage's failure and nothing else's — the loop below
-            // still reaches every remaining stage.
-            SetupOutcome.Failed(error.message ?: "Didn't finish")
+                } finally {
+                    admitted.complete(Unit)
+                    settled.complete(Unit)
+                }
+            }
+            return admitted to settled
         }
-        recordOutcome(stage, outcome, remaining)
-    }
 
-    private suspend fun recordOutcome(
-        stage: SetupStage,
-        outcome: SetupOutcome,
-        remaining: List<SetupStage>,
-    ) {
-        store.writeOutcome(stage.id, outcome)
-        _state.update { current ->
-            val outcomes = current.outcomes + (stage.id to outcome)
-            current.copy(
-                outcomes = outcomes,
-                progress = null,
-                inScreenSettled = inScreenStagesSettled(remaining, outcomes),
-            )
+        private fun publish() {
+            val ids = source.stages.map { it.id }
+            val pending = ids.filterTo(mutableSetOf()) { journal.stages[it]?.pending == true }
+            _state.update { state ->
+                state.copy(
+                    loaded = true,
+                    running = journal.runOpen,
+                    outcomes = ids.associateWith { journal.stages[it]?.outcome ?: SetupOutcome.NeverRun },
+                    selected = journal.selected.intersect(ids.toSet()),
+                    pending = pending,
+                    stageProgress = state.stageProgress.filterKeys { it in pending },
+                    currentStageId = foregroundStage,
+                    progress = state.stageProgress[foregroundStage]?.takeIf { foregroundStage in pending },
+                    finished = journal.settled,
+                    inScreenSettled = journal.settled,
+                )
+            }
         }
     }
 
-    private suspend fun completeRun() {
-        // A completed setup owes only the optional history decision, not another checklist. Keep
-        // that decision durable even if the process ends before the user taps Continue. This is
-        // a no-op for a Settings run or when the first-run flow has already been dismissed.
-        store.advanceToHistory()
-        store.clearActiveStage()
-        store.markCompleted()
-        _state.update {
-            it.copy(
-                running = false,
-                currentStageId = null,
-                progress = null,
-                inScreenSettled = true,
-                finished = true,
-            )
-        }
+    private companion object {
+        const val FOREGROUND_BUDGET_MILLIS = 120_000L
     }
+}
 
-    private fun inScreenStagesSettled(
-        stages: List<SetupStage>,
-        outcomes: Map<String, SetupOutcome>,
-    ): Boolean = stages.none {
-        it.execution == SetupStageExecution.IN_SCREEN &&
-            outcomes[it.id] is SetupOutcome.NeverRun
-    }
+private fun SetupJournal.updateAttempt(
+    stageId: String,
+    requestId: String,
+    transform: (SetupStageRecord) -> SetupStageRecord,
+): SetupJournal {
+    val current = stages[stageId]?.takeIf { it.pending && it.requestId == requestId } ?: return this
+    return copy(stages = stages + (stageId to transform(current)))
 }

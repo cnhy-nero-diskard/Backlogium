@@ -8,11 +8,12 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
-import com.example.backlogium.data.setup.ActiveSetupStage
+import com.example.backlogium.data.setup.SetupJournal
+import com.example.backlogium.work.setup.FakeSetupAccounts
+import com.example.backlogium.work.setup.fixtureSetupOwner
 import com.example.backlogium.ui.screenshot.ScreenshotTestActivity
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import com.example.backlogium.work.setup.FakeSetupStateStore
-import com.example.backlogium.work.setup.FakeStageRunner
 import com.example.backlogium.work.setup.FakeStageSource
 import com.example.backlogium.work.setup.FirstRunPhase
 import com.example.backlogium.work.setup.SetupCoordinator
@@ -45,17 +46,12 @@ class SetupRecoveryControlsTest {
         StandardTestDispatcher(),
     ) {
         val loadGate = CompletableDeferred<Unit>()
-        val runner = FakeStageRunner().also { it.autoComplete = false }
-        val active = ActiveSetupStage("sync", null, setOf("sync"))
-        val store = FakeSetupStateStore(
-            initialOutcomes = mutableMapOf("sync" to SetupOutcome.NeverRun),
-            activeStage = active,
-            storedOutcomesGate = loadGate,
-        )
+        val store = FakeSetupStateStore(SetupJournal(fixtureSetupOwner), loadGate = loadGate)
         val subject = SetupCoordinator(
-            FakeStageSource(listOf(fakeStage("sync", runner))),
+            FakeStageSource(listOf(fakeStage("sync"))),
             store,
-            this,
+            FakeSetupAccounts(),
+            backgroundScope,
         )
         val testScope = this
 
@@ -86,22 +82,13 @@ class SetupRecoveryControlsTest {
             .performTouchInput { click() }
         advanceUntilIdle()
 
-        assertEquals(mapOf("sync" to SetupOutcome.NeverRun), store.outcomes)
-        assertEquals(active, store.active)
+        assertEquals(emptyMap<String, SetupOutcome>(), store.outcomes)
         assertEquals(FirstRunPhase.SETUP, subject.firstRunPhase.first())
 
-        // Let the persisted marker recover normally, then finish the held stage so the test scope
-        // has no suspended work left behind.
         loadGate.complete(Unit)
         runCurrent()
-        assertEquals(true, subject.state.value.running)
-        assertEquals(SetupOutcome.NeverRun, store.outcomes["sync"])
+        assertEquals(true, subject.state.value.loaded)
         assertEquals(FirstRunPhase.SETUP, subject.firstRunPhase.first())
-
-        runner.gate.complete(Unit)
-        advanceUntilIdle()
-        assertEquals(SetupOutcome.Succeeded, store.outcomes["sync"])
-        assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
     }
 
     @Test

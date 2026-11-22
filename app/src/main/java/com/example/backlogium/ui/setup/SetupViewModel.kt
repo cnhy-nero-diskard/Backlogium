@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.work.setup.SetupCoordinator
+import com.example.backlogium.work.setup.SetupOutcome
 import com.example.backlogium.work.setup.SetupStageSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,12 +50,13 @@ class SetupViewModel @Inject constructor(
     ) { run, pending, configured, isEditing ->
         SetupUiState(
             loading = !run.loaded,
-            stages = setupStagesUi(source.stages, pending, run, isEditing),
+            stages = setupStagesUi(source.stages, pending, run, isEditing || !isFirstRunFlow),
             running = run.running,
             finished = run.finished,
             inScreenSettled = run.inScreenSettled,
             credentialsConfigured = configured,
-            editing = isEditing,
+            editing = isEditing || !isFirstRunFlow,
+            allowEmptySelection = isFirstRunFlow,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -84,8 +86,9 @@ class SetupViewModel @Inject constructor(
     }
 
     fun toggle(stageId: String, selected: Boolean) {
-        if (coordinator.state.value.running) return
-        if (coordinator.state.value.finished && !editing.value) editSelection()
+        val run = coordinator.state.value
+        if (run.running || stageId in run.pending) return
+        if (isFirstRunFlow && run.finished && !editing.value) editSelection()
         // An unavailable stage is not selectable; a toggle aimed at one is dropped rather than
         // producing a selection that the coordinator would then have to filter out again.
         if (source.stages.none { it.id == stageId && it.isAvailable }) return
@@ -108,14 +111,18 @@ class SetupViewModel @Inject constructor(
         val run = coordinator.state.value
         if (!run.loaded || run.running) return
         selection.value = source.stages.filter {
-            it.isAvailable && run.outcomes[it.id] is com.example.backlogium.work.setup.SetupOutcome.Failed
+            it.isAvailable && when (run.outcomes[it.id]) {
+                is SetupOutcome.Failed, SetupOutcome.Cancelled, SetupOutcome.RecoveryRequired -> true
+                else -> false
+            }
         }.map { it.id }.toSet()
         editing.value = true
     }
 
     /** Re-run one stage, replacing that stage's recorded outcome and no other's. */
     fun retry(stageId: String) {
-        if (coordinator.state.value.running) return
+        val run = coordinator.state.value
+        if (run.running || stageId in run.pending) return
         editing.value = false
         coordinator.start(selectedIds = setOf(stageId), recordUnselectedAsSkipped = false)
     }

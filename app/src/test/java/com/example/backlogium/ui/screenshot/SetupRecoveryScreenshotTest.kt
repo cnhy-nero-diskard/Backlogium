@@ -20,6 +20,7 @@ import com.example.backlogium.ui.onboarding.HistoryImportContent
 import com.example.backlogium.ui.onboarding.HistoryImportUiState
 import com.example.backlogium.ui.setup.SetupActions
 import com.example.backlogium.ui.setup.SetupChecklist
+import com.example.backlogium.ui.setup.SetupSummary
 import com.example.backlogium.ui.setup.SetupUiState
 import com.example.backlogium.ui.setup.setupStagesUi
 import com.example.backlogium.ui.theme.BacklogiumTheme
@@ -46,6 +47,8 @@ abstract class SetupRecoveryScreenshotBase(private val viewport: String) {
     @Test fun failedDark() = capture("failed", true)
     @Test fun recoveryLight() = capture("recovery", false)
     @Test fun recoveryDark() = capture("recovery", true)
+    @Test fun pendingSiblingsLight() = capture("pending-siblings", false)
+    @Test fun pendingSiblingsDark() = capture("pending-siblings", true)
     @Test fun historyReadyLight() = capture("history-ready", false)
     @Test fun historyReadyDark() = capture("history-ready", true)
     @Test fun historyNotReadyLight() = capture("history-not-ready", false)
@@ -64,6 +67,29 @@ abstract class SetupRecoveryScreenshotBase(private val viewport: String) {
                             readiness = if (scene == "history-not-ready") HistoryImportReadiness.NEEDS_SYNC else HistoryImportReadiness.READY,
                             error = if (scene == "history-error") "History import didn't finish. Try again." else null,
                         ), onImport = {}, onSkip = {})
+                    } else if (scene == "pending-siblings") {
+                        Text("Run setup", style = MaterialTheme.typography.headlineSmall)
+                        val stages = listOf(
+                            fakeStage("sync").copy(title = "Sync your Steam library", detail = "Fetches your games."),
+                            fakeStage("art").copy(title = "Download game artwork", detail = "Stores covers on this device."),
+                            fakeStage("times").copy(title = "Fetch completion times", detail = "Downloads the shared dataset."),
+                        )
+                        val run = SetupRunState(
+                            loaded = true,
+                            finished = true,
+                            pending = setOf("sync", "times"),
+                            stageProgress = mapOf(
+                                "sync" to SetupStageProgress(0, 0, activity = SetupStageActivity.RETRY_BACKOFF),
+                                "times" to SetupStageProgress(0, 0, activity = SetupStageActivity.WAITING),
+                            ),
+                            outcomes = mapOf("art" to SetupOutcome.Cancelled),
+                        )
+                        val state = SetupUiState(
+                            loading = false, finished = true, editing = true, allowEmptySelection = false,
+                            stages = setupStagesUi(stages, emptySet(), run, editing = true),
+                        )
+                        SetupChecklist(state, onToggle = { _, _ -> }, onRetry = {}, showRetry = true)
+                        SetupSummary(state)
                     } else {
                         Text("Set up your library", style = MaterialTheme.typography.headlineSmall)
                         val running = scene == "waiting" || scene == "backoff"

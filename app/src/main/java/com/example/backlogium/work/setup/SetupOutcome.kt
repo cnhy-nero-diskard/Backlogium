@@ -11,6 +11,10 @@ sealed interface SetupOutcome {
 
     data object Succeeded : SetupOutcome
 
+    data object Cancelled : SetupOutcome
+
+    data object RecoveryRequired : SetupOutcome
+
     /** [reason] is user-facing: the summary must say *which* stage failed and why. */
     data class Failed(val reason: String) : SetupOutcome
 
@@ -27,6 +31,8 @@ private const val ENCODED_FAILED_PREFIX = "failed:"
 fun encodeSetupOutcome(outcome: SetupOutcome): String = when (outcome) {
     SetupOutcome.NeverRun -> ENCODED_NEVER_RUN
     SetupOutcome.Succeeded -> ENCODED_SUCCEEDED
+    SetupOutcome.Cancelled -> "cancelled"
+    SetupOutcome.RecoveryRequired -> "recovery_required"
     SetupOutcome.Skipped -> ENCODED_SKIPPED
     is SetupOutcome.Failed -> ENCODED_FAILED_PREFIX + outcome.reason
 }
@@ -38,6 +44,8 @@ fun encodeSetupOutcome(outcome: SetupOutcome): String = when (outcome) {
 fun decodeSetupOutcome(encoded: String?): SetupOutcome = when {
     encoded == null -> SetupOutcome.NeverRun
     encoded == ENCODED_SUCCEEDED -> SetupOutcome.Succeeded
+    encoded == "cancelled" -> SetupOutcome.Cancelled
+    encoded == "recovery_required" -> SetupOutcome.RecoveryRequired
     encoded == ENCODED_SKIPPED -> SetupOutcome.Skipped
     encoded.startsWith(ENCODED_FAILED_PREFIX) ->
         SetupOutcome.Failed(encoded.removePrefix(ENCODED_FAILED_PREFIX))
