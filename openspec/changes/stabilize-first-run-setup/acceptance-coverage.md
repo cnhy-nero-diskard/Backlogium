@@ -69,7 +69,7 @@ second emulator was disposable and isolated from the emulator observing live Ste
 
 | Scenario | Observed result |
 | --- | --- |
-| M1 live sync and setup | Manual and periodic Steam polls committed independently, with separate receipts. Setup request `b5ff272b` reused running manual work `d7a1e9f4` and reported success. Completion times independently finished as work `8c5b4b8a`. Live monitoring remained active and subsequent diagnostics reported `monitoring_already_running`. The original cascade did not reproduce during these polls. The observed session was still active at this checkpoint, so a natural post-play handoff and its live credit remain open under 4.1. |
+| M1 live sync and setup | Manual and periodic Steam polls committed independently, with separate receipts. Setup request `b5ff272b` reused running manual work `d7a1e9f4` and reported success. Completion times independently finished as work `8c5b4b8a`. Live monitoring remained active and subsequent diagnostics reported `monitoring_already_running`. The original cascade did not reproduce. The follow-up below records the natural post-play handoff and live credit. |
 | M2 and M4 connectivity and restart | With airplane mode enabled and Wi-Fi off, library work `874c8f03` and completion-times work `b6762022` both stayed waiting after the foreground attempt settled. After a force-stop and cold launch, Settings reconciled the same two IDs and showed both still waiting. Restoring connectivity let both finish under those IDs. The controlled two-minute running case was verified on the host. |
 | M3 notification denial | The live completion-times worker ran and completed with notification permission denied. The Settings checklist kept showing the worker after its foreground wait settled. |
 | M5 consent and restart | The opt-in device fixture recorded consent on the synced test app without starting import. A Room read confirmed a pending request and zero captured offsets. After force-stop, a different process resumed the request, captured offsets, and opened Home. A second restart preserved the same aggregate offsets and XP. This exercises OS death after consent and before capture. Fault injection covers rollback and the raw-commit-to-recompute gap separately. |
@@ -80,6 +80,21 @@ The two opt-in fixture cases are in `SetupDurabilityAcceptanceTest` and use the 
 argument `setupDeviceScenario` with `prepare-consent` or `replace-account` on a disposable
 emulator. Force-stop after `prepare-consent`, then launch the app normally to exercise startup
 recovery. Keep the account-replacement fixture offline.
+
+### Live Steam session exit
+
+The recorded presence transition moved from `in_game` to `not_playing`, and the real post-play
+worker succeeded on its first attempt under WorkManager ID `6b4ca7a5`. The periodic poll
+had already committed 30 minutes during the session. The post-play worker committed the
+remaining 8 minutes. Expressed relative to the starting total, the active credit ranges
+were `0 → 30` and `30 → 38`, with no overlap. The game baseline and recovery high-water
+matched Steam's reported cumulative total.
+
+A later periodic read recorded receipt `e1533434` at the same high-water and left the ledger at
+two contributions totaling 38 minutes. After an emulator restart, the worker finalized that
+same receipt without another Steam fetch. The live manual and periodic poll bodies ran at
+different times during the monitored session. The host worker test covers simultaneous reads
+of the same increase.
 
 ### Integrated verification results
 
