@@ -49,6 +49,7 @@ data class GamificationResult(
     val changedDays: List<QuestStatusUpdate>,
     /** The injected local date against which this result was evaluated. */
     val evaluationDate: LocalDate,
+    val includesAllEarnedCredit: Boolean = true,
 )
 
 /**
@@ -258,6 +259,7 @@ class GamificationUpdater @Inject constructor(
             longestStreak = maxOf(storedLongest, computedLongest),
             changedDays = changedDays,
             evaluationDate = today,
+            includesAllEarnedCredit = excludeEarned.isEmpty,
         )
     }
 
@@ -314,10 +316,14 @@ class GamificationUpdater @Inject constructor(
         // as a correction regardless of the caller's own source — the caller has no way to know
         // this device is affected, and the caller-declared source must not smuggle a wrapped
         // total's correction through as earned progress.
-        val effectiveSource = if (previousProfile?.pendingXpIntegrityCorrection == true) {
-            RecomputeSource.XP_INTEGRITY_CORRECTION
-        } else {
-            source
+        val historyRequestId = previousProfile?.historyImportRequestId?.takeIf {
+            previousProfile.historyImportCaptured ||
+                (previousProfile.playtimeBackfilled && previousProfile.pendingImportRecompute)
+        }
+        val effectiveSource = when {
+            historyRequestId != null -> RecomputeSource.BACKFILL
+            previousProfile?.pendingXpIntegrityCorrection == true -> RecomputeSource.XP_INTEGRITY_CORRECTION
+            else -> source
         }
         val previousTodayQuestMet = dailyProgressDao.getByDate(today.toString())?.questMet == true
         val previousState = previousProfile?.let {
@@ -337,7 +343,7 @@ class GamificationUpdater @Inject constructor(
                         previousStreak = previousState.currentStreak,
                         previousTodayQuestMet = previousState.todayQuestMet,
                         evaluationDate = today,
-                        operationId = operationId,
+                        operationId = historyRequestId ?: operationId,
                     ),
                 )
             }
@@ -345,6 +351,9 @@ class GamificationUpdater @Inject constructor(
 
         try {
             writeAndFinalize(result, effectiveSource, previousState, previousProfile, today, configVersion)
+            if (historyRequestId != null && result.includesAllEarnedCredit) {
+                playerProfileDao.finishHistoryImport(previousProfile.steamId, historyRequestId)
+            }
         } catch (t: Throwable) {
             // A pending transition suppresses event derivation by design, so returning from this
             // call with our own record still in place would freeze delivery for the rest of the

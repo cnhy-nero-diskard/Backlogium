@@ -102,6 +102,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_44_45,
         BacklogiumDatabase.MIGRATION_45_46,
         BacklogiumDatabase.MIGRATION_46_47,
+        BacklogiumDatabase.MIGRATION_47_48,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */

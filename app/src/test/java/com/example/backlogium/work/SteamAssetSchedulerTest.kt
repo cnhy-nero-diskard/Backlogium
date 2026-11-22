@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -57,35 +59,35 @@ class SteamAssetSchedulerTest {
     }
 
     @Test
-    fun `downloadSteamAssets is idempotent — a duplicate tap keeps the first request`() {
+    fun `downloadSteamAssets is idempotent — a duplicate tap keeps the first request`() = runTest {
         scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
-        val firstId = workInfosFor(SteamAssetDownloadWorker.UNIQUE_WORK_NAME).single().id
+        val first = workInfosFlow().first { it.isNotEmpty() }.single()
 
-        scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
+        val kept = scheduler.admitSteamAssets(UUID.randomUUID(), SteamAssetDownloadMode.DOWNLOAD_MISSING)
 
-        val infos = workInfosFor(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
-        assertEquals("KEEP must not stack a second request under the same unique name", 1, infos.size)
-        assertEquals(firstId, infos.single().id)
-        assertEquals(WorkInfo.State.ENQUEUED, infos.single().state)
+        assertEquals(first.id, kept)
+        assertEquals(1, workInfosFlow().first().size)
+        assertEquals(WorkInfo.State.ENQUEUED, first.state)
     }
 
     @Test
-    fun `downloadSteamAssets requires connectivity and storage not low`() {
+    fun `downloadSteamAssets requires connectivity and storage not low`() = runTest {
         scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
 
-        val constraints = workInfosFor(SteamAssetDownloadWorker.UNIQUE_WORK_NAME).single().constraints
+        val constraints = workInfosFlow().first { it.isNotEmpty() }.single().constraints
         assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
         assertTrue(constraints.requiresStorageNotLow())
     }
 
     @Test
-    fun `cancelSteamAssetDownload cancels the enqueued unique work`() {
+    fun `cancelSteamAssetDownload cancels the enqueued unique work`() = runTest {
         scheduler.downloadSteamAssets(SteamAssetDownloadMode.DOWNLOAD_MISSING)
-        assertEquals(WorkInfo.State.ENQUEUED, workInfosFor(SteamAssetDownloadWorker.UNIQUE_WORK_NAME).single().state)
+        assertEquals(WorkInfo.State.ENQUEUED, workInfosFlow().first { it.isNotEmpty() }.single().state)
 
         scheduler.cancelSteamAssetDownload()
+        val cancelled = workInfosFlow().first { it.singleOrNull()?.state == WorkInfo.State.CANCELLED }
 
-        assertEquals(WorkInfo.State.CANCELLED, workInfosFor(SteamAssetDownloadWorker.UNIQUE_WORK_NAME).single().state)
+        assertEquals(1, cancelled.size)
     }
 
     // --- steamAssetStatusFor: pure mapping from WorkInfo snapshots to SteamAssetDownloadStatus. ---
@@ -151,5 +153,5 @@ class SteamAssetSchedulerTest {
         progress: Data = Data.EMPTY,
     ): WorkInfo = WorkInfo(UUID.randomUUID(), state, emptySet(), Data.EMPTY, progress, 0)
 
-    private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
+    private fun workInfosFlow() = workManager.getWorkInfosForUniqueWorkFlow(SteamAssetDownloadWorker.UNIQUE_WORK_NAME)
 }

@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -51,8 +54,12 @@ class SetupCoordinator @Inject constructor(
 ) : FirstRunSetupGateway {
     private val _state = MutableStateFlow(SetupRunState())
     val state: StateFlow<SetupRunState> = _state.asStateFlow()
-    override val firstRunSetupActive = store.firstRunSetupActiveFlow
-    override val firstRunPhase = store.firstRunPhaseFlow
+    private val firstRun = combine(store.firstRunRecordFlow, accounts.owners) { saved, owner ->
+        owner?.takeIf { saved?.belongsTo(it) == true }?.let { it to saved!!.phase }
+    }
+    override val firstRunSetupActive = firstRun.map { it != null }
+    override val firstRunPhase = firstRun.map { it?.second }
+    override val firstRunOwner = firstRun.map { it?.first }
 
     @Volatile private var current: AccountSession? = null
     private var loadJob: Job? = null
@@ -93,15 +100,22 @@ class SetupCoordinator @Inject constructor(
     }
 
     override suspend fun advanceToHistory() {
-        store.advanceToHistory()
-        current?.continueWaiting()
+        val owner = firstRunOwner.first() ?: return
+        accounts.ifCurrent(owner) { store.advanceToHistory(owner) }
+        current?.takeIf { it.owner == owner }?.continueWaiting()
     }
 
-    override suspend fun claimFirstRunSetup() = store.setFirstRunSetupActive(true)
+    override suspend fun claimFirstRunSetup() {
+        val owner = accounts.owners.first() ?: return
+        accounts.ifCurrent(owner) { store.setFirstRunSetupActive(true, owner) }
+    }
 
-    override suspend fun releaseFirstRunSetup() {
-        store.setFirstRunSetupActive(false)
-        current?.continueWaiting()
+    override suspend fun releaseFirstRunSetup() = releaseFirstRunSetup(firstRunOwner.first())
+
+    override suspend fun releaseFirstRunSetup(owner: SetupOwner?) {
+        if (owner == null) return
+        accounts.ifCurrent(owner) { store.setFirstRunSetupActive(false, owner) }
+        current?.takeIf { it.owner == owner }?.continueWaiting()
     }
 
     private inner class AccountSession(val owner: SetupOwner, val scope: CoroutineScope) {

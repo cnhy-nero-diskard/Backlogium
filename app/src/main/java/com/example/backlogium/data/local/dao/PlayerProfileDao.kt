@@ -132,6 +132,24 @@ interface PlayerProfileDao {
     @Query("UPDATE player_profile SET playtimeBackfilled = :playtimeBackfilled WHERE id = 0")
     suspend fun updatePlaytimeBackfilled(playtimeBackfilled: Boolean)
 
+    @Query(
+        "UPDATE player_profile SET historyImportRequestId = :requestId, historyImportGeneration = :generation " +
+            "WHERE id = 0 AND steamId = :account AND historyImportRequestId IS NULL",
+    )
+    suspend fun recordHistoryConsent(account: String, requestId: String, generation: Long)
+
+    @Query(
+        "UPDATE player_profile SET playtimeBackfilled = 1, pendingImportRecompute = 1, " +
+            "historyImportCaptured = 1 WHERE id = 0 AND steamId = :account AND historyImportRequestId = :requestId",
+    )
+    suspend fun markHistoryImportCaptured(account: String, requestId: String)
+
+    @Query(
+        "UPDATE player_profile SET historyImportRequestId = NULL, historyImportGeneration = NULL, " +
+            "historyImportCaptured = 0 WHERE id = 0 AND steamId = :account AND historyImportRequestId = :requestId",
+    )
+    suspend fun finishHistoryImport(account: String, requestId: String)
+
     /** Failure reporting must not re-assert a stale copy of any other profile field. */
     @Query("UPDATE player_profile SET lastSyncError = :message WHERE id = 0")
     suspend fun updateLastSyncError(message: String)
@@ -142,7 +160,8 @@ interface PlayerProfileDao {
             "currentStreak = 0, longestStreak = 0, lastSyncAt = 0, lastSyncError = NULL, " +
             "playtimeBackfilled = 0, personaName = NULL, avatarUrl = NULL, " +
             "storeRegion = NULL, pendingImportRecompute = 0, " +
-            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0 WHERE id = 0",
+            "lastSuccessfulWishlistReadAt = NULL, pendingXpIntegrityCorrection = 0, " +
+            "historyImportRequestId = NULL, historyImportGeneration = NULL, historyImportCaptured = 0 WHERE id = 0",
     )
     suspend fun resetForAccountChange(steamId: String)
 }

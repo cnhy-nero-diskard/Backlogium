@@ -15,10 +15,10 @@ All implementation and acceptance tasks below target the follow-up on current `m
 
 ## 3. Durable history consent and recomputation
 
-- [ ] 3.1 Bind consent and first-run exit to the active account and durable request. Verify process recreation before launch, account replacement, Continue while pending, and preservation of existing first-run and later credential-edit behavior.
-- [ ] 3.2 Apply confirmed readiness and canonical credited-minute capture at the shared import boundary. Verify both entry points, legacy completed imports, the 120-minute unknown-time regression, concurrent sync and import, and preservation of converted offsets and the cloud reset guard.
-- [ ] 3.3 Carry request, account, and BACKFILL provenance through derived-state recovery. Verify interruption after raw commit, retries, sync and rule changes, and mixed backup/import recovery with one offset capture and no earned-progress event.
-- [ ] 3.4 Render baseline-required, pending, and completed states in onboarding and Settings. Verify the recovery route, availability of Continue/do later, and absence of an additional crediting action while import is pending.
+- [x] 3.1 Bind consent and first-run exit to the active account and durable request. Verify process recreation before launch, account replacement, Continue while pending, and preservation of existing first-run and later credential-edit behavior.
+- [x] 3.2 Apply confirmed readiness and canonical credited-minute capture at the shared import boundary. Verify both entry points, legacy completed imports, the 120-minute unknown-time regression, concurrent sync and import, and preservation of converted offsets and the cloud reset guard.
+- [x] 3.3 Carry request, account, and BACKFILL provenance through derived-state recovery. Verify interruption after raw commit, retries, sync and rule changes, and mixed backup/import recovery with one offset capture and no earned-progress event.
+- [x] 3.4 Render baseline-required, pending, and completed states in onboarding and Settings. Verify the recovery route, availability of Continue/do later, and absence of an additional crediting action while import is pending.
 
 ## 4. Integrated acceptance
 

@@ -124,7 +124,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 47,
+    version = 48,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1361,6 +1361,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_library_poll_commits_workId_finalized` " +
                         "ON `library_poll_commits` (`workId`, `finalized`)",
                 )
+            }
+        }
+
+        val MIGRATION_47_48 = object : Migration(47, 48) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportRequestId TEXT")
+                db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportGeneration INTEGER")
+                db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportCaptured INTEGER NOT NULL DEFAULT 0")
             }
         }
 

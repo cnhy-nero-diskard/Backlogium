@@ -474,6 +474,18 @@ internal class FakePlayerProfileDao(initial: PlayerProfile? = null) : PlayerProf
         state.value = (state.value ?: PlayerProfile()).copy(lastSyncError = message)
     }
 
+    override suspend fun recordHistoryConsent(account: String, requestId: String, generation: Long) {
+        error("History consent is outside this fixture")
+    }
+
+    override suspend fun markHistoryImportCaptured(account: String, requestId: String) {
+        error("History capture is outside this fixture")
+    }
+
+    override suspend fun finishHistoryImport(account: String, requestId: String) {
+        error("History finalization is outside this fixture")
+    }
+
     override suspend fun markPendingImportRecompute() {
         state.value = (state.value ?: PlayerProfile()).copy(pendingImportRecompute = true)
     }

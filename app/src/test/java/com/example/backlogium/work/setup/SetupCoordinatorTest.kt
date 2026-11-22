@@ -176,6 +176,25 @@ class SetupCoordinatorTest {
     }
 
     @Test
+    fun staleHistoryCompletionCannotDismissTheReplacementAccountsDecision() = runTest {
+        val owners = FakeSetupAccounts()
+        val subject = coordinator(listOf(fakeStage("library")), accounts = owners)
+        subject.claimFirstRunSetup()
+        subject.advanceToHistory()
+        val oldOwner = subject.firstRunOwner.first()
+
+        owners.owners.value = SetupOwner("replacement", 1)
+        runCurrent()
+        assertNull(subject.firstRunPhase.first())
+        subject.claimFirstRunSetup()
+        subject.advanceToHistory()
+        subject.releaseFirstRunSetup(oldOwner)
+
+        assertEquals(FirstRunPhase.HISTORY, subject.firstRunPhase.first())
+        assertEquals("replacement", subject.firstRunOwner.first()?.steamId)
+    }
+
+    @Test
     fun unavailableAndUnselectedStagesNeverStartAndFailuresAreIsolated() = runTest {
         val throwing = FakeStageRunner(throws = IllegalStateException("fixture failure"))
         val blocked = FakeStageRunner()

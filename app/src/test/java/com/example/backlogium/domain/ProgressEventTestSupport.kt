@@ -95,6 +95,15 @@ internal class GatedPlayerProfileDao(
     override suspend fun updateLastSyncError(message: String) =
         delegate.updateLastSyncError(message)
 
+    override suspend fun recordHistoryConsent(account: String, requestId: String, generation: Long) =
+        delegate.recordHistoryConsent(account, requestId, generation)
+
+    override suspend fun markHistoryImportCaptured(account: String, requestId: String) =
+        delegate.markHistoryImportCaptured(account, requestId)
+
+    override suspend fun finishHistoryImport(account: String, requestId: String) =
+        delegate.finishHistoryImport(account, requestId)
+
     override suspend fun markPendingImportRecompute() = delegate.markPendingImportRecompute()
 
     override suspend fun raiseLongestStreak(longestStreak: Int) =

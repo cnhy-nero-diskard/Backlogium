@@ -1,5 +1,6 @@
 package com.example.backlogium.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -59,6 +60,11 @@ data class PlayerProfile(
      * firing a cascade of level-up events for progress earned long ago (design.md Decision 3).
      */
     val pendingXpIntegrityCorrection: Boolean = false,
+    /** Local, account-owned consent. Its identity remains present through progress-mark finalization. */
+    val historyImportRequestId: String? = null,
+    val historyImportGeneration: Long? = null,
+    @ColumnInfo(defaultValue = "0")
+    val historyImportCaptured: Boolean = false,
 ) {
     companion object {
         const val SINGLETON_ID = 0

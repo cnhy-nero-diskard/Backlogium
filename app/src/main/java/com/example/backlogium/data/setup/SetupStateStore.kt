@@ -43,11 +43,17 @@ data class SetupJournal(
     val settled: Boolean = false,
 )
 
+data class FirstRunSetupRecord(val phase: FirstRunPhase, val owner: SetupOwner?) {
+    fun belongsTo(activeOwner: SetupOwner): Boolean = owner == activeOwner ||
+        (owner == null && activeOwner.generation == 0L)
+}
+
 interface SetupStateStore {
-    val firstRunPhaseFlow: Flow<FirstRunPhase?>
-    val firstRunSetupActiveFlow: Flow<Boolean> get() = firstRunPhaseFlow.map { it != null }
-    suspend fun advanceToHistory()
-    suspend fun setFirstRunSetupActive(active: Boolean)
+    val firstRunRecordFlow: Flow<FirstRunSetupRecord?>
+    val firstRunPhaseFlow get() = firstRunRecordFlow.map { it?.phase }
+    val firstRunSetupActiveFlow get() = firstRunPhaseFlow.map { it != null }
+    suspend fun advanceToHistory(owner: SetupOwner? = null)
+    suspend fun setFirstRunSetupActive(active: Boolean, owner: SetupOwner? = null)
 
     suspend fun update(
         owner: SetupOwner,
@@ -62,22 +68,25 @@ private val Context.setupDataStore by preferencesDataStore(name = "setup")
 class DataStoreSetupStateStore @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : SetupStateStore {
-    override val firstRunPhaseFlow: Flow<FirstRunPhase?> = context.setupDataStore.data.map(::phaseOf)
+    override val firstRunRecordFlow: Flow<FirstRunSetupRecord?> = context.setupDataStore.data.map(::firstRunRecord)
 
-    override suspend fun setFirstRunSetupActive(active: Boolean) {
+    override suspend fun setFirstRunSetupActive(active: Boolean, owner: SetupOwner?) {
         context.setupDataStore.edit { prefs ->
             if (active) {
                 prefs[FIRST_RUN_PHASE] = FirstRunPhase.SETUP.name
+                owner?.let { prefs[FIRST_RUN_OWNER] = json.encodeToString(it) }
             } else {
+                if (owner != null && firstRunRecord(prefs)?.belongsTo(owner) != true) return@edit
                 prefs.remove(FIRST_RUN_PHASE)
+                prefs.remove(FIRST_RUN_OWNER)
             }
             prefs.remove(LEGACY_FIRST_RUN_ACTIVE)
         }
     }
 
-    override suspend fun advanceToHistory() {
+    override suspend fun advanceToHistory(owner: SetupOwner?) {
         context.setupDataStore.edit { prefs ->
-            if (phaseOf(prefs) == FirstRunPhase.SETUP) prefs[FIRST_RUN_PHASE] = FirstRunPhase.HISTORY.name
+            if (canAdvance(prefs, owner)) prefs[FIRST_RUN_PHASE] = FirstRunPhase.HISTORY.name
         }
     }
 
@@ -91,7 +100,11 @@ class DataStoreSetupStateStore @Inject constructor(
                 ?: migrateLegacy(prefs, owner)
             val snapshot = previous.takeIf { it.owner == owner } ?: SetupJournal(owner)
             prefs[JOURNAL] = json.encodeToString(transform(snapshot))
-            if (finishRun && phaseOf(prefs) == FirstRunPhase.SETUP) {
+            val firstRun = firstRunRecord(prefs)
+            if (firstRun?.owner == null && firstRun?.belongsTo(owner) == true) {
+                prefs[FIRST_RUN_OWNER] = json.encodeToString(owner)
+            }
+            if (finishRun && canAdvance(prefs, owner)) {
                 prefs[FIRST_RUN_PHASE] = FirstRunPhase.HISTORY.name
             }
         }
@@ -120,8 +133,16 @@ class DataStoreSetupStateStore @Inject constructor(
         return SetupJournal(owner, stages, selected, remaining, runOpen = true)
     }
 
-    private fun phaseOf(prefs: Preferences): FirstRunPhase? =
-        restoredFirstRunPhase(prefs[FIRST_RUN_PHASE], prefs[LEGACY_FIRST_RUN_ACTIVE] == true)
+    private fun firstRunRecord(prefs: Preferences): FirstRunSetupRecord? {
+        val phase = restoredFirstRunPhase(prefs[FIRST_RUN_PHASE], prefs[LEGACY_FIRST_RUN_ACTIVE] == true)
+            ?: return null
+        return FirstRunSetupRecord(phase, prefs[FIRST_RUN_OWNER]?.let { json.decodeFromString<SetupOwner>(it) })
+    }
+
+    private fun canAdvance(prefs: Preferences, owner: SetupOwner?): Boolean {
+        val record = firstRunRecord(prefs) ?: return false
+        return record.phase == FirstRunPhase.SETUP && (owner == null || record.belongsTo(owner))
+    }
 
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
@@ -130,6 +151,7 @@ class DataStoreSetupStateStore @Inject constructor(
         val LEGACY_ACTIVE_SELECTION = stringSetPreferencesKey("active_stage_selection")
         val LEGACY_ACTIVE_WORK = stringPreferencesKey("active_work_id")
         val LEGACY_FIRST_RUN_ACTIVE = booleanPreferencesKey("first_run_setup_active")
+        val FIRST_RUN_OWNER = stringPreferencesKey("first_run_owner")
         val FIRST_RUN_PHASE = stringPreferencesKey("first_run_phase")
     }
 }

@@ -1,13 +1,26 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.local.dao.DailyProgressDao
+import com.example.backlogium.data.local.dao.LibraryPollCommitDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.setup.SetupAccounts
+import com.example.backlogium.data.setup.SetupOwner
+import com.example.backlogium.di.ApplicationScope
+import com.example.backlogium.domain.HistoryImportRequest
+import com.example.backlogium.domain.PendingImportRecomputeUseCase
 import com.example.backlogium.domain.PlaytimeBackfillUseCase
 import com.example.backlogium.domain.PlaytimeBackfillResetResult
 import com.example.backlogium.work.SyncScheduler
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
@@ -46,11 +59,18 @@ class ProfileRepository @Inject constructor(
     private val dailyProgressDao: DailyProgressDao,
     private val syncScheduler: SyncScheduler,
     private val playtimeBackfill: PlaytimeBackfillUseCase,
-    credentials: CredentialsRepository,
+    private val accounts: SetupAccounts,
+    private val libraryCommits: LibraryPollCommitDao,
+    @ApplicationScope private val scope: CoroutineScope,
+    private val pendingImportRecompute: PendingImportRecomputeUseCase,
 ) : HistoryImportGateway {
-    override val historyImportReadiness: Flow<HistoryImportReadiness> = combine(
-        profileDao.observe(), credentials.credentialsStateFlow, ::historyImportReadinessFor,
-    )
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override val historyImportReadiness: Flow<HistoryImportReadiness> = accounts.owners.flatMapLatest { owner ->
+        if (owner == null) flowOf(HistoryImportReadiness.NEEDS_SYNC)
+        else combine(profileDao.observe(), libraryCommits.observeBaseline(owner.steamId)) { profile, confirmed ->
+            historyImportReadinessFor(profile, owner, confirmed)
+        }
+    }
     val profile: Flow<PlayerStats?> = profileDao.observe().map { it?.toDomain() }
     val dailyProgress: Flow<List<DayProgress>> = dailyProgressDao.observeAll()
         .map { rows -> rows.map(DailyProgress::toDomain) }
@@ -60,6 +80,7 @@ class ProfileRepository @Inject constructor(
      * briefly past completion so a fast sync stays perceptible.
      */
     val syncInProgress: Flow<Boolean> = syncScheduler.syncInProgress
+    override val historyLibrarySyncing: Flow<Boolean> get() = syncInProgress
 
     /** True while a reconciliation pass — deferred or forced — is enqueued or running. */
     val reconciliationInProgress: Flow<Boolean> = syncScheduler.reconciliationInProgress
@@ -82,7 +103,33 @@ class ProfileRepository @Inject constructor(
      * already imported. Recompute inside the use-case updates the observed profile, so Home
      * reflects the new XP/level automatically.
      */
-    override suspend fun importSteamHistory(): Boolean = playtimeBackfill()
+    override suspend fun importSteamHistory(): Boolean = importSteamHistory(null)
+
+    override suspend fun importSteamHistory(owner: SetupOwner?): Boolean {
+        val request = playtimeBackfill.request(owner) ?: return false
+        launchHistoryRecovery(request)
+        return true
+    }
+
+    override suspend fun resumeSteamHistory(owner: SetupOwner?) {
+        playtimeBackfill.resume(expectedOwner = owner)
+        val activeOwner = owner ?: accounts.owners.first() ?: return
+        if (accounts.owners.first() == activeOwner) pendingImportRecompute()
+    }
+
+    override fun syncHistoryLibrary() = syncNow()
+
+    private fun launchHistoryRecovery(request: HistoryImportRequest) {
+        scope.launch {
+            try {
+                playtimeBackfill.resume(request)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                timber.log.Timber.w(error, "History import remains pending")
+            }
+        }
+    }
 
     /**
      * Undo a prior history import: clears the frozen offsets and the flag, then recomputes so
@@ -91,11 +138,20 @@ class ProfileRepository @Inject constructor(
     suspend fun resetSteamHistoryImport(): PlaytimeBackfillResetResult = playtimeBackfill.reset()
 }
 
-internal fun historyImportReadinessFor(profile: PlayerProfile?, configured: CredentialsState): HistoryImportReadiness = when {
-    configured !is CredentialsState.Configured || profile?.steamId != configured.steamId ->
-        HistoryImportReadiness.NEEDS_SYNC
-    profile.playtimeBackfilled && !profile.pendingImportRecompute -> HistoryImportReadiness.IMPORTED
-    profile.lastSyncAt > 0L -> HistoryImportReadiness.READY
+internal fun historyImportReadinessFor(
+    profile: PlayerProfile?,
+    owner: SetupOwner?,
+    confirmedBaseline: Boolean,
+): HistoryImportReadiness = when {
+    owner == null || profile?.steamId != owner.steamId -> HistoryImportReadiness.NEEDS_SYNC
+    profile.historyImportRequestId != null && profile.historyImportGeneration == owner.generation ->
+        HistoryImportReadiness.PENDING
+    profile.playtimeBackfilled -> if (profile.pendingImportRecompute) {
+        HistoryImportReadiness.PENDING
+    } else {
+        HistoryImportReadiness.IMPORTED
+    }
+    confirmedBaseline -> HistoryImportReadiness.READY
     else -> HistoryImportReadiness.NEEDS_SYNC
 }
 
@@ -108,7 +164,7 @@ private fun PlayerProfile.toDomain() = PlayerStats(
     longestStreak = longestStreak,
     lastSyncAt = lastSyncAt,
     lastSyncError = lastSyncError,
-    playtimeBackfilled = playtimeBackfilled && !pendingImportRecompute,
+    playtimeBackfilled = playtimeBackfilled && !pendingImportRecompute && !historyImportCaptured,
     personaName = personaName,
     avatarUrl = avatarUrl,
 )

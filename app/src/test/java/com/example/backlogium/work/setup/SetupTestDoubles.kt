@@ -1,5 +1,6 @@
 package com.example.backlogium.work.setup
 
+import com.example.backlogium.data.setup.FirstRunSetupRecord
 import com.example.backlogium.data.setup.SetupAccounts
 import com.example.backlogium.data.setup.SetupJournal
 import com.example.backlogium.data.setup.SetupOwner
@@ -20,7 +21,7 @@ class FakeSetupStateStore(
     private val loadGate: CompletableDeferred<Unit>? = null,
 ) : SetupStateStore {
     val outcomes get() = journal.stages.mapValues { it.value.outcome }
-    override val firstRunPhaseFlow = MutableStateFlow<FirstRunPhase?>(null)
+    override val firstRunRecordFlow = MutableStateFlow<FirstRunSetupRecord?>(null)
 
     override suspend fun update(
         owner: SetupOwner,
@@ -29,16 +30,22 @@ class FakeSetupStateStore(
     ): SetupJournal {
         loadGate?.await()
         journal = transform(journal.takeIf { it.owner == owner } ?: SetupJournal(owner))
-        if (finishRun) advanceToHistory()
+        if (finishRun) advanceToHistory(owner)
         return journal
     }
 
-    override suspend fun advanceToHistory() {
-        if (firstRunPhaseFlow.value == FirstRunPhase.SETUP) firstRunPhaseFlow.value = FirstRunPhase.HISTORY
+    override suspend fun advanceToHistory(owner: SetupOwner?) {
+        val record = firstRunRecordFlow.value ?: return
+        if (record.phase == FirstRunPhase.SETUP && (owner == null || record.belongsTo(owner))) {
+            firstRunRecordFlow.value = record.copy(phase = FirstRunPhase.HISTORY)
+        }
     }
 
-    override suspend fun setFirstRunSetupActive(active: Boolean) {
-        firstRunPhaseFlow.value = if (active) FirstRunPhase.SETUP else null
+    override suspend fun setFirstRunSetupActive(active: Boolean, owner: SetupOwner?) {
+        if (active) firstRunRecordFlow.value = FirstRunSetupRecord(FirstRunPhase.SETUP, owner)
+        else if (owner == null || firstRunRecordFlow.value?.belongsTo(owner) == true) {
+            firstRunRecordFlow.value = null
+        }
     }
 }
 

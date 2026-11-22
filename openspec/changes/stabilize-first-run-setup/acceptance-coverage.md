@@ -47,6 +47,21 @@ results for that implementation belong here as tasks 4.1–4.3 are executed.
   checklist after its foreground wait had settled, then durably recorded success under the same
   request and work ID. The process was stopped after completion for this check.
 
+### Follow-up checkpoints 3.1–3.4
+
+- Host tests verified consent replay across recreation, stale consent and dismissal after an
+  account replacement, baseline-required and confirmed-empty imports, and a pending request
+  that permits Continue without a second crediting action.
+- Both dated and date-unknown recovery cases froze 40 minutes from 120 lifetime minus 60 session
+  and 20 already-credited minutes. Concurrent capture and poll writes preserved both the frozen
+  offset and all newly tracked credit. Converted offsets, legacy completion, and the cloud
+  reversal-before-reset guard remained intact.
+- Injected faults exercised rollback and replay after raw capture. Sync, rule, and backup-derived
+  writers preserved the request's BACKFILL provenance with one offset capture and no earned
+  progress event in the host fixture.
+- Roborazzi verified 40 setup and history captures, including the new pending history states in
+  onboarding and Settings on both themes and widths.
+
 ## October prototype scenario mapping and results
 
 The original 95-scenario mapping and task numbers below are historical.

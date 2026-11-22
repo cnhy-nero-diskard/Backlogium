@@ -4,6 +4,7 @@ import android.net.Uri
 import android.widget.Toast
 import com.example.backlogium.BuildConfig
 import com.example.backlogium.R
+import com.example.backlogium.data.repo.HistoryImportReadiness
 import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -194,6 +195,7 @@ internal fun SettingsGraphScreen(
                 onDismissConfirmation = viewModel::dismissConfirmation,
                 onImportHistory = viewModel::importSteamHistory,
                 onResetHistoryImport = viewModel::resetHistoryImport,
+                onResumeHistoryImport = viewModel::resumeHistoryImport,
                 onAutoSnapshotEnabledChanged = viewModel::onAutoSnapshotEnabledChanged,
                 onSnapshotRetentionCountChanged = viewModel::onSnapshotRetentionCountChanged,
                 onSnapshotIntervalHoursChanged = viewModel::onSnapshotIntervalHoursChanged,
@@ -284,6 +286,7 @@ data class SettingsActions(
     val onDismissConfirmation: () -> Unit,
     val onImportHistory: () -> Unit,
     val onResetHistoryImport: () -> Unit,
+    val onResumeHistoryImport: () -> Unit = {},
     val onAutoSnapshotEnabledChanged: (Boolean) -> Unit,
     val onSnapshotRetentionCountChanged: (Int) -> Unit,
     val onSnapshotIntervalHoursChanged: (Int) -> Unit,
@@ -471,11 +474,14 @@ internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: Setting
     )
     SectionHeader(stringResource(R.string.settings_section_data))
     HistoryImportCard(
-        imported = state.historyImported,
+        readiness = state.historyReadiness,
         importing = state.isImportingHistory,
+        syncing = state.isSyncing,
         cloudTransferApplied = state.cloudPresenceTransferApplied,
         onImport = actions.onImportHistory,
         onReset = actions.onResetHistoryImport,
+        onSync = actions.onSyncNow,
+        onResume = actions.onResumeHistoryImport,
     )
     SectionHeader(stringResource(R.string.settings_section_data_backup))
     DataBackupCard(state = state, actions = actions)
@@ -2203,13 +2209,17 @@ private fun MismatchImportDialog(
  * completed state and offers a reset that undoes the import so it can be run again.
  */
 @Composable
-private fun HistoryImportCard(
-    imported: Boolean,
+internal fun HistoryImportCard(
+    readiness: HistoryImportReadiness,
     importing: Boolean,
+    syncing: Boolean,
     cloudTransferApplied: Boolean,
     onImport: () -> Unit,
     onReset: () -> Unit,
+    onSync: () -> Unit,
+    onResume: () -> Unit,
 ) {
+    val imported = readiness == HistoryImportReadiness.IMPORTED
     var showConfirm by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
 
@@ -2256,6 +2266,22 @@ private fun HistoryImportCard(
                         Text(stringResource(R.string.settings_history_reset))
                     }
                 }
+            } else if (readiness == HistoryImportReadiness.NEEDS_SYNC) {
+                Text(
+                    stringResource(R.string.settings_history_needs_sync),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onSync, enabled = !syncing) {
+                    Text(stringResource(if (syncing) R.string.settings_history_syncing else R.string.settings_sync_now))
+                }
+            } else if (readiness == HistoryImportReadiness.PENDING) {
+                Text(
+                    stringResource(R.string.settings_history_pending),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onResume, enabled = !importing) {
+                    Text(stringResource(R.string.settings_history_resume))
+                }
             } else {
                 Text(
                     text = stringResource(R.string.settings_history_unimported_description),
@@ -2285,7 +2311,7 @@ private fun HistoryImportCard(
         }
     }
 
-    if (showConfirm) {
+    if (showConfirm && readiness == HistoryImportReadiness.READY) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
             title = { Text(stringResource(R.string.settings_history_import_title)) },
@@ -2310,7 +2336,7 @@ private fun HistoryImportCard(
         )
     }
 
-    if (showResetConfirm) {
+    if (showResetConfirm && imported) {
         AlertDialog(
             onDismissRequest = { showResetConfirm = false },
             title = { Text(stringResource(R.string.settings_history_reset_title)) },
