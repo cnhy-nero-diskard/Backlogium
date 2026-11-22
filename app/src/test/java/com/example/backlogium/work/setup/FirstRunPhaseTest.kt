@@ -1,11 +1,14 @@
 package com.example.backlogium.work.setup
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import com.example.backlogium.data.setup.DataStoreSetupStateStore
+import com.example.backlogium.data.setup.SetupJournal
+import com.example.backlogium.data.setup.SetupOwner
 import com.example.backlogium.data.setup.restoredFirstRunPhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +55,30 @@ class FirstRunPhaseTest {
         assertTrue(upgraded.stages.getValue("sync").pending)
         assertEquals(SetupOutcome.Succeeded, upgraded.stages.getValue("art").outcome)
         assertEquals(listOf("times"), upgraded.remaining)
+    }
+
+    @Test fun upgradeIgnoresUnownedLegacyStateForLaterAccountGeneration() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val legacyScope = CoroutineScope(Dispatchers.IO + Job())
+        val legacy = PreferenceDataStoreFactory.create(scope = legacyScope) {
+            context.preferencesDataStoreFile("setup")
+        }
+        try {
+            legacy.edit { prefs ->
+                prefs[stringPreferencesKey("stage_outcome_art")] = "ok"
+                prefs[booleanPreferencesKey("stage_opt_in_sync")] = true
+                prefs[stringPreferencesKey("active_stage_id")] = "sync"
+                prefs[stringPreferencesKey("active_work_id")] = "account-a-work-id"
+                prefs[stringSetPreferencesKey("active_stage_selection")] = setOf("sync", "times")
+            }
+        } finally {
+            legacyScope.coroutineContext[Job]!!.cancelAndJoin()
+        }
+
+        val ownerB = SetupOwner("account-b", generation = 1)
+        val upgraded = DataStoreSetupStateStore(context).update(ownerB) { it }
+
+        assertEquals(SetupJournal(ownerB), upgraded)
     }
 
     @Test fun phaseAndSkipSurviveARecreatedStoreAndBackgroundCompletionCannotReopenIt() = runTest {

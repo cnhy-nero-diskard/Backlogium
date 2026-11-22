@@ -112,6 +112,8 @@ class DataStoreSetupStateStore @Inject constructor(
     }
 
     private fun migrateLegacy(prefs: Preferences, owner: SetupOwner): SetupJournal {
+        if (owner.generation != 0L) return SetupJournal(owner)
+
         val stages = prefs.asMap().mapNotNull { (key, value) ->
             val id = key.name.removePrefix("stage_outcome_")
             if (id == key.name || value !is String) null else id to SetupStageRecord(encodedOutcome = value)
