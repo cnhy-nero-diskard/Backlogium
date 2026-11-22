@@ -72,7 +72,7 @@ tracked playtime afterward. Resetting SHALL NOT discard tracked playtime.
 - **THEN** playtime tracked after install is unchanged and still counts toward XP
 
 ### Requirement: Import entry points share readiness and effects
-Onboarding and Settings SHALL invoke the same history-import operation and expose its recorded completion state. Import SHALL require a successful library snapshot for the configured account; an unreadable library or an unfinished first sync SHALL NOT be accepted as a completed empty import. Both entry points SHALL explain that Steam lifetime totals do not reconstruct dated play sessions.
+Onboarding and Settings SHALL use one import operation and expose its recorded state. New imports SHALL require durable confirmation of a successful owned-library snapshot for the active account. Both entry points SHALL explain that lifetime totals do not reconstruct dated play sessions.
 
 #### Scenario: Import from onboarding
 - **WHEN** a user explicitly imports history from onboarding after a successful library sync
@@ -92,8 +92,12 @@ Onboarding and Settings SHALL invoke the same history-import operation and expos
 - **WHEN** an entry point observes that history was imported through another entry point
 - **THEN** it reflects completion instead of offering another progress-crediting import
 
+#### Scenario: Completed import predates confirmation records
+- **WHEN** the active account already has a completed import when the app upgrades
+- **THEN** the import stays complete without requiring a new confirming poll or changing stored offsets
+
 ### Requirement: Interrupted and concurrent import preserves one-time credit
-An interrupted import SHALL be recoverable without losing captured historical credit or adding it twice. Repeated or concurrent requests from any entry point SHALL have the same final effect as one successful import. A concurrent sync or monitoring update SHALL retain new tracked credit and imported offsets without counting the same minutes as both imported and tracked play.
+The system SHALL atomically capture canonical credited minutes, frozen historical offsets, completion, and pending recomputation for the admitted account. Recovery SHALL reuse the captured offsets. Repeated requests and overlapping writes SHALL preserve the effect of one import and all newly tracked credit.
 
 #### Scenario: Two import requests overlap
 - **WHEN** onboarding and Settings request import before either request finishes
@@ -111,3 +115,34 @@ An interrupted import SHALL be recoverable without losing captured historical cr
 - **WHEN** sync or monitoring commits tracked play while import captures pre-existing playtime
 - **THEN** the resulting tracked credit and imported contribution preserve the same authorized quantity without duplicating any minutes
 - **AND** later syncs preserve the captured historical offsets
+
+#### Scenario: Import after unknown-time play was credited
+- **WHEN** an owned game has 120 lifetime minutes, including 60 credited session minutes and 20 already-credited unknown-time minutes
+- **THEN** import freezes 40 historical minutes, so credited activity plus historical offset totals 120 minutes
+- **AND** the same result holds when the unknown-time credit is still pending date placement
+
+#### Scenario: A tracked update races the import
+- **WHEN** a sync commits new tracked credit during an import
+- **THEN** import captures a coherent committed snapshot and no minute is counted in both the historical offset and the credited activity
+
+### Requirement: History import requests remain attributable to the consenting account
+The system SHALL durably associate each explicit import request with its consenting account before starting it. Recovery SHALL reconcile that request. A replaced account or stale request SHALL NOT authorize or complete an import for the active account.
+
+#### Scenario: Account changes after confirmation
+- **WHEN** the account changes between consent and raw commit
+- **THEN** the old request is superseded and cannot write offsets for the active account
+
+#### Scenario: Process ends before work starts
+- **WHEN** the process ends after durable consent but before import starts
+- **THEN** startup can resume that same request for the active account without creating another request
+
+### Requirement: History import recomputation retains administrative provenance
+Pending history-import recomputation SHALL retain its account, request, and administrative source until derived state is finalized. Any path that finishes it SHALL preserve those semantics. The imported XP SHALL NOT be announced as newly earned progress.
+
+#### Scenario: Another writer recomputes during import recovery
+- **WHEN** sync or a rule change runs while history-import recomputation is pending
+- **THEN** recovery uses the committed offsets and administrative provenance, and only clears the marker after valid derived state is finalized
+
+#### Scenario: Backup and history recomputation overlap
+- **WHEN** backup restoration and history import both leave pending derived work
+- **THEN** recovery recomputes the committed data with administrative semantics, preserves the history request's provenance, and never captures the historical offsets again

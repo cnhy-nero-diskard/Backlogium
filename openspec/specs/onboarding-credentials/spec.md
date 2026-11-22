@@ -290,7 +290,7 @@ Before first arrival at Home, onboarding SHALL offer an explicit Steam history i
 - **THEN** onboarding shows an attributable error and offers Retry and Skip rather than trapping the user
 
 ### Requirement: The history decision survives first-run interruption
-An unresolved first-run history-import decision SHALL survive process death independently of background setup completion. A resolved decision SHALL NOT be presented again unprompted. Existing configured installs and later credential editing SHALL NOT acquire a new first-run takeover solely because this choice was added.
+An unresolved first-run history decision SHALL survive process death independently of setup work. The active account's choice and any explicitly admitted import SHALL be durably attributable to that account. A resolved decision SHALL stay dismissed. Previously configured installs without an outstanding first-run flow SHALL open normally.
 
 #### Scenario: Setup finishes before the history decision
 - **WHEN** setup completes and the process ends before the first-run user resolves the history decision
@@ -311,3 +311,15 @@ An unresolved first-run history-import decision SHALL survive process death inde
 #### Scenario: Credentials edited later
 - **WHEN** a configured user edits credentials outside the first-run flow
 - **THEN** the optional history-import decision is not presented again unprompted
+
+#### Scenario: Process stops after import consent
+- **WHEN** the process ends after an explicit import request is recorded but before it finishes
+- **THEN** onboarding restores that request and reconciles its outcome without asking for new consent or adding credit again
+
+#### Scenario: Continue while import is pending
+- **WHEN** the user chooses Continue/do later after explicitly requesting import
+- **THEN** Home becomes available, the admitted request remains recoverable in Settings, and restart leaves onboarding dismissed
+
+#### Scenario: Account changes during onboarding import
+- **WHEN** a prior account's request reports a result after account replacement
+- **THEN** it cannot resolve the replacement account's first-run decision
