@@ -7,24 +7,49 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.workDataOf
+import com.example.backlogium.data.local.dao.LibraryPollCommitDao
 import com.example.backlogium.data.local.dao.SteamAssetDao
 import com.example.backlogium.data.local.dao.SteamAssetStoredSummary
 import com.example.backlogium.data.local.dao.SteamGameImageSource
+import com.example.backlogium.data.local.entity.LibraryPollCommit
 import com.example.backlogium.data.local.entity.SteamAssetDownloadState
 import com.example.backlogium.data.local.entity.SteamAssetManifest
+import com.example.backlogium.data.repo.CredentialsProvider
+import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.steamassets.SteamAssetRepository
 import com.example.backlogium.data.steamassets.SteamAssetStore
+import com.example.backlogium.work.setup.FakeSetupAccounts
+import com.example.backlogium.work.setup.FakeSetupStateStore
+import com.example.backlogium.work.setup.FakeStageRunner
+import com.example.backlogium.work.setup.SetupCoordinator
+import com.example.backlogium.work.setup.SetupOutcome
+import com.example.backlogium.work.setup.SetupStageActivity
+import com.example.backlogium.work.setup.SetupStageExecution
+import com.example.backlogium.work.setup.SetupStageProgress
+import com.example.backlogium.work.setup.SetupStageRegistry
+import com.example.backlogium.work.setup.SetupStageRunner
+import com.example.backlogium.work.setup.SetupStageSource
+import com.example.backlogium.work.setup.fakeStage
+import com.example.backlogium.work.setup.fixtureSetupOwner
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Exercises [SteamAssetDownloadWorker.doWork] directly against a real [SteamAssetRepository]
@@ -35,11 +60,9 @@ import org.robolectric.annotation.Config
  * WorkManager scheduling at all, so `setProgress`/`setForeground` inside `doWork()` are exercised
  * for real rather than stubbed out.
  *
- * Only the empty-inventory path is covered here: driving a non-empty inventory through `doWork()`
- * would additionally require faking network responses through [SteamAssetRepository]'s internal
- * `OkHttpClient` and an image decode that survives [SteamAssetStore.write]'s bitmap-bounds check,
- * which is out of scope for this pass. Progress accounting itself (bounds, KEY_* round-trip) is
- * covered below as a pure `Data` test that needs neither WorkManager nor the repository.
+ * The retry gate is covered with both a confirmed empty baseline and a pending sync followed by a
+ * newly committed game inventory. A scripted HTTP 404 keeps that path independent of the network
+ * and image decoder while proving every newly inventoried URL is processed.
  */
 @RunWith(RobolectricTestRunner::class)
 // Pinned like ActivityVisibilityTrackerTest: the default/highest Robolectric shadow SDK is
@@ -47,14 +70,19 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class SteamAssetDownloadWorkerTest {
 
-    private fun buildWorker(repository: SteamAssetRepository, inputData: Data = Data.EMPTY): SteamAssetDownloadWorker {
+    private fun buildWorker(
+        repository: SteamAssetRepository,
+        inputData: Data = Data.EMPTY,
+        libraryPollCommits: LibraryPollCommitDao = confirmedEmptyBaseline(),
+        credentials: CredentialsProvider = fixtureCredentials,
+    ): SteamAssetDownloadWorker {
         val context = RuntimeEnvironment.getApplication()
         val factory = object : WorkerFactory() {
             override fun createWorker(
                 appContext: Context,
                 workerClassName: String,
                 workerParameters: WorkerParameters,
-            ) = SteamAssetDownloadWorker(appContext, workerParameters, repository)
+            ) = SteamAssetDownloadWorker(appContext, workerParameters, repository, libraryPollCommits, credentials)
         }
         return TestListenableWorkerBuilder<SteamAssetDownloadWorker>(context, inputData = inputData)
             .setWorkerFactory(factory)
@@ -62,14 +90,119 @@ class SteamAssetDownloadWorkerTest {
     }
 
     @Test
-    fun `doWork with empty inventory succeeds immediately with zero processed and total`() = runTest {
+    fun `doWork accepts a confirmed empty library baseline`() = runTest {
         val context = RuntimeEnvironment.getApplication()
-        val repository = SteamAssetRepository(FakeSteamAssetDao(), SteamAssetStore(context), OkHttpClient())
-        val worker = buildWorker(repository)
+        val assetDao = FakeSteamAssetDao()
+        val repository = SteamAssetRepository(assetDao, SteamAssetStore(context), OkHttpClient())
+        val commits = FakeLibraryPollCommitDao().apply {
+            insert(LibraryPollCommit("empty-baseline", "poll", fixtureSetupOwner.steamId, 1L, gameCount = 0))
+        }
+        val worker = buildWorker(repository, libraryPollCommits = commits)
 
         val result = worker.doWork()
 
-        assertTrue("an empty inventory must still complete successfully", result is ListenableWorker.Result.Success)
+        assertTrue("a confirmed empty baseline may complete with no assets", result is ListenableWorker.Result.Success)
+        assertTrue(assetDao.lastSavedRun != null)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `artwork stays pending while library sync retries then processes the committed games`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val assetDao = FakeSteamAssetDao()
+        val requests = AtomicInteger()
+        val repository = SteamAssetRepository(
+            assetDao,
+            SteamAssetStore(context),
+            OkHttpClient.Builder().addInterceptor { chain ->
+                requests.incrementAndGet()
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(404)
+                    .message("fixture unavailable")
+                    .body(ByteArray(0).toResponseBody())
+                    .build()
+            }.build(),
+        )
+        val commits = FakeLibraryPollCommitDao()
+        val firstArtworkAttempt = CompletableDeferred<ListenableWorker.Result>()
+        val retryArtwork = CompletableDeferred<Unit>()
+        val completedArtworkAttempt = CompletableDeferred<ListenableWorker.Result>()
+        fun worker() = buildWorker(repository, libraryPollCommits = commits)
+        val library = FakeStageRunner().emitting(
+            SetupStageProgress(0, 0, activity = SetupStageActivity.RETRY_BACKOFF),
+        ).also { it.autoComplete = false }
+        val artwork = object : SetupStageRunner {
+            override suspend fun run(onProgress: (SetupStageProgress) -> Unit): SetupOutcome =
+                error("runRequest owns this fixture's WorkManager retries")
+
+            override suspend fun runRequest(
+                requestId: String,
+                accountGeneration: Long,
+                onProgress: (SetupStageProgress) -> Unit,
+                onWorkStarted: suspend (String) -> Unit,
+            ): SetupOutcome {
+                onWorkStarted("artwork-$requestId")
+                firstArtworkAttempt.complete(worker().doWork())
+                onProgress(SetupStageProgress(0, 0, activity = SetupStageActivity.RETRY_BACKOFF))
+                retryArtwork.await()
+                val result = worker().doWork()
+                completedArtworkAttempt.complete(result)
+                return if (result is ListenableWorker.Result.Success) SetupOutcome.Succeeded
+                else SetupOutcome.Failed("Artwork retry did not complete")
+            }
+        }
+        val registeredStages = listOf(
+            fakeStage(SetupStageRegistry.STAGE_LIBRARY_SYNC, library),
+            fakeStage(SetupStageRegistry.STAGE_STEAM_ASSETS, artwork, execution = SetupStageExecution.DETACHED),
+            fakeStage(SetupStageRegistry.STAGE_COMPLETION_TIMES, execution = SetupStageExecution.DETACHED),
+        )
+        val coordinator = SetupCoordinator(
+            source = object : SetupStageSource {
+                override val stages = registeredStages
+            },
+            store = FakeSetupStateStore(),
+            accounts = FakeSetupAccounts(),
+            scope = backgroundScope,
+        ).also {
+            it.ensureLoaded()
+            runCurrent()
+        }
+
+        coordinator.start(setOf(
+            SetupStageRegistry.STAGE_LIBRARY_SYNC,
+            SetupStageRegistry.STAGE_STEAM_ASSETS,
+            SetupStageRegistry.STAGE_COMPLETION_TIMES,
+        ))
+        runCurrent()
+
+        assertTrue(firstArtworkAttempt.await() is ListenableWorker.Result.Retry)
+        assertTrue(coordinator.state.value.finished)
+        assertTrue(SetupStageRegistry.STAGE_LIBRARY_SYNC in coordinator.state.value.pending)
+        assertEquals(
+            SetupStageActivity.RETRY_BACKOFF,
+            coordinator.state.value.stageProgress[SetupStageRegistry.STAGE_LIBRARY_SYNC]?.activity,
+        )
+        assertTrue(SetupStageRegistry.STAGE_STEAM_ASSETS in coordinator.state.value.pending)
+        assertEquals(SetupOutcome.NeverRun, coordinator.state.value.outcomes[SetupStageRegistry.STAGE_STEAM_ASSETS])
+        assertEquals(SetupOutcome.Succeeded, coordinator.state.value.outcomes[SetupStageRegistry.STAGE_COMPLETION_TIMES])
+        assertEquals(0, requests.get())
+        assertNull(assetDao.lastSavedRun)
+
+        assetDao.setGames(listOf(SteamGameImageSource(440L, "https://example.test/icon-440.jpg")))
+        commits.insert(LibraryPollCommit("library-baseline", "poll", fixtureSetupOwner.steamId, 2L, gameCount = 1))
+        retryArtwork.complete(Unit)
+        runCurrent()
+
+        assertTrue(completedArtworkAttempt.await() is ListenableWorker.Result.Success)
+        assertEquals(6, assetDao.lastSavedRun?.unavailableCount)
+        assertEquals(6, requests.get())
+        assertEquals(SetupOutcome.Succeeded, coordinator.state.value.outcomes[SetupStageRegistry.STAGE_STEAM_ASSETS])
+
+        library.gate.complete(Unit)
+        runCurrent()
+        assertEquals(SetupOutcome.Succeeded, coordinator.state.value.outcomes[SetupStageRegistry.STAGE_LIBRARY_SYNC])
     }
 
     @Test
@@ -155,12 +288,16 @@ class SteamAssetDownloadWorkerTest {
 /** In-memory fake of the Room DAO — lets [SteamAssetRepository] run without a real database. */
 private class FakeSteamAssetDao(
     private val avatarUrl: String? = null,
-    private val games: List<SteamGameImageSource> = emptyList(),
+    private var games: List<SteamGameImageSource> = emptyList(),
     private val achievementIcons: List<String> = emptyList(),
 ) : SteamAssetDao {
     private val manifests = mutableMapOf<String, SteamAssetManifest>()
     var lastSavedRun: SteamAssetDownloadState? = null
         private set
+
+    fun setGames(games: List<SteamGameImageSource>) {
+        this.games = games
+    }
 
     override suspend fun get(url: String): SteamAssetManifest? = manifests[url]
     override fun observeAll(): Flow<List<SteamAssetManifest>> = flowOf(manifests.values.toList())
@@ -182,4 +319,36 @@ private class FakeSteamAssetDao(
     override suspend fun saveLastRun(state: SteamAssetDownloadState) {
         lastSavedRun = state
     }
+}
+
+private class FakeLibraryPollCommitDao(initialCommits: List<LibraryPollCommit> = emptyList()) : LibraryPollCommitDao {
+    private val commits = initialCommits.associateBy { it.operationId }.toMutableMap()
+
+    override suspend fun insert(commit: LibraryPollCommit) {
+        commits[commit.operationId] = commit
+    }
+
+    override suspend fun get(operationId: String, steamId: String): LibraryPollCommit? =
+        commits[operationId]?.takeIf { it.steamId == steamId }
+
+    override suspend fun unfinalized(workId: String, steamId: String): LibraryPollCommit? =
+        commits.values.firstOrNull { it.workId == workId && it.steamId == steamId && !it.finalized }
+
+    override suspend fun finalize(operationId: String) {
+        commits[operationId]?.let { commits[operationId] = it.copy(finalized = true) }
+    }
+
+    override suspend fun hasBaseline(steamId: String): Boolean = commits.values.any { it.steamId == steamId }
+
+    override fun observeBaseline(steamId: String): Flow<Boolean> = flowOf(commits.values.any { it.steamId == steamId })
+
+    override suspend fun clear() = commits.clear()
+}
+
+private fun confirmedEmptyBaseline() = FakeLibraryPollCommitDao(
+    listOf(LibraryPollCommit("confirmed-empty", "poll", fixtureSetupOwner.steamId, 1L, gameCount = 0)),
+)
+
+private val fixtureCredentials = object : CredentialsProvider {
+    override suspend fun currentCredentials() = CredentialsState.Configured("fixture-key", fixtureSetupOwner.steamId)
 }
