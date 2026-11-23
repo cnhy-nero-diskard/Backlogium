@@ -29,6 +29,7 @@ import org.robolectric.RuntimeEnvironment
 class AchievementUnlockDispatcherTest {
     private lateinit var db: BacklogiumDatabase
     private lateinit var dispatcher: AchievementUnlockDispatcher
+    private lateinit var targets: GameNotificationTargets
     private val settings = FakeSettingsRepository()
     private val posts = mutableListOf<String>()
     private var result = AchievementUnlockNotifier.Result.POSTED
@@ -48,8 +49,10 @@ class AchievementUnlockDispatcherTest {
         val credentials = object : CredentialsProvider {
             override suspend fun currentCredentials() = CredentialsState.Configured("fixture", "fixture")
         }
+        val marker = AccountChangeMarkerStore(context)
+        targets = GameNotificationTargets(credentials, marker, db)
         dispatcher = AchievementUnlockDispatcher(db.achievementWatchDao(), AchievementObservationStore(db, credentials,
-            AccountChangeMarkerStore(context), SteamSyncCoordinator()), settings,
+            marker, SteamSyncCoordinator()), settings,
             HiddenGamesRepository(db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time),
             CredentialsRepository(EncryptedCredentialStore(context), api),
             ProgressEventRepository(InMemoryProgressMarksStore(), db.playerProfileDao(), db.dailyProgressDao(), ProgressTransitionCoordinator(), db.achievementWatchDao()),
@@ -62,7 +65,7 @@ class AchievementUnlockDispatcherTest {
                     posts += group.eventId
                     return result
                 }
-            }, scope)
+            }, scope, targets)
         db.achievementWatchDao().insert(work)
         Unit
     }
@@ -105,9 +108,9 @@ class AchievementUnlockDispatcherTest {
         db.hiddenGameDao().upsertAll(listOf(HiddenGame(1, 1, false)))
         dispatcher.dispatch(work, true)
         assertTrue(posts.isEmpty())
-        assertFalse(dispatcher.canOpen("fixture", 1))
+        assertFalse(targets.canOpen("fixture", 1))
         db.hiddenGameDao().deleteAll()
-        assertFalse(dispatcher.canOpen("other", 1))
-        assertTrue(dispatcher.canOpen("fixture", 1))
+        assertFalse(targets.canOpen("other", 1))
+        assertTrue(targets.canOpen("fixture", 1))
     }
 }

@@ -3,7 +3,7 @@
 ## 1. Reproduction and routing
 
 - [x] 1.1 Record the current behavior of tapping a shared-admission notification on cold, warm and background launches. Verify the baseline notification payload and landing destination.
-- [ ] 1.2 Adapt the existing achievement intent path into a shared game route. Verify old achievement payloads and update intents, setup gating, malformed targets, and delivery after Activity recreation.
+- [x] 1.2 Adapt the existing achievement intent path into a shared game route. Verify old achievement payloads and update intents, setup gating, malformed targets, and delivery after Activity recreation.
 - [ ] 1.3 Emit an account/app-scoped destination from the shared-game notifier. Verify PendingIntent identity across multiple notices and rejection after hiding, removal or account switch.
 
 ### Baseline verification
@@ -17,6 +17,8 @@ On the Android 17 host-GPU emulator (`emulator-5554`), an isolated debug build o
 | Background, Library selected | Shared Notice Alpha | Library, same app process |
 
 Neither tap path opened game detail. Both fixture games were visible in Library.
+
+Legacy achievement, update-only, and malformed payloads passed the intent tests. On the same emulator, a legacy achievement tap waited through setup and Activity recreation, opened Alpha after setup exited, and returned to Home with one Back after another recreation.
 
 ## 2. Integration
 

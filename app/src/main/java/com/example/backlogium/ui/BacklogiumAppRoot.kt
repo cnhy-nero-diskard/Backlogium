@@ -59,14 +59,16 @@ import com.example.backlogium.ui.settings.SettingsRoutes
 import com.example.backlogium.ui.settings.SettingsViewModel
 import com.example.backlogium.ui.settings.hidden.HiddenGamesScreen
 import com.example.backlogium.BuildConfig
+import com.example.backlogium.GameNotificationTarget
+import com.example.backlogium.ui.navigation.GameNotificationViewModel
 import com.example.backlogium.ui.updates.AppUpdateSheet
 import com.example.backlogium.ui.updates.AppUpdateViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 
 /**
  * Route for the HLTB match-review surface — a sub-destination reached from the Library.
@@ -119,11 +121,10 @@ private fun smartCollectionRoute(collectionId: SmartCollectionId) =
 
 /** App shell: bottom navigation between Home, Library, History, Analytics, and Settings. */
 @Composable
-fun BacklogiumAppRoot(
+internal fun BacklogiumAppRoot(
+    gameNotifications: GameNotificationViewModel,
     initialOpenUpdate: Boolean = false,
     openUpdateRequests: Flow<Unit> = emptyFlow(),
-    initialOpenAchievement: Pair<String, Long>? = null,
-    openAchievementRequests: Flow<Pair<String, Long>> = emptyFlow(),
 ) {
     val updateViewModel: AppUpdateViewModel = hiltViewModel()
     val updateState by updateViewModel.uiState.collectAsStateWithLifecycle()
@@ -132,20 +133,25 @@ fun BacklogiumAppRoot(
         openUpdateRequests.collect { updateSheetVisible = true }
     }
     val navController = rememberNavController()
-    val unlockViewModel: AchievementUnlockViewModel = hiltViewModel()
-    val navigationScope = rememberCoroutineScope()
-    val openAchievementGame: (String, Long) -> Unit = { account, appId ->
-        navigationScope.launch {
-            if (unlockViewModel.canOpen(account, appId)) navController.navigate(gameDetailRoute(appId)) { launchSingleTop = true }
+    LaunchedEffect(gameNotifications, navController) {
+        val routeReady = navController.currentBackStackEntryFlow.map { entry ->
+            entry.destination.route != ROUTE_ONBOARDING && entry.destination.route != ROUTE_SETUP
+        }
+        gameNotifications.requests.collectLatest { target ->
+            val canOpen = gameNotifications.canOpen(target, routeReady)
+            if (gameNotifications.consume(target) && canOpen) {
+                val current = navController.currentBackStackEntry
+                if (current?.destination?.route != ROUTE_GAME_DETAIL ||
+                    current.arguments?.getLong("appId") != target.appId
+                ) {
+                    navController.navigate(gameDetailRoute(target.appId))
+                }
+            }
         }
     }
-    LaunchedEffect(initialOpenAchievement) {
-        initialOpenAchievement?.let { openAchievementGame(it.first, it.second) }
-    }
-    LaunchedEffect(openAchievementRequests) {
-        openAchievementRequests.collect { openAchievementGame(it.first, it.second) }
-    }
-    AchievementUnlockFeedback(openAchievementGame, unlockViewModel)
+    AchievementUnlockFeedback(onOpenGame = { account, appId ->
+        gameNotifications.request(GameNotificationTarget(account, appId))
+    })
     val libraryVisitViewModel: LibraryVisitViewModel = hiltViewModel()
     LibraryVisitEffects(navController, libraryVisitViewModel.visit)
     val backStackEntry by navController.currentBackStackEntryAsState()

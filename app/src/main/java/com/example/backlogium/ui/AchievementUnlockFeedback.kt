@@ -40,7 +40,6 @@ class AchievementUnlockViewModel @Inject constructor(private val delivery: Achie
         }
     }
     fun dismiss() { dismissals.trySend(Unit) }
-    suspend fun canOpen(account: String, appId: Long) = delivery.canOpen(account, appId)
 }
 
 @Composable

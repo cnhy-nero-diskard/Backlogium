@@ -3,6 +3,8 @@ package com.example.backlogium.data.achievement
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
+import com.example.backlogium.GameNotificationIntent
+import com.example.backlogium.GameNotificationTarget
 import com.example.backlogium.domain.AchievementUnlockGroup
 import com.example.backlogium.domain.AchievementUnlockItem
 import org.junit.Assert.*
@@ -28,8 +30,7 @@ class AchievementUnlockNotifierTest {
         assertEquals("achievement:event", notification.tag)
         assertTrue(notification.notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         val intent = shadowOf(notification.notification.contentIntent).savedIntent
-        assertEquals(1L, intent.getLongExtra(OPEN_ACHIEVEMENT_GAME, 0))
-        assertEquals("fixture", intent.getStringExtra(OPEN_ACHIEVEMENT_ACCOUNT))
+        assertEquals(GameNotificationTarget("fixture", 1L), GameNotificationIntent.read(intent))
         notifier.post(group.copy(eventId = "another"))
         assertEquals(2, manager.activeNotifications.size)
     }

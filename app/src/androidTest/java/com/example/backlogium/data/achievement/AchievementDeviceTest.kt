@@ -253,13 +253,14 @@ class AchievementDeviceTest {
             val second = withTimeout(45_000) { db.achievementWatchDao().observePending().first { it.size == 2 }.first { it.appId == 2L } }
             assertTrue(db.achievementDao().getOne(2, "first")!!.unlocked)
             var posts = 0
+            val marker = AccountChangeMarkerStore(context)
             val dispatcher = AchievementUnlockDispatcher(db.achievementWatchDao(), AchievementObservationStore(db, credentials,
-                AccountChangeMarkerStore(context), SteamSyncCoordinator()), settings, hidden,
+                marker, SteamSyncCoordinator()), settings, hidden,
                 CredentialsRepository(EncryptedCredentialStore(context), api),
                 ProgressEventRepository(InMemoryProgressMarksStore(), db.playerProfileDao(), db.dailyProgressDao(), ProgressTransitionCoordinator(), db.achievementWatchDao()),
                 ActivityVisibilityTracker(context), object : AchievementUnlockNotifier {
                     override fun post(group: AchievementUnlockGroup): AchievementUnlockNotifier.Result { posts++; return AchievementUnlockNotifier.Result.POSTED }
-                }, scope)
+                }, scope, GameNotificationTargets(credentials, marker, db))
             dispatcher.dispatch(second, false)
             assertEquals(0, posts)
             assertEquals(AchievementWatchWork.SUPPRESSED, db.achievementWatchDao().get(second.eventId)!!.deliveryState)

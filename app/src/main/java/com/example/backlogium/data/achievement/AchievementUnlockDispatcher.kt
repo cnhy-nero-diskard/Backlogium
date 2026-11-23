@@ -3,6 +3,7 @@ package com.example.backlogium.data.achievement
 import com.example.backlogium.data.local.dao.AchievementWatchDao
 import com.example.backlogium.data.local.entity.AchievementWatchWork
 import com.example.backlogium.data.repo.CredentialsRepository
+import com.example.backlogium.data.repo.GameNotificationTargets
 import com.example.backlogium.data.repo.HiddenGamesRepository
 import com.example.backlogium.data.repo.ProgressEventRepository
 import com.example.backlogium.data.repo.SettingsRepository
@@ -29,6 +30,7 @@ class AchievementUnlockDispatcher @Inject constructor(
     private val visibility: ActivityVisibilityTracker,
     private val notifier: AchievementUnlockNotifier,
     @ApplicationScope private val scope: CoroutineScope,
+    private val targets: GameNotificationTargets,
 ) {
     private val presentations = Channel<AchievementUnlockGroup>(Channel.UNLIMITED)
     val foregroundGroups = presentations.receiveAsFlow()
@@ -50,12 +52,8 @@ class AchievementUnlockDispatcher @Inject constructor(
         }
     }
 
-    suspend fun canOpen(account: String, appId: Long): Boolean =
-        store.accountReady(account) && store.database.playerProfileDao().get()?.steamId == account &&
-            !hidden.isHidden(appId) && store.database.gameDao().getById(appId) != null
-
     suspend fun allowed(group: AchievementUnlockGroup): Boolean =
-        settings.achievementWatch.first().alertsEnabled && canOpen(group.account, group.appId)
+        settings.achievementWatch.first().alertsEnabled && targets.canOpen(group.account, group.appId)
 
     /** True means terminal or no longer pending; false leaves the same background identity retryable. */
     internal suspend fun dispatch(item: AchievementWatchWork, foreground: Boolean): Boolean {

@@ -1,45 +1,42 @@
 package com.example.backlogium
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.example.backlogium.ui.BacklogiumAppRoot
-import com.example.backlogium.ui.theme.BacklogiumTheme
+import androidx.activity.viewModels
 import com.example.backlogium.data.updates.OPEN_UPDATE_EXTRA
+import com.example.backlogium.ui.BacklogiumAppRoot
+import com.example.backlogium.ui.navigation.GameNotificationViewModel
+import com.example.backlogium.ui.theme.BacklogiumTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.MutableSharedFlow
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private val openAchievementRequests = MutableSharedFlow<Pair<String, Long>>(extraBufferCapacity = 1)
-    private fun achievementDestination(intent: android.content.Intent): Pair<String, Long>? {
-        val account = intent.getStringExtra(com.example.backlogium.data.achievement.OPEN_ACHIEVEMENT_ACCOUNT)?.takeIf { it.isNotBlank() } ?: return null
-        val appId = intent.getLongExtra(com.example.backlogium.data.achievement.OPEN_ACHIEVEMENT_GAME, 0)
-        return if (appId > 0) account to appId else null
-    }
-
+    private val gameNotifications: GameNotificationViewModel by viewModels()
     private val openUpdateRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) GameNotificationIntent.read(intent)?.let(gameNotifications::request)
         enableEdgeToEdge()
         setContent {
             BacklogiumTheme {
                 BacklogiumAppRoot(
+                    gameNotifications = gameNotifications,
                     initialOpenUpdate = intent.getBooleanExtra(OPEN_UPDATE_EXTRA, false),
                     openUpdateRequests = openUpdateRequests,
-                    initialOpenAchievement = achievementDestination(intent),
-                    openAchievementRequests = openAchievementRequests,
                 )
             }
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        achievementDestination(intent)?.let { openAchievementRequests.tryEmit(it) }
+        GameNotificationIntent.read(intent)?.let(gameNotifications::request)
         if (intent.getBooleanExtra(OPEN_UPDATE_EXTRA, false)) {
             openUpdateRequests.tryEmit(Unit)
         }

@@ -6,21 +6,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.example.backlogium.MainActivity
+import com.example.backlogium.GameNotificationIntent
+import com.example.backlogium.GameNotificationTarget
 import com.example.backlogium.R
 import com.example.backlogium.domain.AchievementUnlockGroup
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-
-const val OPEN_ACHIEVEMENT_GAME = "achievement_app_id"
-const val OPEN_ACHIEVEMENT_ACCOUNT = "achievement_account"
 
 interface AchievementUnlockNotifier {
     enum class Result { POSTED, SUPPRESSED, RETRY }
@@ -37,9 +33,9 @@ class AndroidAchievementUnlockNotifier @Inject constructor(@ApplicationContext p
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Achievement unlocks", NotificationManager.IMPORTANCE_DEFAULT))
             if (manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return AchievementUnlockNotifier.Result.SUPPRESSED
-            val intent = Intent(context, MainActivity::class.java)
-                .setData(Uri.parse("backlogium://achievement/${group.eventId}"))
-                .putExtra(OPEN_ACHIEVEMENT_GAME, group.appId).putExtra(OPEN_ACHIEVEMENT_ACCOUNT, group.account)
+            val intent = GameNotificationIntent.create(
+                context, GameNotificationTarget(group.account, group.appId), "achievement", group.eventId,
+            )
             val contentIntent = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val text = unlockGroupText(group)
             val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.mipmap.ic_launcher)
