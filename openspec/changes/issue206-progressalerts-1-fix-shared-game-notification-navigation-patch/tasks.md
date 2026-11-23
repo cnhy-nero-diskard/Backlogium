@@ -30,4 +30,18 @@ On the same emulator, tapping the posted Alpha notice after hiding Alpha and tap
 
 ## 2. Integration
 
-- [ ] 2.1 Verify cold and warm taps reach the exact game once, and that Back returns to the expected screen. Record notification behavior on a targeted emulator or device.
+- [x] 2.1 Verify cold and warm taps reach the exact game once, and that Back returns to the expected screen. Record notification behavior on a targeted emulator or device.
+
+### Integration verification
+
+Tapped real notifications from the system shade on the Android 17 host-GPU emulator (`emulator-5554`) with the two fixture games in the same account.
+
+| Starting state | Tapped notice | Detail opened | Back |
+| --- | --- | --- | --- |
+| Cold, app process absent, both admission notices posted | Earlier Alpha admission | Alpha | Home |
+| Foreground, Alpha detail already open | Alpha achievement | Alpha reused in the same process | Home with one press |
+| Foreground, Library selected | Beta admission | Beta in the same process | Library |
+| Background, Library selected | Alpha admission | Alpha in the same process | Library |
+| Foreground, Alpha detail open | Beta admission | Beta | Alpha, then Library |
+
+The debug app and instrumentation APKs assembled, debug lint passed, and all 2,548 app and gamification unit tests passed.
