@@ -152,6 +152,44 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun `canonical allocation before first session keeps its period reachable`() {
+        val earliestAllocationDate = LocalDate.of(2026, 8, 9)
+        val firstSessionDate = LocalDate.of(2026, 9, 15)
+        val current = AnalyticsWindow(firstSessionDate, AnalyticsWindowLength.ONE_MONTH)
+        val selection = AnalyticsWindowSelection(window = current, followsCurrent = false)
+
+        assertEquals(
+            selection,
+            selection.stepEarlierFrom(
+                effectiveWindow = current,
+                earliestTrackedDate = firstSessionDate,
+            ),
+        )
+        val allocationPeriod = selection.stepEarlierFrom(
+            effectiveWindow = current,
+            earliestTrackedDate = earliestAllocationDate,
+        )
+        assertEquals(
+            AnalyticsWindow(LocalDate.of(2026, 8, 1), AnalyticsWindowLength.ONE_MONTH),
+            allocationPeriod.window,
+        )
+        assertEquals(
+            earliestAllocationDate,
+            allocationPeriod.window.resolveActivityBounds(
+                today = LocalDate.of(2026, 9, 30),
+                earliestTrackedDate = earliestAllocationDate,
+            ).start,
+        )
+        assertEquals(
+            allocationPeriod,
+            allocationPeriod.stepEarlierFrom(
+                effectiveWindow = allocationPeriod.window,
+                earliestTrackedDate = earliestAllocationDate,
+            ),
+        )
+    }
+
+    @Test
     fun comparablePreviousBoundsOmitsComparisonWhenTrackingStartsInsideEitherRange() {
         val today = LocalDate.of(2026, 9, 22)
         val current = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
