@@ -10,9 +10,15 @@ Add the requested event categories and recap with stable delivery, preserving th
 
 ## Decisions
 
+### Persist notification obligations independently
+
+Every committed quest-met or streak-broken event gets a durable notification receipt keyed by account, category, and stable event identity (the quest date or the streak-break transition/date). Persist it with earned-event finalization, or retain an idempotent crash-recovery handoff until the receipt exists; the handoff must survive independently of the foreground pending-event list. `ProgressEventRepository.acknowledge()` may clear the in-app claim but must not remove or acknowledge this receipt. A worker recovers pending receipts after process death and uses the account-scoped event key as its stable notification identity.
+
+Earned-event finalization is the eligibility boundary: create each receipt as pending only when its category preference and Android notification permission/channel allow delivery; otherwise persist it as terminally suppressed. Recheck the active account and current controls immediately before posting, and terminally suppress a receipt if they no longer allow delivery. Later enabling a preference or permission does not recreate or reopen receipts from in-app claims or historical progress. Restore excludes notification receipts and does not reconstruct them.
+
 ### Put category deliveries behind committed boundaries
 
-Observe committed quest and streak events without consuming their existing in-app claims. Capture owned acquisitions from the finalized poll arrival set. Move automatic shared admissions into the same dispatch policy while preserving the existing channel and fallback announcement. Use stable account-scoped event keys and notification tags so process recovery or worker retry cannot create a second visible delivery. Notification suppression is terminal for an event under the current preference.
+Capture owned acquisitions from the finalized poll arrival set. Move automatic shared admissions into the same dispatch policy while preserving the existing channel and fallback announcement. Use stable notification tags with only-alert-once replacement so a recovered worker cannot create a second visible delivery.
 
 ### Use authoritative completion evidence
 
@@ -28,7 +34,7 @@ Keep the Family Shared channel ID and existing delivery default. Add a separate 
 
 ## Risks / Trade-offs
 
-Android can defer background work. A missed day can safely be skipped. Claim a delivery durably before posting and use stable notification tags with only-alert-once replacement. If a crash leaves posting ambiguous, suppress a retry that could repeat an alert. Permission denial and channel suppression still leave in-app results available.
+Android can defer background work. A missed day can safely be skipped. Keep a receipt pending until dispatch, and use stable notification tags with only-alert-once replacement for retries. If a crash leaves posting ambiguous, suppress a retry that could repeat an alert; this may miss a system alert but never consumes the independent in-app claim. Permission denial and channel suppression leave in-app results available.
 
 ## Migration Plan
 
