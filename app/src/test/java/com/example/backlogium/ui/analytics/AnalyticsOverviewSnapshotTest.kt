@@ -27,6 +27,26 @@ class AnalyticsOverviewSnapshotTest {
             assertNull(analyticsOverviewSnapshot(state().copy(headline = headline)).featuredGame)
         }
     }
+    @Test fun allocationOnlyPeriodRemainsDataWhileSessionInsightsAreUnavailable() {
+        val allocatedGame = game.copy(minutes = 75, estimatedMinutes = 75)
+        val allocationOnly = AnalyticsUiState(
+            loading = false,
+            window = window,
+            windowBounds = window.resolve(),
+            headline = AnalyticsHeadline.LeadingGame(allocatedGame),
+            dailyMinutes = listOf(AnalyticsDay(today, 75, estimatedMinutes = 75)),
+            topGames = listOf(allocatedGame),
+            sessionInsights = SessionInsights(),
+            timeOfDayPattern = TimeOfDayPattern(),
+            timingUnavailable = true,
+        )
+
+        assertTrue(allocationOnly.hasData)
+        assertEquals(75, analyticsOverviewSnapshot(allocationOnly).totalMinutes)
+        assertTrue(allocationOnly.timingUnavailable)
+        assertEquals(0, allocationOnly.sessionInsights.sessionCount)
+        assertNull(allocationOnly.timeOfDayPattern.peakBucket)
+    }
     @Test fun updatingRetainsAllOldSnapshotLabelsAndElapsedCalendarDates() {
         val snapshot = analyticsOverviewSnapshot(state().copy(updating = true, isCurrentWindow = false))
         assertEquals(window, snapshot.window)
