@@ -22,7 +22,7 @@ import javax.inject.Singleton
  * implied by a concrete class's constructor.
  */
 fun interface PresenceObserver {
-    suspend fun onObservation(appId: Long?, observedAt: Long)
+    suspend fun onObservation(appId: Long?, observedAt: Long, account: String?)
 }
 
 /**
@@ -55,9 +55,10 @@ class PresenceSessionRecorder @Inject constructor(
     /**
      * @param appId the app id Steam reports the player inside, or null when not in a game (or when
      *   Steam's running-game id did not parse — an unidentifiable game cannot be tracked).
+     * @param account the Steam account queried for this observation.
      */
-    override suspend fun onObservation(appId: Long?, observedAt: Long) {
-        val trackedSharedAppId = resolveSharedGame(appId, observedAt)
+    override suspend fun onObservation(appId: Long?, observedAt: Long, account: String?) {
+        val trackedSharedAppId = resolveSharedGame(appId, observedAt, account)
 
         val sharedAppIds = gameDao.sharedGames().mapTo(mutableSetOf()) { it.appId }
         // The common case, for every library with no shared games: nothing to derive and nothing
@@ -119,7 +120,7 @@ class PresenceSessionRecorder @Inject constructor(
      * attempted here — and only here — because the first observation of a borrowed game is the only
      * evidence the app ever gets that it exists.
      */
-    private suspend fun resolveSharedGame(appId: Long?, observedAt: Long): Long? {
+    private suspend fun resolveSharedGame(appId: Long?, observedAt: Long, account: String?): Long? {
         if (appId == null) {
             settings.clearSharedGameCandidate()
             return null
@@ -135,7 +136,7 @@ class PresenceSessionRecorder @Inject constructor(
         // Best-effort by design: an unreachable store, a not-yet-completed sync, or a removed game
         // all leave the observation unrecorded rather than guessed at, and are reconsidered next
         // time. A failure here must never cost the caller its presence update.
-        runCatching { sharedGames.considerAdmission(appId, observedAt) }
+        if (account != null) runCatching { sharedGames.considerAdmission(appId, observedAt, account) }
         return gameDao.getById(appId)?.takeIf { it.source == GameSource.FAMILY_SHARED }?.appId
     }
 

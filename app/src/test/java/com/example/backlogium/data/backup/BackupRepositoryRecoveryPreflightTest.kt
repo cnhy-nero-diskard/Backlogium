@@ -341,7 +341,7 @@ class BackupRepositoryRecoveryPreflightTest {
             settings = settingsRepository,
             time = FixedTime,
             sessionEnds = PlaySessionEndPublisher(),
-            presenceObserver = PresenceObserver { _, _ -> },
+            presenceObserver = PresenceObserver { _, _, _ -> },
             diagnostics = null,
             scope = appScope,
         )

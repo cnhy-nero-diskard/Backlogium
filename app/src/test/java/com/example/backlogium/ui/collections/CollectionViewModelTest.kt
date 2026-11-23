@@ -406,7 +406,7 @@ class CollectionViewModelTest {
             settings = settings,
             time = time,
             sessionEnds = PlaySessionEndPublisher(),
-            presenceObserver = PresenceObserver { _, _ -> },
+            presenceObserver = PresenceObserver { _, _, _ -> },
             diagnostics = null,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
         )

@@ -81,7 +81,10 @@ class LiveStatusRepositoryTest {
             override suspend fun afterPresence(account: String?, appId: Long?) { order += "activate:$appId" }
         }
         val observer = object : PresenceObserver {
-            override suspend fun onObservation(appId: Long?, observedAt: Long) { order += "shared:$appId" }
+            override suspend fun onObservation(appId: Long?, observedAt: Long, account: String?) {
+                assertEquals("1", account)
+                order += "shared:$appId"
+            }
         }
         val repo = repository(api, settings, time, this, sessionEnds = ends, observer = observer, watch = watch)
         api.setInGame(10, "A")
@@ -1230,7 +1233,7 @@ class LiveStatusRepositoryTest {
     /** Records observations so the live path can be asserted to hand each fetch on exactly once. */
     private class RecordingPresenceObserver : PresenceObserver {
         val observations = mutableListOf<Pair<Long?, Long>>()
-        override suspend fun onObservation(appId: Long?, observedAt: Long) {
+        override suspend fun onObservation(appId: Long?, observedAt: Long, account: String?) {
             observations += appId to observedAt
         }
     }

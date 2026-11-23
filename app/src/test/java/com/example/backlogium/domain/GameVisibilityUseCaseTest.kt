@@ -240,7 +240,7 @@ class GameVisibilityUseCaseTest {
     }
 
     private object NoOpPresenceObserver : PresenceObserver {
-        override suspend fun onObservation(appId: Long?, observedAt: Long) = Unit
+        override suspend fun onObservation(appId: Long?, observedAt: Long, account: String?) = Unit
     }
 
     private fun goalGame(appId: Long, name: String) = Game(
