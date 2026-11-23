@@ -21,4 +21,4 @@ Achievement alerts and in-app progress events already exist. The other requested
 
 ## Impact
 
-Second change in `progressAlerts`. Requires `issue206-progressalerts-1-fix-shared-game-notification-navigation-patch`. Uses the existing progress events, admission commits, and achievement evidence. Keep achievement-watch settings and delivery behavior intact.
+Second change in `progressAlerts`; requires `issue206-progressalerts-1-fix-shared-game-notification-navigation-patch` for shared routing and `issue159-enhancement-hydrate-admitted-game-achievements-minor` for the durable owned account/game admission identity. Implement #206 first, then #159 before #166, so the notification receipt can reuse the committed identity already used for hydration rather than adding a separate post-commit acquisition record. Keep achievement-watch settings and delivery behavior intact.
