@@ -15,7 +15,36 @@ A committed new owned-game admission after initial library confirmation SHALL be
 
 #### Scenario: Large set of new games
 - **WHEN** more admissions are eligible than one drain can process
-- **THEN** a bounded subset is processed in admission order and the remaining valid admissions stay eligible
+- **THEN** a bounded subset is processed in admission order and the remaining valid admissions stay eligible for automatic continuation
+
+### Requirement: Admission hydration drains eligible backlog durably
+The system SHALL process admission hydration in serial executions that each respect the configured per-run cap. When eligible admissions remain after a run exhausts its cap, it SHALL durably schedule a network-constrained follow-on execution under one unique work chain for the current account/reset identity. The chain SHALL continue automatically until no admission is currently eligible, without requiring another app start, library sync, or admission.
+
+#### Scenario: Admission tail progresses without another trigger
+- **WHEN** one commit adds more than three times the configured per-run cap and the first bounded execution completes, with no later app start, library sync, or admission
+- **THEN** durable follow-on executions process every still-eligible admission in FIFO order, each within the per-run cap
+
+#### Scenario: Process dies between bounded executions
+- **WHEN** the process dies after one chunk completes but before the backlog is empty
+- **THEN** pending admissions and their continuation remain durable and resume without a new app start, sync, or admission
+
+### Requirement: Admission continuation is serialized and account-scoped
+Concurrent admission wakes SHALL NOT run parallel drains or cancel the only pending continuation. A wake racing with the final empty-queue check SHALL NOT be lost. Each execution SHALL validate its captured account/reset identity before dispatch and merge; account replacement SHALL prevent old-identity work from continuing against the new account.
+
+#### Scenario: Concurrent wakes share one serialized drain
+- **WHEN** multiple admission wakes arrive while a drain is running or a continuation is pending
+- **THEN** they are coalesced or serialized on the unique chain, with no parallel drains and no lost continuation
+
+#### Scenario: Account replacement invalidates old continuation
+- **WHEN** the configured account or reset identity changes while an admission continuation is pending
+- **THEN** old-identity work does not fetch or merge for the replacement account, and any new-account work remains separately scoped
+
+### Requirement: Admission retries honor the next eligible time
+Retryable admissions SHALL remain durable and have follow-on work scheduled for their next eligible time, including any provider Retry-After deadline. No request SHALL be made before that time; deferred rows remain part of the admission cycle.
+
+#### Scenario: Offline or Retry-After defers continuation
+- **WHEN** the device is offline or Steam supplies a Retry-After deadline for a pending admission
+- **THEN** the constrained continuation waits until connectivity and the next eligible time, while preserving the admission and last-good data
 
 ### Requirement: Admission hydration preserves account and achievement evidence
 Admission work SHALL survive restart, share per-game coordination with other achievement refresh paths, and respect request limits and bounded backoff. It SHALL preserve last-good data and distinguish confirmed empty, unavailable, and failed observations.

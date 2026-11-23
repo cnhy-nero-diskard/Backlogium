@@ -7,8 +7,9 @@
 
 ## 2. Bounded coordinated refresh
 
-- [ ] 2.1 Drain eligible admissions under an explicit per-run and retry budget. Verify FIFO tail progress, cancellation, Retry-After, and connectivity recovery with a fake clock.
-- [ ] 2.2 Reuse the per-game merge coordinator and classify catalogue, personal state and unavailable results independently. Verify overlapping refresh, account changes, first-unlock semantics and last-good data.
+- [ ] 2.1 Drain eligible admissions under an explicit per-run cap and retry budget using a durable, constrained, unique serialized work chain. Schedule continuations for remaining eligible rows and at the next retry deadline; preserve wakes racing with an empty-queue check.
+- [ ] 2.2 Enqueue more than three times the configured cap in one commit, process the first chunk, then simulate no app launch, library sync, or new admission; verify FIFO progress to completion over bounded executions. Cover process death between chunks, offline and Retry-After delay with a fake clock, concurrent wakes, cancellation, and account replacement.
+- [ ] 2.3 Reuse the per-game merge coordinator and classify catalogue, personal state and unavailable results independently. Verify overlapping refresh, first-unlock semantics and last-good data.
 
 ## 3. Integration
 
