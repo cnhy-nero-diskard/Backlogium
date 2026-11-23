@@ -18,6 +18,10 @@ Resolve the cutoff as the start of the following local date in the goal's saved 
 
 Retain effective goal/membership revisions and estimate evidence needed by unarchived deadlines. Reuse date-scoped playtime and supported cumulative observations at the cutoff where coverage is adequate. Preserve provenance and surface missing evidence. Avoid substituting current HLTB values, undated minutes or post-deadline play for the deadline record. Legacy collections may archive with an undetermined outcome.
 
+### Freeze cutoff membership, not current UI visibility
+
+For each unarchived deadline, retain timestamped membership and hidden-visibility revisions so finalization can reconstruct both the persisted members and which of them were visible at the saved-zone cutoff. The goal-evaluation membership is the persisted cutoff membership that was visible at that cutoff, consistent with hidden-games; hidden-at-cutoff members remain identified in provenance but are excluded from goal evaluation. A member hidden or removed after cutoff remains in the frozen evaluation and evidence. Current filtered reads (`getMembers`, `members`, `allMembers`, or `customOverviews`) are never cutoff evidence. If cutoff membership or visibility cannot be established, the outcome is undetermined rather than inferred from today's filtered collection. Hiding after cutoff cannot remove frozen evidence or change the outcome; while hidden, the member's game identity is not shown or navigable, though its frozen evidence may remain as a non-navigable archive entry. Unhiding after archive cannot change the snapshot or outcome.
+
 ### Persist archive and active transition atomically
 
 Give the frozen record an identity tied to the collection's persisted identity and creation record. Save immutable member identities and metrics without requiring current game rows, and exclude archived collections from active selectors and mutation paths. Make the archive domain model readable by later Analytics work. Reuse validated backup export and merge. Distinguish independent collections with colliding imported numeric IDs from an older active copy of the same finalized collection.
