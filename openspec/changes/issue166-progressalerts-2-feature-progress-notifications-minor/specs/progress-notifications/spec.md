@@ -67,12 +67,38 @@ Each receipt SHALL be keyed by category and stable source-event identity. It SHA
 - **WHEN** an earned quest or streak event and its notification receipt or handoff are committed, then the process dies before dispatch
 - **THEN** a later worker recovers the pending receipt without reading the in-app pending-event list
 
-### Requirement: Notification retries retain stable event identity
-Workers SHALL use stable account/event notification identity and repeat-alert suppression so retries or duplicate execution cannot create a second logical or visibly repeated notification.
+### Requirement: Posting uses a durable at-most-once claim
+Before invoking Android for a progress-alert receipt, a worker SHALL durably compare-and-set its state from `PENDING` to `POST_CLAIMED`. Only the worker that changes the state SHALL invoke `NotificationManager.notify()`; a normal return SHALL advance it to `DELIVERED`. `POST_CLAIMED` SHALL be terminal and SHALL NOT be retried after restart or an ambiguous result, even if the notification is absent.
 
-#### Scenario: Worker retry or duplicate execution
-- **WHEN** a worker retries or receives the same receipt more than once, including after an ambiguous post
-- **THEN** the stable account/event notification identity and repeat-alert suppression prevent a second logical or visibly repeated alert
+#### Scenario: Crash before claim leaves the receipt retryable
+- **WHEN** a worker crashes before changing a receipt from `PENDING` to `POST_CLAIMED`
+- **THEN** the receipt remains pending, and a later worker may claim and post it once
+
+#### Scenario: Crash after claim but before Android posting may lose the alert
+- **WHEN** a worker durably claims a receipt and the process dies before calling `NotificationManager.notify()`
+- **THEN** recovery treats `POST_CLAIMED` as terminal and does not post; losing this alert is allowed
+
+#### Scenario: Crash after posting does not re-alert after dismissal
+- **WHEN** Android accepts a notification, the process dies before saving `DELIVERED`, and the user dismisses the notification before restart
+- **THEN** recovery sees `POST_CLAIMED` and does not call `notify()` again, even though the original notification is no longer present
+
+#### Scenario: Concurrent workers race to claim one receipt
+- **WHEN** multiple workers concurrently compare-and-set the same pending receipt
+- **THEN** exactly one changes `PENDING` to `POST_CLAIMED` and may call `notify()`; all others observe the claimed state and do not post
+
+### Requirement: Definitive pre-post failures remain retryable
+Failures known to occur before the durable post claim SHALL leave a receipt pending and retryable. Ineligible receipts SHALL remain terminally suppressed.
+
+#### Scenario: Transient failure before claim
+- **WHEN** a transient failure occurs during eligibility or notification preparation before the durable claim
+- **THEN** the receipt remains `PENDING` and can be retried without risking a duplicate post
+
+### Requirement: Stable notification identity only supports replacement
+Workers SHALL use stable account/event notification identity with repeat-alert suppression to update a notification that remains present, but SHALL NOT rely on it as the deduplication guarantee because reposting after dismissal can create a new alert.
+
+#### Scenario: A present notification is replaced quietly
+- **WHEN** a notification with the same account/event identity is posted while the original is still present
+- **THEN** Android updates the existing notification without repeating its alert; this does not guarantee deduplication after dismissal
 
 ### Requirement: Notification suppression is terminal for every category
 At each source event's eligibility boundary, a receipt SHALL be pending only when the category preference and Android permission/channel state allow delivery; otherwise it SHALL be terminally suppressed. Before posting, the worker SHALL recheck the active account and current controls, terminally suppressing a receipt that is no longer eligible.

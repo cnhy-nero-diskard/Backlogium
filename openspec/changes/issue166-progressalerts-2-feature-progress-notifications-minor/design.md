@@ -20,7 +20,11 @@ Register every channel used by progress-alert receipts, including default-off ca
 
 ### Put category deliveries behind committed boundaries
 
-Create owned-acquisition obligations from the finalized poll arrival set under the same durable admission identity used by #159, not from a second best-effort post-commit write. Commit automatic shared-admission obligations with the successful game-row insert while preserving the existing Family Shared channel and fallback announcement. Detect verified completion at the coordinated achievement merge and commit its obligation with the confirmed incomplete-to-complete transition. Use stable notification tags with only-alert-once replacement so recovery or worker retry cannot create a second visible delivery.
+Create owned-acquisition obligations from the finalized poll arrival set under the same durable admission identity used by #159, not from a second best-effort post-commit write. Commit automatic shared-admission obligations with the successful game-row insert while preserving the existing Family Shared channel and fallback announcement. Detect verified completion at the coordinated achievement merge and commit its obligation with the confirmed incomplete-to-complete transition. Use the account/event key with `setOnlyAlertOnce(true)` to update a notification that is still present, but not as the delivery deduplication guarantee.
+
+### Claim before posting; never retry an ambiguous claim
+
+For each progress-alert receipt, prepare the payload and recheck account, permission, preference, and registered-channel eligibility before claiming. Transient failures known to happen before posting leave an unclaimed `PENDING` receipt retryable; ineligibility remains terminally suppressed. Immediately before calling Android, atomically compare-and-set `PENDING` to durable `POST_CLAIMED`. Only the worker whose update changes one row may call `NotificationManager.notify()`, and it does so immediately after the claim commits. A normal return advances the receipt to `DELIVERED`. `POST_CLAIMED` is terminal for posting: if the process dies before the call, during it, or after Android accepts it but before `DELIVERED` is saved, recovery never posts again; a call exception after the claim is also treated as ambiguous and never resets it to pending. This deliberately permits losing an alert rather than risking a second visible alert after dismissal. Do not copy the existing achievement-watch `BACKGROUND` retry policy for these receipts; leave that existing delivery behavior unchanged.
 
 ### Use authoritative completion evidence
 
@@ -36,7 +40,7 @@ Keep the Family Shared channel ID and existing delivery default. Add a separate 
 
 ## Risks / Trade-offs
 
-Android can defer background work. A missed day can safely be skipped. Keep a receipt pending until dispatch, and use stable notification tags with only-alert-once replacement for retries. If a crash leaves posting ambiguous, suppress a retry that could repeat an alert; this may miss a system alert but never consumes the independent in-app claim. Permission denial and channel suppression leave in-app results available.
+Android can defer background work. A missed day can safely be skipped. Keep receipts pending only until the durable post claim; stable notification identity can update a still-present notification but cannot prevent a dismissed notification from being recreated. If a crash leaves a receipt `POST_CLAIMED`, suppress all retries even when the call may not have happened; this may miss a system alert but never consumes the independent in-app claim. Permission denial and channel suppression leave in-app results available.
 
 ## Migration Plan
 
