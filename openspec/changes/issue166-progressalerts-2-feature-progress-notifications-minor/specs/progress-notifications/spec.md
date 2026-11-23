@@ -14,23 +14,58 @@ The app SHALL offer Android alerts for newly added games, broken streaks, daily 
 - **THEN** the corresponding enabled category receives at most one Android delivery per committed event
 
 #### Scenario: Acquisition or shared admission
-- **WHEN** a newer confirmed library poll or automatic shared admission commits a genuinely new visible game after baselining
+- **WHEN** a confirmed post-baseline poll commits a genuinely new owned game, or an automatic shared admission inserts a genuinely new visible game
 - **THEN** an enabled notice names the game and opens its detail through the shared notification route, with one notice for the admission
 
 #### Scenario: Administrative changes or replay
 - **WHEN** a first-sync baseline, restore, import, refile, replay, or shared-to-owned conversion updates stored state
 - **THEN** historical or already delivered events do not generate new notices
 
-### Requirement: Progress notification receipts are independent of in-app claims
-Every committed earned quest-met or streak-broken event SHALL have a durable notification receipt keyed by account, category, and stable event identity (quest date or streak-break transition/date). The receipt SHALL be persisted at earned-event finalization or through a crash-recoverable handoff that survives until receipt commit. A foreground acknowledgement SHALL NOT remove or acknowledge it. Workers SHALL recover pending receipts without relying on the foreground pending-event list.
+### Requirement: Every progress notice has an independent durable receipt
+Every committed progress-alert event SHALL have an account-scoped durable notification receipt or crash-recoverable handoff. A foreground acknowledgement SHALL NOT remove or acknowledge it. Workers SHALL recover pending receipts without relying on the foreground pending-event list or a notification enqueue having already happened.
 
 #### Scenario: Foreground acknowledgement leaves notification delivery pending
 - **WHEN** a committed quest or streak event is acknowledged in the foreground before its notification worker runs
 - **THEN** the in-app claim is acknowledged and the independent notification receipt remains pending for one notification delivery
 
-#### Scenario: Process death before dispatch
-- **WHEN** an earned quest or streak event and its notification handoff are committed, then the process dies before dispatch
-- **THEN** a later worker recovers the pending receipt and can deliver it without reading the in-app pending-event list
+### Requirement: Notification receipts are committed at source-event boundaries
+Each receipt SHALL be keyed by category and stable source-event identity. It SHALL be persisted with the source transition, or an idempotent handoff SHALL be committed in the same transaction and retained until the receipt exists. If controls are stored separately, the handoff SHALL preserve the event-time eligibility decision.
+
+#### Scenario: Quest and streak receipts follow earned finalization
+- **WHEN** an earned quest-met or streak-broken event is finalized
+- **THEN** its account-scoped receipt or durable handoff is committed at that boundary
+
+#### Scenario: Owned acquisition reuses admission identity
+- **WHEN** a confirmed post-baseline poll commits a genuinely new owned game
+- **THEN** its receipt or handoff uses the durable account/game admission identity from #159, not a later best-effort settings write
+
+#### Scenario: Automatic shared admission is recorded with insertion
+- **WHEN** an automatic shared-game admission inserts a new game row
+- **THEN** its receipt or handoff commits with that insert, and an already tracked game creates no new admission receipt
+
+#### Scenario: Completion is recorded with confirmed merge
+- **WHEN** the coordinated achievement merge changes a known-incomplete game to a non-empty confirmed fully unlocked set
+- **THEN** its receipt or handoff commits with that merge
+
+#### Scenario: Initial complete baseline is not an event
+- **WHEN** the first confirmed achievement set for a game is already fully unlocked
+- **THEN** the merge seeds the baseline without creating a completion receipt or handoff
+
+#### Scenario: Process dies after an owned admission commit
+- **WHEN** a post-baseline owned poll commits a new game and its durable receipt or handoff, then the process dies before notification work is enqueued
+- **THEN** restart recovers one pending account-scoped receipt and can deliver it without relying on the in-app acquisition banner
+
+#### Scenario: Process dies after an automatic shared admission
+- **WHEN** an automatic shared-game insert commits with its durable receipt or handoff, then the process dies before notification work is enqueued
+- **THEN** restart recovers one pending account-scoped receipt for that admission
+
+#### Scenario: Process dies after verified completion merge
+- **WHEN** the achievement merge commits a confirmed incomplete-to-complete transition with its durable receipt or handoff, then the process dies before notification work is enqueued
+- **THEN** restart recovers one pending account-scoped completion receipt
+
+#### Scenario: Process dies after an earned event finalizes
+- **WHEN** an earned quest or streak event and its notification receipt or handoff are committed, then the process dies before dispatch
+- **THEN** a later worker recovers the pending receipt without reading the in-app pending-event list
 
 ### Requirement: Notification retries retain stable event identity
 Workers SHALL use stable account/event notification identity and repeat-alert suppression so retries or duplicate execution cannot create a second logical or visibly repeated notification.
@@ -39,19 +74,19 @@ Workers SHALL use stable account/event notification identity and repeat-alert su
 - **WHEN** a worker retries or receives the same receipt more than once, including after an ambiguous post
 - **THEN** the stable account/event notification identity and repeat-alert suppression prevent a second logical or visibly repeated alert
 
-### Requirement: Notification suppression is terminal
-At earned-event finalization, a receipt SHALL be pending only when the category preference and Android permission/channel state allow delivery; otherwise it SHALL be terminally suppressed. Before posting, the worker SHALL recheck the active account and current controls, terminally suppressing a receipt that is no longer eligible.
+### Requirement: Notification suppression is terminal for every category
+At each source event's eligibility boundary, a receipt SHALL be pending only when the category preference and Android permission/channel state allow delivery; otherwise it SHALL be terminally suppressed. Before posting, the worker SHALL recheck the active account and current controls, terminally suppressing a receipt that is no longer eligible.
 
-#### Scenario: Permission or preference suppresses an event
-- **WHEN** the category is disabled or Android permission/channel state disallows posting at earned-event finalization
-- **THEN** the receipt is terminally suppressed and the in-app progress claim remains available
+#### Scenario: Permission or preference suppresses any category
+- **WHEN** the category is disabled or Android permission/channel state disallows posting at the source event's eligibility boundary
+- **THEN** its receipt is terminally suppressed and any in-app progress claim or committed admission remains available
 
 #### Scenario: Notification permission is denied
-- **WHEN** an enabled category with an enabled channel is finalized while Android notification permission is denied
-- **THEN** its receipt is terminally suppressed and the in-app claim remains available
+- **WHEN** an enabled category with an enabled channel reaches its source event boundary while Android notification permission is denied
+- **THEN** its receipt is terminally suppressed and the in-app claim or committed admission remains available
 
 ### Requirement: Progress channels are registered before eligibility checks
-At app initialization, the app SHALL register all stable progress-alert channels, including those for default-off categories, before earned-event finalization checks channel eligibility. Registration SHALL be idempotent and preserve existing Android settings.
+At app initialization, the app SHALL register all stable progress-alert channels, including those for default-off categories, before any source event checks channel eligibility. Registration SHALL be idempotent and preserve existing Android settings.
 
 #### Scenario: First enabled event after installation
 - **WHEN** the app initializes with a new install and default-off categories, then the player enables a category with notification permission granted before its first eligible earned event
@@ -61,7 +96,7 @@ At app initialization, the app SHALL register all stable progress-alert channels
 A missing channel SHALL indicate incomplete registration, not a user-disabled channel. The app SHALL retain the durable handoff and retry registration rather than terminally suppressing the receipt. It SHALL NOT replace a channel ID to bypass a user's settings.
 
 #### Scenario: Channel registration is incomplete
-- **WHEN** finalization reaches an event before its required channel is available
+- **WHEN** a source event reaches eligibility checking before its required channel is available
 - **THEN** the durable handoff remains available for retry and is not terminally suppressed as though the user had disabled the channel
 
 #### Scenario: Existing channel is disabled
@@ -76,7 +111,7 @@ A terminally suppressed receipt SHALL NOT be reopened by later enabling a prefer
 - **THEN** no notification receipt is reopened or reconstructed for that historical event
 
 ### Requirement: Completion alerts require confirmed achievement evidence
-A completion alert SHALL require a reliable transition from known incomplete to a non-empty confirmed player achievement set with all achievements unlocked. A first complete baseline SHALL seed the state without alerting.
+A completion alert SHALL require a reliable transition from known incomplete to a non-empty confirmed player achievement set with all achievements unlocked. Its receipt or durable handoff SHALL be committed with that achievement merge. A first complete baseline SHALL seed the state without alerting.
 
 #### Scenario: Estimate or partial progress
 - **WHEN** a game reaches its HLTB estimate, or Steam returns only incomplete or unavailable achievement evidence
@@ -85,6 +120,10 @@ A completion alert SHALL require a reliable transition from known incomplete to 
 #### Scenario: Canonical completion
 - **WHEN** a normal eligible unlock commit completes a previously incomplete confirmed set
 - **THEN** the current account can receive one enabled completion alert for that game
+
+#### Scenario: Completion merge retries
+- **WHEN** a verified completion merge is retried after its receipt was committed
+- **THEN** the same account/game event identity is reused and no duplicate receipt or alert is created
 
 ### Requirement: Daily recap summarizes the previous local day
 An enabled recap SHALL be scheduled on a best-effort basis and deliver at most once per account and previous local date. It SHALL summarize recorded play time, distinct eligible games, and recorded unlocks with supported dates, disclosing gaps and estimates.
