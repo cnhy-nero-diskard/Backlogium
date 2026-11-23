@@ -46,6 +46,28 @@ At earned-event finalization, a receipt SHALL be pending only when the category 
 - **WHEN** the category is disabled or Android permission/channel state disallows posting at earned-event finalization
 - **THEN** the receipt is terminally suppressed and the in-app progress claim remains available
 
+#### Scenario: Notification permission is denied
+- **WHEN** an enabled category with an enabled channel is finalized while Android notification permission is denied
+- **THEN** its receipt is terminally suppressed and the in-app claim remains available
+
+### Requirement: Progress channels are registered before eligibility checks
+At app initialization, the app SHALL register all stable progress-alert channels, including those for default-off categories, before earned-event finalization checks channel eligibility. Registration SHALL be idempotent and preserve existing Android settings.
+
+#### Scenario: First enabled event after installation
+- **WHEN** the app initializes with a new install and default-off categories, then the player enables a category with notification permission granted before its first eligible earned event
+- **THEN** its stable channel is already registered before finalization, the receipt remains pending, and the worker posts one notification rather than suppressing it for a missing channel
+
+### Requirement: Missing channels are not user-disabled
+A missing channel SHALL indicate incomplete registration, not a user-disabled channel. The app SHALL retain the durable handoff and retry registration rather than terminally suppressing the receipt. It SHALL NOT replace a channel ID to bypass a user's settings.
+
+#### Scenario: Channel registration is incomplete
+- **WHEN** finalization reaches an event before its required channel is available
+- **THEN** the durable handoff remains available for retry and is not terminally suppressed as though the user had disabled the channel
+
+#### Scenario: Existing channel is disabled
+- **WHEN** an eligible event is finalized while its already-registered Android channel is disabled
+- **THEN** its receipt is terminally suppressed, the in-app claim remains available, and no replacement channel ID is created
+
 ### Requirement: Enabling or restoring does not replay suppressed alerts
 A terminally suppressed receipt SHALL NOT be reopened by later enabling a preference or permission. Restore SHALL NOT import receipts or reconstruct them from historical progress or in-app claims.
 

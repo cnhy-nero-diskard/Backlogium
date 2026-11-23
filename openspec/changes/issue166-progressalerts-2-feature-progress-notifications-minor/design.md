@@ -16,6 +16,8 @@ Every committed quest-met or streak-broken event gets a durable notification rec
 
 Earned-event finalization is the eligibility boundary: create each receipt as pending only when its category preference and Android notification permission/channel allow delivery; otherwise persist it as terminally suppressed. Recheck the active account and current controls immediately before posting, and terminally suppress a receipt if they no longer allow delivery. Later enabling a preference or permission does not recreate or reopen receipts from in-app claims or historical progress. Restore excludes notification receipts and does not reconstruct them.
 
+Register every channel used by progress-alert receipts, including default-off categories, during app initialization before earned-event finalization reads channel state. Use stable IDs and idempotent registration so Android retains existing channel settings; never switch IDs to bypass a user-disabled channel. A missing channel means registration is incomplete, not that the user disabled it: retain the durable handoff and retry registration before deciding eligibility. Channel-based suppression requires a registered channel whose settings disallow delivery; denied permission, disabled app-wide notifications, or category opt-out may also terminally suppress a receipt.
+
 ### Put category deliveries behind committed boundaries
 
 Capture owned acquisitions from the finalized poll arrival set. Move automatic shared admissions into the same dispatch policy while preserving the existing channel and fallback announcement. Use stable notification tags with only-alert-once replacement so a recovered worker cannot create a second visible delivery.

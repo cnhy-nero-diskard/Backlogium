@@ -4,7 +4,7 @@
 
 - [ ] 1.1 Confirm the shared route from the first progressAlerts change. Connect existing earned events and new-game admissions to notification delivery with independent account/event receipts. Test foreground acknowledgement before dispatch, process death after commit but before dispatch, worker retry/duplicate, account switch, suppression, historical enable/restore, deduplication, and retained shared fallback.
 - [ ] 1.2 Detect confirmed completion transitions at the achievement merge boundary. Verify partial data, already complete baselines, estimates and repeated observations do not alert.
-- [ ] 1.3 Add restart-safe delivery and per-channel preferences. Verify permission denial, Android channel and vibration controls, stable notification keys, account reset and existing achievement/shared-channel behavior; confirm suppression never consumes an in-app claim and stays terminal after later enablement.
+- [ ] 1.3 Register stable progress-alert channels during app initialization before finalization checks eligibility, then add restart-safe delivery and per-channel preferences. Test a first-install/first-enabled event, an existing user-disabled channel without a replacement ID, and denied notification permission. Also verify channel and vibration controls, stable notification keys, account reset and existing achievement/shared-channel behavior; confirm suppression never consumes an in-app claim and stays terminal after later enablement.
 
 ## 2. Previous-day recap
 
