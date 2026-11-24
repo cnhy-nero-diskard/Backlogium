@@ -1,14 +1,23 @@
 package com.example.backlogium.ui.analytics
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import org.junit.Assert.assertEquals
@@ -107,8 +116,8 @@ class AnalyticsScreenTest {
         )
 
         composeRule.onNodeWithText("Lifetime streaks").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Current").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Longest").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Current")[1].performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Longest")[0].performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Quest outcomes in this window").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Quest met").performScrollTo().assertIsDisplayed()
     }
@@ -133,14 +142,56 @@ class AnalyticsScreenTest {
         composeRule.onNodeWithText("2 zero-minute dates omitted", substring = true)
             .performScrollTo()
             .assertIsDisplayed()
-        composeRule.onNode(
-            hasContentDescription("2 no-play dates omitted", substring = true),
-        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_ANALYTICS_CHART)
+            .assert(hasContentDescription("2 no-play dates omitted", substring = true))
         composeRule.onNodeWithText("Session-start attribution").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(
             "Recorded session minutes are grouped by local start hour",
             substring = true,
         ).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun largeTextWindowControlsAndOfflineChartNavigationFitNarrowViewport() {
+        val state = analyticsState(
+            isCurrentWindow = false,
+            canStepEarlier = true,
+            canStepLater = true,
+        )
+        var selectedLength: AnalyticsWindowLength? = null
+        var earlier = 0
+        var later = 0
+
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1.5f)) {
+                BacklogiumTheme {
+                    Box(Modifier.width(320.dp).height(720.dp)) {
+                        AnalyticsContent(
+                            state = state,
+                            actions = AnalyticsActions(
+                                onLengthSelected = { selectedLength = it },
+                                onStepEarlier = { earlier++ },
+                                onStepLater = { later++ },
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag(TAG_ANALYTICS_WINDOW_OPTIONS).performScrollTo().performClick()
+        composeRule.onNodeWithText("2 weeks", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("1 year", useUnmergedTree = true).performScrollTo().performClick()
+        assertEquals(AnalyticsWindowLength.ONE_YEAR, selectedLength)
+
+        composeRule.onNodeWithTag(TAG_ANALYTICS_EARLIER).performScrollTo().performClick()
+        composeRule.onNodeWithTag(TAG_ANALYTICS_LATER).performScrollTo().performClick()
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PREVIOUS_DAY).performScrollTo().performClick()
+        composeRule.onNode(hasContentDescription("Daily playtime chart", substring = true))
+            .performScrollTo().assertIsDisplayed()
+        assertEquals(1, earlier)
+        assertEquals(1, later)
     }
 
     @Test

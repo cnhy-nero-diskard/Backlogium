@@ -8,4 +8,4 @@
 
 ## 2. Integration
 
-- [ ] 2.1 Exercise narrow and large-text window states and offline chart navigation. Re-record and verify affected baselines and check Personal Momentum still uses its own fixed periods.
+- [x] 2.1 Exercise narrow and large-text window states and offline chart navigation. Re-record and verify affected baselines and check Personal Momentum still uses its own fixed periods.
