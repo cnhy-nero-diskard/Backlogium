@@ -71,6 +71,31 @@ class AnalyticsScreenTest {
     }
 
     @Test
+    fun questStatusAndDenominatorUseStoredOutcomes() {
+        setContent(
+            state = analyticsState().copy(
+                dailyMinutes = listOf(
+                    AnalyticsDay(TODAY.minusDays(2), 30, questMet = null),
+                    // The total reaches the visible threshold, but the stored focus-only outcome did not.
+                    AnalyticsDay(TODAY.minusDays(1), 90, questMet = false),
+                    // The total is below the threshold, but the stored outcome says the quest was met.
+                    AnalyticsDay(TODAY, 45, questMet = true),
+                ),
+                questMetDaysCount = 1,
+                questOutcomesAvailableDayCount = 2,
+                questOutcomesUnavailableDayCount = 1,
+            ),
+        )
+
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PREVIOUS_DAY).performScrollTo().performClick()
+        composeRule.onNodeWithText("Quest not met").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PREVIOUS_DAY).performScrollTo().performClick()
+        composeRule.onNodeWithText("Quest outcome unavailable").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("1/2").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("1 date has no stored quest outcome.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun initialLoadingStateHidesSentinelPeriodMetadata() {
         // The bare default carries the 1970 INITIAL_WINDOW sentinel with loading=true and no
         // snapshot yet: no period identity, length, or option row may surface from it.
@@ -140,14 +165,16 @@ class AnalyticsScreenTest {
         isCurrentWindow = isCurrentWindow,
         headline = AnalyticsHeadline.Compared(currentMinutes = 135, previousMinutes = 90),
         dailyMinutes = listOf(
-            AnalyticsDay(TODAY.minusDays(2), 0),
-            AnalyticsDay(TODAY.minusDays(1), 90),
-            AnalyticsDay(TODAY, 45),
+            AnalyticsDay(TODAY.minusDays(2), 0, questMet = false),
+            AnalyticsDay(TODAY.minusDays(1), 90, questMet = false),
+            AnalyticsDay(TODAY, 45, questMet = true),
         ),
         questThreshold = 60,
         currentStreak = 2,
         longestStreak = 5,
         questMetDaysCount = 1,
+        questOutcomesAvailableDayCount = 3,
+        questOutcomesUnavailableDayCount = 0,
         topGames = listOf(AnalyticsGame(1L, "Game X", "", 135)),
         sessionInsights = SessionInsights(sessionCount = 3, averageMinutes = 45, longestMinutes = 90),
         timeOfDayPattern = TimeOfDayPattern(eveningMinutes = 135),

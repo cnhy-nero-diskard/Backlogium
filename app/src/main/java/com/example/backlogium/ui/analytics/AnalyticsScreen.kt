@@ -234,7 +234,8 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.representedDayCount,
+                questOutcomesAvailableDayCount = state.questOutcomesAvailableDayCount,
+                questOutcomesUnavailableDayCount = state.questOutcomesUnavailableDayCount,
             )
             if (state.pendingDateUnknownMinutes > 0) {
                 PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
@@ -260,7 +261,8 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.representedDayCount,
+                questOutcomesAvailableDayCount = state.questOutcomesAvailableDayCount,
+                questOutcomesUnavailableDayCount = state.questOutcomesUnavailableDayCount,
             )
 
             SessionInsightsCard(
@@ -723,14 +725,7 @@ private fun DailyPlaytimeChart(
     val selectedDayLabel = selectedDay?.date?.format(dayFormatter)
         ?: stringResource(R.string.analytics_no_day_selected)
     val selectedDayDescription = selectedDay?.let { day ->
-        val goal = when {
-            questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
-            day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
-            else -> stringResource(
-                R.string.analytics_to_goal,
-                UiFormat.localizedMinutes(questThreshold - day.minutes),
-            )
-        }
+        val goal = analyticsDayQuestOutcomeLabel(day.questMet, questThreshold)
         val games = gamesByDate[day.date].orEmpty()
         val breakdown = if (games.isEmpty()) {
             stringResource(R.string.analytics_no_games_day)
@@ -980,14 +975,7 @@ private fun DailyPlaytimeChart(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = when {
-                                questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
-                                day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
-                                else -> stringResource(
-                                    R.string.analytics_to_goal,
-                                    UiFormat.localizedMinutes(questThreshold - day.minutes),
-                                )
-                            },
+                            text = analyticsDayQuestOutcomeLabel(day.questMet, questThreshold),
                             style = MaterialTheme.typography.labelSmall,
                             color = labelColor,
                         )
@@ -1009,7 +997,7 @@ private fun DailyPlaytimeChart(
                             text = UiFormat.localizedMinutes(day.minutes),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = if (day.minutes >= questThreshold && questThreshold > 0) {
+                            color = if (day.questMet == true) {
                                 thresholdColor
                             } else {
                                 barColor
@@ -1087,7 +1075,8 @@ private fun StreakSummaryCard(
     currentStreak: Int,
     longestStreak: Int,
     questMetDaysCount: Int,
-    windowDays: Int,
+    questOutcomesAvailableDayCount: Int,
+    questOutcomesUnavailableDayCount: Int,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1119,7 +1108,7 @@ private fun StreakSummaryCard(
                     value = stringResource(
                         R.string.analytics_quest_met_count,
                         UiFormat.count(questMetDaysCount),
-                        UiFormat.count(windowDays),
+                        UiFormat.count(questOutcomesAvailableDayCount),
                     ),
                 )
             }
@@ -1129,8 +1118,28 @@ private fun StreakSummaryCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (questOutcomesUnavailableDayCount > 0) {
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.analytics_quest_outcomes_unavailable,
+                        questOutcomesUnavailableDayCount,
+                        UiFormat.count(questOutcomesUnavailableDayCount),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun analyticsDayQuestOutcomeLabel(questMet: Boolean?, questThreshold: Int): String = when {
+    questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
+    questMet == true -> stringResource(R.string.analytics_daily_goal_met)
+    questMet == false -> stringResource(R.string.analytics_quest_outcome_not_met)
+    else -> stringResource(R.string.analytics_quest_outcome_unavailable)
 }
 
 @Composable

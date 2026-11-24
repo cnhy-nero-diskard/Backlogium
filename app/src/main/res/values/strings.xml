@@ -713,7 +713,13 @@
     <string name="analytics_longest_streak">Longest</string>
     <string name="analytics_quest_met">Quest met</string>
     <string name="analytics_quest_met_count">%1$s/%2$s</string>
-    <string name="analytics_streak_note">Current and longest are all-time counters; quest met follows this window.</string>
+    <string name="analytics_streak_note">Current and longest are all-time counters. Quest met uses stored outcomes in this window.</string>
+    <string name="analytics_quest_outcome_not_met">Quest not met</string>
+    <string name="analytics_quest_outcome_unavailable">Quest outcome unavailable</string>
+    <plurals name="analytics_quest_outcomes_unavailable">
+        <item quantity="one">%1$s date has no stored quest outcome.</item>
+        <item quantity="other">%1$s dates have no stored quest outcome.</item>
+    </plurals>
     <string name="analytics_most_played">Most played</string>
     <string name="analytics_no_tracked_playtime">No tracked playtime in %1$s yet.</string>
     <string name="analytics_family_sharing">Family Sharing</string>

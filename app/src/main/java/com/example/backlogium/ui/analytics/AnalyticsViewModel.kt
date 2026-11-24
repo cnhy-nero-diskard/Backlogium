@@ -49,7 +49,28 @@ data class AnalyticsDay(
     val minutes: Int,
     /** Minutes of [minutes] that came from dated unknown-time allocations. */
     val estimatedMinutes: Int = 0,
+    /** Stored daily quest outcome, or null when no outcome was recorded for this date. */
+    val questMet: Boolean? = null,
 )
+
+/** Quest consistency is measured only against dates with a stored outcome. */
+data class AnalyticsQuestOutcomeSummary(
+    val metDays: Int,
+    val availableDays: Int,
+    val unavailableDays: Int,
+)
+
+internal fun deriveAnalyticsQuestOutcomeSummary(
+    representedDates: List<LocalDate>,
+    outcomesByDate: Map<LocalDate, Boolean>,
+): AnalyticsQuestOutcomeSummary {
+    val available = representedDates.count { it in outcomesByDate }
+    return AnalyticsQuestOutcomeSummary(
+        metDays = representedDates.count { outcomesByDate[it] == true },
+        availableDays = available,
+        unavailableDays = representedDates.size - available,
+    )
+}
 
 /** One row in a most-played or inspected-day games list. */
 data class AnalyticsGame(
@@ -204,6 +225,10 @@ data class AnalyticsUiState(
     val longestStreak: Int = 0,
     /** Count of quest-met days inside the selected window. */
     val questMetDaysCount: Int = 0,
+    /** Represented dates with a stored quest outcome, used as the consistency denominator. */
+    val questOutcomesAvailableDayCount: Int = 0,
+    /** Represented dates without a stored quest outcome. */
+    val questOutcomesUnavailableDayCount: Int = 0,
     /** Up to five games ranked by tracked minutes in the selected window, descending. */
     val topGames: List<AnalyticsGame> = emptyList(),
     /** All-time rarity tier breakdown of unlocked achievements. */
@@ -249,6 +274,8 @@ data class AnalyticsUiState(
 
 private data class AnalyticsInputs(
     val window: AnalyticsWindow,
+    /** The exact represented-date scope queried for this retained snapshot. */
+    val activityBounds: AnalyticsWindowBounds,
     val sessions: List<PlaySession>,
     val datedTotals: List<DatedCreditedTotal>,
     val previousMinutesByGame: Map<Long, Int>,
@@ -294,7 +321,8 @@ private data class DatedAnalyticsWindow(
 private data class ResolvedAnalyticsWindow(
     val window: AnalyticsWindow,
     val today: LocalDate,
-    val bounds: AnalyticsWindowBounds,
+    /** Dates that all windowed data sources are allowed to represent. */
+    val activityBounds: AnalyticsWindowBounds,
     val epochBounds: HistoryWindowBounds,
     val earliestTrackedDate: LocalDate?,
     val canStepEarlier: Boolean,
@@ -376,14 +404,14 @@ class AnalyticsViewModel @Inject constructor(
         earliest: LocalDate?,
         today: LocalDate,
     ): ResolvedAnalyticsWindow {
-        val bounds = window.resolve()
+        val activityBounds = window.resolveActivityBounds(today, earliest)
         return ResolvedAnalyticsWindow(
             window = window,
             today = today,
-            bounds = bounds,
+            activityBounds = activityBounds,
             epochBounds = historyWindowBounds(
-                start = bounds.start,
-                endInclusive = bounds.endInclusive,
+                start = activityBounds.start,
+                endInclusive = activityBounds.endInclusive,
                 zone = time.zone(),
             ),
             earliestTrackedDate = earliest,
@@ -490,13 +518,13 @@ class AnalyticsViewModel @Inject constructor(
                 ),
                 sessionRepository.datedCreditedTotalsBetween(
                     zone = time.zone(),
-                    startDateInclusive = resolved.bounds.start,
-                    endDateExclusive = resolved.bounds.endInclusive.plusDays(1),
+                    startDateInclusive = resolved.activityBounds.start,
+                    endDateExclusive = resolved.activityBounds.endInclusive.plusDays(1),
                 ),
                 previousMinutesFlow,
                 sessionRepository.datedAllocationsBetween(
-                    startInclusiveDate = resolved.bounds.start,
-                    endInclusiveDate = resolved.bounds.endInclusive,
+                    startInclusiveDate = resolved.activityBounds.start,
+                    endInclusiveDate = resolved.activityBounds.endInclusive,
                 ),
             ) { sessions, datedTotals, previousMinutesByGame, allocations ->
                 AnalyticsWindowed(sessions, datedTotals, previousMinutesByGame, allocations)
@@ -508,6 +536,7 @@ class AnalyticsViewModel @Inject constructor(
         ) { current, library, dailyProgress, profile, pending ->
             AnalyticsInputs(
                 window = resolved.window,
+                activityBounds = resolved.activityBounds,
                 sessions = current.sessions,
                 datedTotals = current.datedTotals,
                 previousMinutesByGame = current.previousMinutesByGame,
@@ -530,27 +559,30 @@ class AnalyticsViewModel @Inject constructor(
         // The period identity stays the full calendar period for labels and navigation, while
         // activity is represented only within observed history through today.
         val periodBounds = inputs.window.resolve()
-        val dataBounds = inputs.window.resolveActivityBounds(
-            today = resolved.today,
-            earliestTrackedDate = resolved.earliestTrackedDate,
-        )
+        // Keep the old snapshot and its exact query bounds together while a new window loads.
+        val dataBounds = inputs.activityBounds
         val dates = dataBounds.dates()
         val gamesById = inputs.library.associateBy { it.appId }
         val allocationsByDate = inputs.allocations.groupBy { it.date }
         val totalsByDate = inputs.datedTotals.associateBy { it.date }
+        val progressByDate = inputs.dailyProgress.mapNotNull { progress ->
+            runCatching { LocalDate.parse(progress.date) }
+                .getOrNull()
+                ?.let { date -> date to progress }
+        }.toMap()
+        val questOutcomes = deriveAnalyticsQuestOutcomeSummary(
+            representedDates = dates,
+            outcomesByDate = progressByDate.mapValues { (_, progress) -> progress.questMet },
+        )
         val dailyMinutes = dates.map { date ->
             AnalyticsDay(
                 date = date,
                 minutes = totalsByDate[date]?.minutes
                     ?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: 0,
                 estimatedMinutes = allocationsByDate[date]?.sumOf { it.minutes } ?: 0,
+                questMet = progressByDate[date]?.questMet,
             )
         }
-
-        val progressByDate = inputs.dailyProgress.associateBy {
-            runCatching { LocalDate.parse(it.date) }.getOrNull()
-        }
-        val questMetDaysCount = dates.count { date -> progressByDate[date]?.questMet == true }
 
         val allocationMinutesByGame = inputs.allocations.groupBy { it.appId }
             .mapValues { (_, allocations) -> allocations.sumOf { it.minutes } }
@@ -655,7 +687,9 @@ class AnalyticsViewModel @Inject constructor(
             questThreshold = ruleConfig.questThresholdMin,
             currentStreak = inputs.profile?.currentStreak ?: 0,
             longestStreak = inputs.profile?.longestStreak ?: 0,
-            questMetDaysCount = questMetDaysCount,
+            questMetDaysCount = questOutcomes.metDays,
+            questOutcomesAvailableDayCount = questOutcomes.availableDays,
+            questOutcomesUnavailableDayCount = questOutcomes.unavailableDays,
             topGames = topGames,
             rarityBreakdown = rarityBreakdown,
             rarestAchievements = rarestAchievements,

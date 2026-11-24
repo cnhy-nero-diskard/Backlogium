@@ -2,7 +2,7 @@
 
 ## 1. Analytics scope and presentation
 
-- [ ] 1.1 Audit elapsed and pre-tracking date bounds and quest denominators. Verify current and past calendar periods, focus-only credit, unavailable outcomes and retained snapshot scoping.
+- [x] 1.1 Audit elapsed and pre-tracking date bounds and quest denominators. Verify current and past calendar periods, focus-only credit, unavailable outcomes and retained snapshot scoping.
 - [ ] 1.2 Apply active-day average wording and separate lifetime figures from windowed results. Verify window changes do not relabel retained or lifetime data.
 - [ ] 1.3 Label clock buckets as session-start attribution and retain explicit dates in active-only views. Verify overnight sessions, timing-free allocations, date gaps and accessible day inspection.
 
