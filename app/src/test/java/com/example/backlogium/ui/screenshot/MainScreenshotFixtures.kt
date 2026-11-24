@@ -88,6 +88,7 @@ import com.example.backlogium.ui.settings.SettingsUiState
 import com.example.backlogium.work.GenreEnrichmentStatus
 import java.time.Instant
 import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
 
 /** Representative states used to cover the five primary destinations and high-risk alternatives. */
 internal enum class MainFixtureKind {
@@ -124,6 +125,8 @@ internal fun MainScreenshotFixtureHost(fixture: MainScreenshotFixture) {
     val context = LocalContext.current
     val imageLoader = remember(context) {
         ImageLoader.Builder(context)
+            // Complete in-memory artwork loads inline so captures see the resolved images.
+            .fetcherDispatcher(Dispatchers.Main.immediate)
             .components { add(FixtureArtworkFetcher.Factory(fixture.kind == MainFixtureKind.DETAIL_MISSING)) }
             .build()
     }
