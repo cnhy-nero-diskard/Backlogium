@@ -19,6 +19,8 @@ import com.example.backlogium.data.repo.DataStoreProgressMarksStore
 import com.example.backlogium.data.repo.AndroidSharedGameNotifier
 import com.example.backlogium.data.repo.DataStoreSettingsRepository
 import com.example.backlogium.data.repo.GameRepository
+import com.example.backlogium.data.repo.GameNotificationTargetValidator
+import com.example.backlogium.data.repo.GameNotificationTargets
 import com.example.backlogium.data.repo.PresenceObserver
 import com.example.backlogium.data.repo.PresenceSessionRecorder
 import com.example.backlogium.data.repo.SessionEndOutbox
@@ -71,6 +73,9 @@ import kotlin.random.Random
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class AppModule {
+
+    @Binds
+    abstract fun bindGameNotificationTargetValidator(impl: GameNotificationTargets): GameNotificationTargetValidator
 
     @Binds
     @Singleton

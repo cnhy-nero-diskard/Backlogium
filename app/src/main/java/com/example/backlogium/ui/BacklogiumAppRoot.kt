@@ -66,7 +66,6 @@ import com.example.backlogium.ui.updates.AppUpdateViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 
@@ -137,15 +136,12 @@ internal fun BacklogiumAppRoot(
         val routeReady = navController.currentBackStackEntryFlow.map { entry ->
             entry.destination.route != ROUTE_ONBOARDING && entry.destination.route != ROUTE_SETUP
         }
-        gameNotifications.requests.collectLatest { target ->
-            val canOpen = gameNotifications.canOpen(target, routeReady)
-            if (gameNotifications.consume(target) && canOpen) {
-                val current = navController.currentBackStackEntry
-                if (current?.destination?.route != ROUTE_GAME_DETAIL ||
-                    current.arguments?.getLong("appId") != target.appId
-                ) {
-                    navController.navigate(gameDetailRoute(target.appId))
-                }
+        gameNotifications.collectOpenRequests(routeReady) { target ->
+            val current = navController.currentBackStackEntry
+            if (current?.destination?.route != ROUTE_GAME_DETAIL ||
+                current.arguments?.getLong("appId") != target.appId
+            ) {
+                navController.navigate(gameDetailRoute(target.appId))
             }
         }
     }
