@@ -7,6 +7,11 @@
 <!-- Bullet the notable changes -->
 -
 
+## Implemented specs
+
+<!-- Replace N/A with one link per OpenSpec spec implemented by this branch. Keep N/A if none apply. -->
+N/A
+
 ## Release note
 
 <!-- Add 1-2 short bullets describing the user-visible result in plain language. Keep each bullet

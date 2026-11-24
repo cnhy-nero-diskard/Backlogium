@@ -113,10 +113,13 @@ git push -u origin <branch>   # -u only when no upstream exists
 gh pr create --base master --title "<prefix>: <summary>" --body "<filled template>"
 ```
 
-Fill every template section (`Summary`, `Changes`, `Release note`, `Testing`,
-`Notes`); check the `Testing` boxes that were actually run, including the
-Roborazzi line. If `no-golden-change` applies, say why in `Notes` and add the
-label.
+Fill every template section (`Summary`, `Changes`, `Implemented specs`,
+`Release note`, `Testing`, `Notes`). In `Implemented specs`, list one GitHub link per
+OpenSpec spec implemented by the branch. Use the committed diff and associated OpenSpec change
+artifacts to identify the specs. Write exactly `N/A` when the branch implements none.
+
+Check the `Testing` boxes that were actually run, including the Roborazzi line.
+If `no-golden-change` applies, say why in `Notes` and add the label.
 
 ## 6. Report
 
