@@ -3706,6 +3706,21 @@ The app SHALL present a claimed foreground unlock group accessibly with game ide
 - **WHEN** a group is presented with reduced motion or TalkBack
 - **THEN** its content/actions remain understandable without animation or color alone
 
+### Requirement: Game notifications open validated game detail
+An explicit game-targeted notification tap SHALL navigate to its game on a cold or warm launch once the current account, setup, and game eligibility can be checked.
+
+#### Scenario: Cold launch
+- **WHEN** a valid account-scoped tap launches the app before navigation is ready
+- **THEN** normal startup completes and the tap opens the requested game with normal Back behavior
+
+#### Scenario: Warm launch
+- **WHEN** the app receives a second tap for the already-open game
+- **THEN** the existing detail is reused without adding a duplicate destination
+
+#### Scenario: Invalid or obsolete target
+- **WHEN** the tap is malformed or belongs to a different account or a hidden, removed, or inaccessible game
+- **THEN** the existing safe destination remains usable and no other game's detail is opened
+
 ### Requirement: Achievement browsing explains catalogue and progress availability
 Game detail SHALL show cached achievement objectives before play, load missing data without blocking the summary, and distinguish loading, unavailable data with retry, confirmed no achievements, and unavailable personal progress. Catalogue-only objectives SHALL NOT be labelled as confirmed locked or used to claim completion or earned XP. Both entry points SHALL expose the same behaviour accessibly.
 

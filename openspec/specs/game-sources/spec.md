@@ -65,6 +65,13 @@ SHALL NOT occur silently.
 - **WHEN** an already-admitted family-shared game is played again
 - **THEN** no admission notification is issued
 
+### Requirement: Shared-game admission notices identify their destination
+An admission notification SHALL carry the initiating account and exact admitted game as its destination. Distinct notices SHALL retain their own destinations when multiple games are admitted.
+
+#### Scenario: Two notices remain visible
+- **WHEN** the player taps the earlier of two distinct admission notices
+- **THEN** navigation targets the game named by the tapped notice
+
 ### Requirement: Manual admission preserves source safety
 A Settings-initiated import SHALL confirm the submitted app id is absent from the configured
 account's current `GetOwnedGames` response and is a game according to the Steam Store before
