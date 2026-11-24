@@ -47,19 +47,29 @@ internal class GameNotificationViewModel @Inject constructor(
         }
     }
 
-    suspend fun canOpen(target: GameNotificationTarget, routeReady: Flow<Boolean>): Boolean =
-        awaitReady(target, routeReady) &&
-            targets.canOpen(target.account, target.appId) &&
-            awaitReady(target, routeReady)
+    suspend fun canOpen(target: GameNotificationTarget, routeReady: Flow<Boolean>): Boolean {
+        if (!awaitReady(target, routeReady)) return false
+        while (true) {
+            if (!targets.canOpen(target.account, target.appId)) return false
+            when (readiness(target, routeReady).first()) {
+                true -> return true
+                false -> return false
+                null -> if (!awaitReady(target, routeReady)) return false
+            }
+        }
+    }
 
     private suspend fun awaitReady(target: GameNotificationTarget, routeReady: Flow<Boolean>): Boolean =
+        readiness(target, routeReady).filterNotNull().first()
+
+    private fun readiness(target: GameNotificationTarget, routeReady: Flow<Boolean>): Flow<Boolean?> =
         combine(accounts.owners, setup.firstRunSetupActive, routeReady) { owner, setupActive, routeIsReady ->
             when {
                 owner?.steamId != target.account -> false
                 setupActive || !routeIsReady -> null
                 else -> true
             }
-        }.filterNotNull().first()
+        }
 
     private fun Bundle.toTarget() = getString("account")?.let { GameNotificationTarget(it, getLong("appId")) }
 }

@@ -54,6 +54,40 @@ class GameNotificationViewModelTest {
         routeReady.value = true
         runCurrent()
         assertEquals(listOf(target), opened)
+        assertEquals(listOf(target, target), validator.validated)
+    }
+
+    @Test
+    fun requestIsRevalidatedAfterSetupInterruptsTargetValidation() = runTest {
+        val setupActive = MutableStateFlow(false)
+        val routeReady = MutableStateFlow(true)
+        val target = GameNotificationTarget(ACCOUNT, 42L)
+        val validator = PausedValidator(target.appId)
+        val viewModel = viewModel(setupActive, validator)
+        val opened = mutableListOf<GameNotificationTarget>()
+
+        backgroundScope.launch {
+            viewModel.collectOpenRequests(routeReady) { opened += it }
+        }
+        viewModel.request(target)
+        runCurrent()
+        assertEquals(target, validator.entered.await())
+
+        setupActive.value = true
+        routeReady.value = false
+        validator.release.complete(true)
+        runCurrent()
+
+        assertTrue(opened.isEmpty())
+        assertEquals(target, viewModel.requests.first())
+
+        validator.eligible = false
+        setupActive.value = false
+        routeReady.value = true
+        runCurrent()
+
+        assertTrue(opened.isEmpty())
+        assertEquals(listOf(target, target), validator.validated)
     }
 
     @Test
@@ -93,15 +127,16 @@ class GameNotificationViewModelTest {
         val entered = CompletableDeferred<GameNotificationTarget>()
         val release = CompletableDeferred<Boolean>()
         val validated = mutableListOf<GameNotificationTarget>()
+        var eligible = true
 
         override suspend fun canOpen(account: String, appId: Long): Boolean {
             val target = GameNotificationTarget(account, appId)
             validated += target
             if (appId == pausedAppId) {
                 entered.complete(target)
-                return release.await()
+                if (!release.await()) return false
             }
-            return true
+            return eligible
         }
     }
 
