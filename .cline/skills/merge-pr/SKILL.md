@@ -97,12 +97,20 @@ gh pr merge <number> --auto --merge --delete-branch
 
 ## Mode B — Bump a version
 
+When asked to merge and bump together, wait for GitHub to report the PR merged
+before starting the version bump.
+
 1. Ensure a clean working tree, then:
    ```bash
    git checkout master
    git pull --ff-only
    ```
-2. Run the bump script (Windows PowerShell or WSL/bash):
+2. Wait for a successful `CI` push run on `master` for the exact commit being tagged.
+   Use `git rev-parse HEAD` and find the run with
+   `gh run list --workflow ci.yml --branch master --event push --commit <sha>`.
+   If the run is pending, watch it with `gh run watch <run-id> --exit-status`.
+   If CI fails or no run appears, report the status and leave the tag uncreated.
+3. Run the bump script (Windows PowerShell or WSL/bash):
    ```powershell
    ./scripts/bump-tag.ps1 -Major   # or -Minor, -Patch
    ```
@@ -110,7 +118,7 @@ gh pr merge <number> --auto --merge --delete-branch
    ./scripts/bump-tag.sh --major   # or --minor, --patch
    ```
    Use `-DryRun` / `--dry-run` first to preview the next tag.
-3. Report the new tag and that it was pushed to origin (this triggers the release
+4. Report the new tag and that it was pushed to origin (this triggers the release
    workflow).
 
 ## Guardrails
