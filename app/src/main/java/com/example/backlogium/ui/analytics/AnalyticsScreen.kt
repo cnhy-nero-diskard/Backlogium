@@ -1091,18 +1091,33 @@ private fun StreakSummaryCard(
                 Text(stringResource(R.string.analytics_streak_summary), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.analytics_lifetime_streaks),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SummaryStat(
                     label = stringResource(R.string.analytics_current_streak),
                     value = UiFormat.count(currentStreak),
+                    modifier = Modifier.weight(1f),
                 )
                 SummaryStat(
                     label = stringResource(R.string.analytics_longest_streak),
                     value = UiFormat.count(longestStreak),
+                    modifier = Modifier.weight(1f),
                 )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            Text(
+                text = stringResource(R.string.analytics_window_quest_outcomes),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
                 SummaryStat(
                     label = stringResource(R.string.analytics_quest_met),
                     value = stringResource(
@@ -1110,6 +1125,7 @@ private fun StreakSummaryCard(
                         UiFormat.count(questMetDaysCount),
                         UiFormat.count(questOutcomesAvailableDayCount),
                     ),
+                    modifier = Modifier.weight(1f),
                 )
             }
             Spacer(Modifier.height(8.dp))

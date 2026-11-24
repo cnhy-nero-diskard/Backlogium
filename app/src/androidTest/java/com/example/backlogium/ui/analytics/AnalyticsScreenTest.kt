@@ -31,6 +31,7 @@ class AnalyticsScreenTest {
         )
 
         composeRule.onNodeWithText("Play snapshot").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Avg per active day").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(
             "2 hrs 15 mins tracked, up from 1 hr 30 mins in the previous period",
         ).performScrollTo().assertIsDisplayed()
@@ -93,6 +94,23 @@ class AnalyticsScreenTest {
         composeRule.onNodeWithText("Quest outcome unavailable").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("1/2").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("1 date has no stored quest outcome.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun lifetimeStreaksAreGroupedApartFromWindowQuestResults() {
+        setContent(
+            state = analyticsState().copy(
+                updating = true,
+                isCurrentWindow = false,
+                canStepLater = true,
+            ),
+        )
+
+        composeRule.onNodeWithText("Lifetime streaks").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Current").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Longest").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Quest outcomes in this window").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Quest met").performScrollTo().assertIsDisplayed()
     }
 
     @Test
