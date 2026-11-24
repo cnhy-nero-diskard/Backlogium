@@ -268,7 +268,7 @@ class LiveStatusRepository @Inject constructor(
         // family-shared game has. Deliberately after the emission above and wrapped: the live card
         // is the caller's reason for being here, and it must not be held up — or lost — by a Room
         // write or an admission lookup. A game with no derivable session makes this a no-op.
-        runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis()) }
+        runCatching { presenceObserver.onObservation(fetched.appId, time.nowMillis(), fetched.steamId) }
         try {
             achievementWatch?.afterPresence(fetched.steamId, watchAppId)
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }

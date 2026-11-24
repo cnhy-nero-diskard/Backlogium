@@ -104,7 +104,11 @@ class FamilySharedGameRepository @Inject constructor(
      *
      * @return the decision reached. [AdmissionDecision.Admit] means a game row now exists.
      */
-    suspend fun considerAdmission(appId: Long, observedAt: Long): AdmissionDecision {
+    suspend fun considerAdmission(appId: Long, observedAt: Long, account: String): AdmissionDecision {
+        val profile = profileDao.get()
+        if (profile != null && profile.steamId.isNotBlank() && profile.steamId != account) {
+            return AdmissionDecision.AwaitingSync
+        }
         if (settings.isSharedGameNotAGame(appId)) {
             clearCandidateIfCurrent(appId)
             return AdmissionDecision.NotAGame
@@ -120,7 +124,7 @@ class FamilySharedGameRepository @Inject constructor(
             isTracked = gameDao.getById(appId) != null,
             isExcluded = excludedDao.isExcluded(appId),
             firstObservedAt = firstObservedAt,
-            lastSuccessfulSyncAt = profileDao.get()?.lastSyncAt ?: 0L,
+            lastSuccessfulSyncAt = profile?.takeIf { it.steamId == account }?.lastSyncAt ?: 0L,
         )
 
         val screened = policy.evaluate(facts)
@@ -150,8 +154,7 @@ class FamilySharedGameRepository @Inject constructor(
         }
         if (verified != AdmissionDecision.Admit || info !is StoreAppInfo.Game) return verified
 
-        admit(appId, info, observedAt)
-        return AdmissionDecision.Admit
+        return admit(appId, info, observedAt, account)
     }
 
     suspend fun importManually(
@@ -207,7 +210,7 @@ class FamilySharedGameRepository @Inject constructor(
             )
             is StoreAppInfo.Game -> Unit
         }
-        admit(appId, info, time.nowMillis(), announce = false)
+        admit(appId, info, time.nowMillis())
         return importedResult(appId, info.name, false, apiKey, steamId)
     }
 
@@ -309,28 +312,28 @@ class FamilySharedGameRepository @Inject constructor(
         appId: Long,
         info: StoreAppInfo.Game,
         observedAt: Long,
-        announce: Boolean = true,
-    ) {
-        // Icon hash comes from GetOwnedGames, which by definition has nothing to say about a
-        // borrowed game. Left blank: header and capsule artwork are derived from the app id alone,
-        // so the game still arrives with artwork, and every icon consumer already treats a blank
-        // icon as "use the derived art".
-        gameDao.insertSharedGameIfMissing(
-            appId = appId,
-            name = info.name,
-            iconUrl = "",
-            admittedAt = observedAt,
-        )
-        // One announcement per admission. `INSERT OR IGNORE` above makes a second observation of an
-        // already-admitted game a no-op, and the policy's AlreadyTracked screen means this line is
-        // not reached for one at all — a game observed again is rejected before any of this runs.
+        notificationAccount: String? = null,
+    ): AdmissionDecision {
+        val decision = transaction.run {
+            // Store verification may return after an account reset, a sync, or a removal.
+            if (notificationAccount != null) {
+                if (profileDao.get()?.steamId != notificationAccount) return@run AdmissionDecision.AwaitingSync
+                if (gameDao.getById(appId) != null) return@run AdmissionDecision.AlreadyTracked
+                if (excludedDao.isExcluded(appId)) return@run AdmissionDecision.Excluded
+            }
+            // Steam only reports icon hashes for owned games. Shared games use derived artwork.
+            gameDao.insertSharedGameIfMissing(appId, info.name, "", observedAt)
+            AdmissionDecision.Admit
+        }
+        if (decision != AdmissionDecision.Admit) return decision
         // Best-effort: a genre-cache write failure must not undo an otherwise-valid admission,
         // and background enrichment would resolve them later anyway.
         runCatching { genres.storeGenres(appId, info.genres, info.categories) }
         clearCandidateIfCurrent(appId)
-        if (announce && !notifier.notifyAdmitted(appId, info.name)) {
+        if (notificationAccount != null && !notifier.notifyAdmitted(notificationAccount, appId, info.name)) {
             settings.setSharedGameAnnouncement(appId, info.name, time.nowMillis())
         }
+        return decision
     }
 
     private suspend fun importedResult(

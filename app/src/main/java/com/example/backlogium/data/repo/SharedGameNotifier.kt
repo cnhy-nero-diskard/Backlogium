@@ -7,12 +7,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.example.backlogium.MainActivity
+import com.example.backlogium.GameNotificationIntent
+import com.example.backlogium.GameNotificationTarget
 import com.example.backlogium.R
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -26,9 +26,9 @@ import javax.inject.Singleton
  * An interface so admission stays testable without Android, mirroring
  * [com.example.backlogium.data.updates.UpdateNotifier].
  */
-interface SharedGameNotifier {
+fun interface SharedGameNotifier {
     /** @return true when a notification was actually posted. */
-    fun notifyAdmitted(appId: Long, name: String): Boolean
+    fun notifyAdmitted(account: String, appId: Long, name: String): Boolean
 }
 
 @Singleton
@@ -36,7 +36,7 @@ class AndroidSharedGameNotifier @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : SharedGameNotifier {
 
-    override fun notifyAdmitted(appId: Long, name: String): Boolean = runCatching {
+    override fun notifyAdmitted(account: String, appId: Long, name: String): Boolean = runCatching {
         if (!canPostNotifications()) return false
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false
         manager.createNotificationChannel(
@@ -46,12 +46,13 @@ class AndroidSharedGameNotifier @Inject constructor(
                 NotificationManager.IMPORTANCE_DEFAULT,
             ),
         )
+        val launchIntent = GameNotificationIntent.create(
+            context, GameNotificationTarget(account, appId), "shared-admission",
+        )
         val contentIntent = PendingIntent.getActivity(
             context,
-            // Distinct per game, so a second admission does not silently replace the first's
-            // intent while both notifications are still on screen.
-            appId.toInt(),
-            Intent(context, MainActivity::class.java),
+            0,
+            launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val text = "Played through Family Sharing. Tracked time is what Backlogium observes."
@@ -63,8 +64,7 @@ class AndroidSharedGameNotifier @Inject constructor(
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .build()
-        // Per-game id: admitting a second game must not overwrite the first announcement.
-        postNotification(NOTIFICATION_ID_BASE + appId.toInt(), notification)
+        postNotification(launchIntent.dataString, notification)
         true
     }.getOrDefault(false)
 
@@ -78,12 +78,12 @@ class AndroidSharedGameNotifier @Inject constructor(
      * [com.example.backlogium.data.updates.AndroidUpdateNotifier].
      */
     @SuppressLint("MissingPermission")
-    private fun postNotification(notificationId: Int, notification: Notification) {
-        NotificationManagerCompat.from(context).notify(notificationId, notification)
+    private fun postNotification(tag: String?, notification: Notification) {
+        NotificationManagerCompat.from(context).notify(tag, NOTIFICATION_ID, notification)
     }
 
     private companion object {
         const val CHANNEL_ID = "shared_games"
-        const val NOTIFICATION_ID_BASE = 4400
+        const val NOTIFICATION_ID = 4400
     }
 }

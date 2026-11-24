@@ -24,6 +24,7 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
+import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -49,6 +50,7 @@ import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.AdmissionDecision
 import com.example.backlogium.domain.FakeDailyProgressDao
 import com.example.backlogium.domain.FakeGameDao
 import com.example.backlogium.domain.FakeHiddenGameDao
@@ -66,6 +68,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -261,9 +264,7 @@ class FamilySharedGameRepositoryTest {
             time = FixedTimeProvider,
         ),
         policy = com.example.backlogium.domain.SharedGameAdmissionPolicy(),
-        notifier = object : SharedGameNotifier {
-            override fun notifyAdmitted(appId: Long, name: String): Boolean = false
-        },
+        notifier = SharedGameNotifier { _, _, _ -> false },
         steamApi = noOpProxy(SteamApi::class.java),
         time = FixedTimeProvider,
         sessionDao = database.sessionDao(),
@@ -526,6 +527,37 @@ class FamilySharedGameRepositoryTest {
         )
     }
 
+    @Test
+    fun `automatic admission announces the observed account only while its library can be committed`() = runTest {
+        val account = "76561198000000206"
+        val gameDao = FakeGameDao(emptyList())
+        val profileDao = FakePlayerProfileDao(PlayerProfile(steamId = account, lastSyncAt = 20L))
+        val settings = settingsFixture.create()
+        val notices = mutableListOf<Triple<String, Long, String>>()
+        val repository = repository(
+            gameDao = gameDao,
+            profileDao = profileDao,
+            settings = settings,
+            storeApi = FakeSteamStoreApi(respond = { id ->
+                if (id == 2L) profileDao.resetForAccountChange("76561198000000207")
+                Response.success(mapOf(id.toString() to StoreAppDetails(true, StoreAppData(type = "game", name = "Shared $id"))))
+            }),
+            notifier = SharedGameNotifier { owner, appId, name ->
+                notices += Triple(owner, appId, name)
+                true
+            },
+        )
+
+        settings.setSharedGameCandidate(1L, 10L)
+        assertEquals(AdmissionDecision.Admit, repository.considerAdmission(1L, 30L, account))
+        assertEquals(GameSource.FAMILY_SHARED, gameDao.getById(1L)?.source)
+        assertEquals(AdmissionDecision.AlreadyTracked, repository.considerAdmission(1L, 31L, account))
+        settings.setSharedGameCandidate(2L, 10L)
+        assertEquals(AdmissionDecision.AwaitingSync, repository.considerAdmission(2L, 30L, account))
+        assertNull(gameDao.getById(2L))
+        assertEquals(listOf(Triple(account, 1L, "Shared 1")), notices)
+    }
+
     private fun repository(
         gameDao: GameDao = FakeGameDao(emptyList()),
         excludedDao: ExcludedSharedGameDao = FakeExcludedSharedGameDao(),
@@ -541,6 +573,7 @@ class FamilySharedGameRepositoryTest {
         sessionDao: SessionDao = FakeSessionDao(emptyList()),
         dailyProgressDao: DailyProgressDao = FakeDailyProgressDao(emptyList()),
         profileDao: PlayerProfileDao = FakePlayerProfileDao(),
+        notifier: SharedGameNotifier = SharedGameNotifier { _, _, _ -> false },
     ) = FamilySharedGameRepository(
         gameDao = gameDao,
         excludedDao = excludedDao,
@@ -553,9 +586,7 @@ class FamilySharedGameRepositoryTest {
             time = FixedTimeProvider,
         ),
         policy = com.example.backlogium.domain.SharedGameAdmissionPolicy(),
-        notifier = object : SharedGameNotifier {
-            override fun notifyAdmitted(appId: Long, name: String): Boolean = false
-        },
+        notifier = notifier,
         steamApi = steamApi,
         time = FixedTimeProvider,
         sessionDao = sessionDao,
