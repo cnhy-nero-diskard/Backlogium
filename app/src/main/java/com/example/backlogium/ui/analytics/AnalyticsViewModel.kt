@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 /** One bar in the daily playtime chart: a local date and that day's tracked minutes. */
@@ -52,6 +53,29 @@ data class AnalyticsDay(
     /** Stored daily quest outcome, or null when no outcome was recorded for this date. */
     val questMet: Boolean? = null,
 )
+
+data class AnalyticsDateGap(val start: LocalDate, val endInclusive: LocalDate) {
+    val dayCount: Int get() = java.time.temporal.ChronoUnit.DAYS.between(start, endInclusive).toInt() + 1
+}
+
+/** Zero-minute intervals immediately before and after a selected visible day. */
+internal fun analyticsDateGaps(
+    representedDays: List<AnalyticsDay>,
+    visibleDays: List<AnalyticsDay>,
+    selectedVisibleIndex: Int,
+): List<AnalyticsDateGap> {
+    val selected = visibleDays.getOrNull(selectedVisibleIndex) ?: return emptyList()
+    val first = representedDays.firstOrNull()?.date ?: return emptyList()
+    val last = representedDays.lastOrNull()?.date ?: return emptyList()
+    val previousBoundary = visibleDays.getOrNull(selectedVisibleIndex - 1)?.date ?: first.minusDays(1)
+    val nextBoundary = visibleDays.getOrNull(selectedVisibleIndex + 1)?.date ?: last.plusDays(1)
+    return listOfNotNull(
+        AnalyticsDateGap(previousBoundary.plusDays(1), selected.date.minusDays(1))
+            .takeIf { !it.endInclusive.isBefore(it.start) },
+        AnalyticsDateGap(selected.date.plusDays(1), nextBoundary.minusDays(1))
+            .takeIf { !it.endInclusive.isBefore(it.start) },
+    )
+}
 
 /** Quest consistency is measured only against dates with a stored outcome. */
 data class AnalyticsQuestOutcomeSummary(
@@ -142,6 +166,22 @@ data class TimeOfDayPattern(
             TimeOfDayBucket.NIGHT to nightMinutes,
         ).filter { it.second > 0 }.maxByOrNull { it.second }?.first
 }
+
+internal fun deriveTimeOfDayPattern(
+    sessions: List<PlaySession>,
+    zone: ZoneId,
+): TimeOfDayPattern = sessions.fold(TimeOfDayPattern()) { acc, session ->
+    val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
+    when (hour) {
+        in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
+        in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
+        in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
+        else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
+    }
+}
+
+internal fun analyticsTimingUnavailable(totalMinutes: Int, sessions: List<PlaySession>): Boolean =
+    totalMinutes > 0 && sessions.isEmpty()
 
 /** A factual first sentence for the selected Analytics window. */
 sealed interface AnalyticsHeadline {
@@ -643,20 +683,12 @@ class AnalyticsViewModel @Inject constructor(
             )
         }
 
-        val timeOfDayPattern = inputs.sessions.fold(TimeOfDayPattern()) { acc, session ->
-            val hour = Instant.ofEpochMilli(session.startAt).atZone(time.zone()).hour
-            when (hour) {
-                in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
-                in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
-                in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
-                else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
-            }
-        }
+        val timeOfDayPattern = deriveTimeOfDayPattern(inputs.sessions, time.zone())
 
         // Session-shape and time-of-day inputs stay session-only. A period with played minutes but
         // zero sessions is an allocations-only window: the chart and totals are honest, while the
         // session insights must state that timing is unavailable rather than show measured zeros.
-        val timingUnavailable = totalMinutes > 0 && inputs.sessions.isEmpty()
+        val timingUnavailable = analyticsTimingUnavailable(totalMinutes, inputs.sessions)
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,

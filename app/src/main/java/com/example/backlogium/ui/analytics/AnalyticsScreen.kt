@@ -247,6 +247,7 @@ internal fun AnalyticsContent(
         } else {
             DailyPlaytimeChart(
                 days = chartDays,
+                representedDays = state.dailyMinutes,
                 questThreshold = state.questThreshold,
                 gamesByDate = state.gamesByDate,
                 estimatedSharesByDate = state.estimatedSharesByDate,
@@ -539,6 +540,15 @@ private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBo
 }
 
 @Composable
+private fun analyticsDateGapLabel(gap: AnalyticsDateGap, formatter: DateTimeFormatter): String =
+    stringResource(
+        R.string.analytics_omitted_date_range,
+        UiFormat.count(gap.dayCount),
+        gap.start.format(formatter),
+        gap.endInclusive.format(formatter),
+    )
+
+@Composable
 internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
     val window = snapshot.window
     val headline = snapshot.headline
@@ -696,6 +706,7 @@ internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
 @Composable
 private fun DailyPlaytimeChart(
     days: List<AnalyticsDay>,
+    representedDays: List<AnalyticsDay>,
     questThreshold: Int,
     gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
     estimatedSharesByDate: Map<java.time.LocalDate, List<RecoveryWindowShare>> = emptyMap(),
@@ -720,6 +731,16 @@ private fun DailyPlaytimeChart(
         analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedIndex = it }
     }
     val selectedDay = days.getOrNull(selectedIndex)
+    val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
+    val dateGaps = if (selectedDay == null) {
+        emptyList()
+    } else {
+        analyticsDateGaps(representedDays, days, selectedIndex)
+    }
+    val dateGapDescriptions = listOfNotNull(
+        dateGaps.getOrNull(0)?.let { analyticsDateGapLabel(it, dayFormatter) },
+        dateGaps.getOrNull(1)?.let { analyticsDateGapLabel(it, dayFormatter) },
+    )
     val previousDayLabel = stringResource(R.string.analytics_previous_day)
     val nextDayLabel = stringResource(R.string.analytics_next_day)
     val selectedDayLabel = selectedDay?.date?.format(dayFormatter)
@@ -751,12 +772,15 @@ private fun DailyPlaytimeChart(
             )
         }
         val described = if (estimateClause == null) breakdown else "$estimateClause. $breakdown"
+        val describedWithGaps = listOf(described, dateGapDescriptions.joinToString(" "))
+            .filter { it.isNotBlank() }
+            .joinToString(". ")
         stringResource(
             R.string.analytics_selected_day_summary,
             day.date.format(dayFormatter),
             UiFormat.localizedMinutes(day.minutes),
             goal,
-            described,
+            describedWithGaps,
         )
     } ?: stringResource(R.string.analytics_no_day_selected)
     val chartSummary = stringResource(
@@ -897,6 +921,17 @@ private fun DailyPlaytimeChart(
                     }
                 }
             }
+            if (omittedDateCount > 0) {
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.analytics_active_only_omission_note,
+                        omittedDateCount,
+                        UiFormat.count(omittedDateCount),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = labelColor,
+                )
+            }
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1011,6 +1046,14 @@ private fun DailyPlaytimeChart(
                             )
                         }
                     }
+                }
+                dateGapDescriptions.forEach { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = labelColor,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
                 val games = gamesByDate[day.date].orEmpty()
                 if (games.isNotEmpty()) {
@@ -1361,8 +1404,13 @@ private fun TimeOfDayCard(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.analytics_play_time_of_day), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_session_start_attribution), style = MaterialTheme.typography.titleSmall)
             }
+            Text(
+                text = stringResource(R.string.analytics_session_start_attribution_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(12.dp))
             if (timingUnavailable) {
                 Text(

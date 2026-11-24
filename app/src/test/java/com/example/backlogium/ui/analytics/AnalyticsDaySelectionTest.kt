@@ -37,4 +37,24 @@ class AnalyticsDaySelectionTest {
         assertEquals(2, analyticsDaySelectionIndex(days.size, 99))
         assertEquals(2, stepAnalyticsDaySelection(2, days.size, delta = 1))
     }
+
+    @Test
+    fun activeDayInspectionKeepsTheDatesOmittedBetweenVisibleDays() {
+        val represented = listOf(
+            AnalyticsDay(LocalDate.of(2026, 9, 1), 20),
+            AnalyticsDay(LocalDate.of(2026, 9, 2), 0),
+            AnalyticsDay(LocalDate.of(2026, 9, 3), 0),
+            AnalyticsDay(LocalDate.of(2026, 9, 4), 40),
+            AnalyticsDay(LocalDate.of(2026, 9, 5), 0),
+        )
+        val active = represented.filter { it.minutes > 0 }
+
+        assertEquals(
+            listOf(
+                AnalyticsDateGap(LocalDate.of(2026, 9, 2), LocalDate.of(2026, 9, 3)),
+                AnalyticsDateGap(LocalDate.of(2026, 9, 5), LocalDate.of(2026, 9, 5)),
+            ),
+            analyticsDateGaps(represented, active, selectedVisibleIndex = 1),
+        )
+    }
 }

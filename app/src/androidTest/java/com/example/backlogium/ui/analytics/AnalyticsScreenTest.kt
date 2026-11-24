@@ -114,6 +114,36 @@ class AnalyticsScreenTest {
     }
 
     @Test
+    fun activeDayChartDisclosesDateGapsAndSessionStartAttribution() {
+        setContent(
+            state = analyticsState().copy(
+                dailyMinutes = listOf(
+                    AnalyticsDay(TODAY.minusDays(3), 25, questMet = false),
+                    AnalyticsDay(TODAY.minusDays(2), 0, questMet = false),
+                    AnalyticsDay(TODAY.minusDays(1), 0, questMet = false),
+                    AnalyticsDay(TODAY, 45, questMet = true),
+                ),
+                questMetDaysCount = 1,
+                questOutcomesAvailableDayCount = 4,
+                questOutcomesUnavailableDayCount = 0,
+                timeOfDayPattern = TimeOfDayPattern(nightMinutes = 150),
+            ),
+        )
+
+        composeRule.onNodeWithText("2 zero-minute dates omitted", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNode(
+            hasContentDescription("2 no-play dates omitted", substring = true),
+        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Session-start attribution").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Recorded session minutes are grouped by local start hour",
+            substring = true,
+        ).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun initialLoadingStateHidesSentinelPeriodMetadata() {
         // The bare default carries the 1970 INITIAL_WINDOW sentinel with loading=true and no
         // snapshot yet: no period identity, length, or option row may surface from it.
