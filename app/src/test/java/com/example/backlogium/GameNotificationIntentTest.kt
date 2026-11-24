@@ -38,8 +38,8 @@ class GameNotificationIntentTest {
         val context = RuntimeEnvironment.getApplication()
         val generic = GameNotificationIntent.create(context, GameNotificationTarget("fixture", 42L), "achievement")
         assertNull(GameNotificationIntent.read(Intent(generic).replaceExtras(Bundle())))
-        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("notification_game_app_id", "42")))
-        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("notification_game_account", " ")))
-        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("notification_game_app_id", -1L)))
+        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("achievement_app_id", "42")))
+        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("achievement_account", " ")))
+        assertNull(GameNotificationIntent.read(Intent(generic).putExtra("achievement_app_id", -1L)))
     }
 }

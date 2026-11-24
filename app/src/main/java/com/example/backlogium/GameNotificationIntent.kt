@@ -7,11 +7,9 @@ import android.net.Uri
 internal data class GameNotificationTarget(val account: String, val appId: Long)
 
 internal object GameNotificationIntent {
-    private const val ACTION = "com.example.backlogium.OPEN_NOTIFICATION_GAME"
-    private const val ACCOUNT = "notification_game_account"
-    private const val APP_ID = "notification_game_app_id"
-    private const val LEGACY_ACCOUNT = "achievement_account"
-    private const val LEGACY_APP_ID = "achievement_app_id"
+    // Keep the keys used by achievement notifications already posted by released builds.
+    private const val ACCOUNT = "achievement_account"
+    private const val APP_ID = "achievement_app_id"
 
     fun create(
         context: Context,
@@ -24,16 +22,14 @@ internal object GameNotificationIntent {
             .appendPath(source).appendPath(target.account).appendPath(target.appId.toString())
         eventId?.let { identity.appendPath(it) }
         return Intent(context, MainActivity::class.java)
-            .setAction(ACTION)
             .setData(identity.build())
             .putExtra(ACCOUNT, target.account)
             .putExtra(APP_ID, target.appId)
     }
 
     fun read(intent: Intent): GameNotificationTarget? = runCatching {
-        val legacy = intent.action != ACTION
-        val account = intent.getStringExtra(if (legacy) LEGACY_ACCOUNT else ACCOUNT)
-        val appId = intent.getLongExtra(if (legacy) LEGACY_APP_ID else APP_ID, 0L)
+        val account = intent.getStringExtra(ACCOUNT)
+        val appId = intent.getLongExtra(APP_ID, 0L)
         if (account.isNullOrBlank() || appId <= 0L) null else GameNotificationTarget(account, appId)
     }.getOrNull()
 }

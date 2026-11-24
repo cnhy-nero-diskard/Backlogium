@@ -10,7 +10,6 @@ import com.example.backlogium.work.setup.FirstRunSetupGateway
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -27,38 +26,18 @@ import org.robolectric.annotation.Config
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class GameNotificationViewModelTest {
     @Test
-    fun requestWaitsForSetupToExitWhenItStartsDuringTargetValidation() = runTest {
-        val setupActive = MutableStateFlow(false)
-        val routeReady = MutableStateFlow(true)
-        val target = GameNotificationTarget(ACCOUNT, 42L)
-        val validator = PausedValidator(target.appId)
-        val viewModel = viewModel(setupActive, validator)
-        val opened = mutableListOf<GameNotificationTarget>()
-
-        backgroundScope.launch {
-            viewModel.collectOpenRequests(routeReady) { opened += it }
-        }
-        viewModel.request(target)
-        runCurrent()
-        assertEquals(target, validator.entered.await())
-
-        setupActive.value = true
-        routeReady.value = false
-        validator.release.complete(true)
-        runCurrent()
-
-        assertTrue(opened.isEmpty())
-        assertEquals(target, viewModel.requests.first())
-
-        setupActive.value = false
-        routeReady.value = true
-        runCurrent()
-        assertEquals(listOf(target), opened)
-        assertEquals(listOf(target, target), validator.validated)
-    }
+    fun requestWaitsForSetupToExitWhenItStartsDuringTargetValidation() =
+        verifySetupInterruption(initiallyEligible = true, eligibleAfterSetup = true)
 
     @Test
-    fun requestIsRevalidatedAfterSetupInterruptsTargetValidation() = runTest {
+    fun requestRejectsGameThatBecomesIneligibleDuringSetup() =
+        verifySetupInterruption(initiallyEligible = true, eligibleAfterSetup = false)
+
+    @Test
+    fun requestCanOpenGameThatBecomesEligibleDuringSetup() =
+        verifySetupInterruption(initiallyEligible = false, eligibleAfterSetup = true)
+
+    private fun verifySetupInterruption(initiallyEligible: Boolean, eligibleAfterSetup: Boolean) = runTest {
         val setupActive = MutableStateFlow(false)
         val routeReady = MutableStateFlow(true)
         val target = GameNotificationTarget(ACCOUNT, 42L)
@@ -75,18 +54,18 @@ class GameNotificationViewModelTest {
 
         setupActive.value = true
         routeReady.value = false
-        validator.release.complete(true)
+        validator.eligible = initiallyEligible
+        validator.release.complete(Unit)
         runCurrent()
 
         assertTrue(opened.isEmpty())
-        assertEquals(target, viewModel.requests.first())
 
-        validator.eligible = false
+        validator.eligible = eligibleAfterSetup
         setupActive.value = false
         routeReady.value = true
         runCurrent()
 
-        assertTrue(opened.isEmpty())
+        assertEquals(if (eligibleAfterSetup) listOf(target) else emptyList(), opened)
         assertEquals(listOf(target, target), validator.validated)
     }
 
@@ -125,7 +104,7 @@ class GameNotificationViewModelTest {
 
     private class PausedValidator(private val pausedAppId: Long) : GameNotificationTargetValidator {
         val entered = CompletableDeferred<GameNotificationTarget>()
-        val release = CompletableDeferred<Boolean>()
+        val release = CompletableDeferred<Unit>()
         val validated = mutableListOf<GameNotificationTarget>()
         var eligible = true
 
@@ -134,7 +113,7 @@ class GameNotificationViewModelTest {
             validated += target
             if (appId == pausedAppId) {
                 entered.complete(target)
-                if (!release.await()) return false
+                release.await()
             }
             return eligible
         }
