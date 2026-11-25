@@ -57,6 +57,8 @@ import com.example.backlogium.work.setup.FirstRunSetupGateway
 import com.example.backlogium.work.setup.SetupCoordinator
 import com.example.backlogium.work.PostPlayWorkEnqueuer
 import com.example.backlogium.work.WorkManagerPostPlayWorkEnqueuer
+import com.example.backlogium.work.AchievementAdmissionWorkScheduler
+import com.example.backlogium.work.WorkManagerAchievementAdmissionScheduler
 import com.example.backlogium.work.CloudRoutineWorkCancellation
 import com.example.backlogium.work.CloudRoutineWorkCanceller
 import dagger.Binds
@@ -166,6 +168,12 @@ abstract class AppModule {
     abstract fun bindPostPlayWorkEnqueuer(
         impl: WorkManagerPostPlayWorkEnqueuer,
     ): PostPlayWorkEnqueuer
+
+    @Binds
+    @Singleton
+    abstract fun bindAchievementAdmissionWorkScheduler(
+        impl: WorkManagerAchievementAdmissionScheduler,
+    ): AchievementAdmissionWorkScheduler
 
     @Binds
     @Singleton

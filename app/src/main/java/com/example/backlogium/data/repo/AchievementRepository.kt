@@ -24,6 +24,8 @@ import com.example.backlogium.domain.AchievementUnlockItem
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
+import java.io.IOException
+import retrofit2.HttpException
 import com.example.backlogium.data.achievement.AchievementFreshness
 import com.example.backlogium.data.achievement.AchievementMerge
 import com.example.backlogium.data.backup.DatabaseTransactionScope
@@ -120,6 +122,7 @@ data class AchievementRefresh(
     val playerUnavailable: Boolean = false,
     val schemaAttempted: Boolean = false,
     val globalsAttempted: Boolean = false,
+    val retryableFailure: Boolean = false,
 )
 
 /** Write-free result of the fetch phase used by [SteamSyncWorker]. */
@@ -150,6 +153,15 @@ sealed interface SingleGameRefresh {
     /** The request itself failed (transport error). Distinct from [NoUsableData] for messaging. */
     data object Unavailable : SingleGameRefresh
 }
+
+/** Independent catalogue and personal-state result for a durable admission refresh. */
+data class AchievementAdmissionRefresh(
+    val result: SingleGameRefresh,
+    val catalogueAvailable: Boolean,
+    val personalStateAvailable: Boolean,
+    val retryAt: Long? = null,
+    val retryableFailure: Boolean = false,
+)
 
 /**
  * Owns fetching, merging, and caching Steam achievement data. Covers every game in the
@@ -529,6 +541,53 @@ class AchievementRepository @Inject constructor(
             return SingleGameRefresh.Unavailable
         } ?: return SingleGameRefresh.NoUsableData
 
+        return commitFetchedRefresh(steamId, appId, refresh, commit)
+    }
+
+    /** Admission work uses the same fetch coalescer and merge path as detail, watch, and sync. */
+    suspend fun refreshAdmission(
+        apiKey: String,
+        steamId: String,
+        appId: Long,
+        commit: (suspend (suspend () -> SingleGameRefresh) -> SingleGameRefresh)? = null,
+    ): AchievementAdmissionRefresh {
+        if (hiddenGamesRepository.isHidden(appId)) {
+            return AchievementAdmissionRefresh(SingleGameRefresh.NoUsableData, hasCatalogue(appId),
+                gameAchievementSyncDao.get(appId)?.playerStateFetchedAt != null)
+        }
+        val metadata = gameAchievementSyncDao.get(appId)
+        val refresh = try {
+            fetchGame(apiKey, steamId, appId, metadata?.schemaFetchedAt)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            return AchievementAdmissionRefresh(
+                result = SingleGameRefresh.Unavailable,
+                catalogueAvailable = hasCatalogue(appId),
+                personalStateAvailable = metadata?.playerStateFetchedAt != null,
+                retryAt = achievementRetryAfter(error, time.nowMillis()),
+                retryableFailure = isRetryableAchievementFailure(error),
+            )
+        } ?: return AchievementAdmissionRefresh(SingleGameRefresh.NoUsableData, hasCatalogue(appId),
+            metadata?.playerStateFetchedAt != null)
+
+        val result = commitFetchedRefresh(steamId, appId, refresh, commit)
+        return AchievementAdmissionRefresh(
+            result = result,
+            catalogueAvailable = refresh.schemaLoaded || hasCatalogue(appId),
+            personalStateAvailable = result is SingleGameRefresh.Persisted ||
+                gameAchievementSyncDao.get(appId)?.playerStateFetchedAt != null,
+            retryAt = refresh.retryAt,
+            retryableFailure = refresh.retryableFailure || refresh.retryAt != null,
+        )
+    }
+
+    private suspend fun commitFetchedRefresh(
+        steamId: String,
+        appId: Long,
+        refresh: AchievementRefresh,
+        commit: (suspend (suspend () -> SingleGameRefresh) -> SingleGameRefresh)?,
+    ): SingleGameRefresh {
         val noPlayerData = if (refresh.playerUnavailable) SingleGameRefresh.Unavailable else SingleGameRefresh.NoUsableData
         val merge: suspend () -> SingleGameRefresh = {
             mergeMutex.withLock {
@@ -560,6 +619,11 @@ class AchievementRepository @Inject constructor(
                 ?: if (refresh.achievements == null) noPlayerData else SingleGameRefresh.Stale
             else -> transaction.run { merge() }
         }
+    }
+
+    private suspend fun hasCatalogue(appId: Long): Boolean {
+        val dao = observationStore?.database?.achievementCatalogueDao() ?: return false
+        return dao.cache(appId) != null || dao.entries(appId).isNotEmpty()
     }
 
     /** A write-free read shared with sync/manual/detail work. Never advances a watch baseline. */
@@ -883,10 +947,12 @@ class AchievementRepository @Inject constructor(
         if (deadline > now) return AchievementRefresh(appId, now, null, emptyMap(), emptyMap(), schemaFetchedAt,
             account = steamId, retryAt = deadline)
         var retryAt: Long? = null
+        var retryableFailure = false
         var playerFailure: Exception? = null
         suspend fun <T> attempt(block: suspend () -> T): T? = try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
+                retryableFailure = retryableFailure || isRetryableAchievementFailure(error)
                 achievementRetryAfter(error, now)?.let {
                     retryAt = maxOf(retryAt ?: 0, it)
                     rateLimitDeadlines.merge(key, it, ::maxOf)
@@ -921,7 +987,8 @@ class AchievementRepository @Inject constructor(
         currentCoroutineContext().ensureActive()
         return AchievementRefresh(appId, now, usablePlayer, globals, knownCatalogue?.associateBy { it.name }.orEmpty(),
             if (schemaResponse != null) now else schemaFetchedAt, schemaLoaded = schemaResponse != null, account = steamId, retryAt = retryAt, playerUnavailable = playerFailure != null,
-            schemaAttempted = schemaWasStale, globalsAttempted = globalsAttempted)
+            schemaAttempted = schemaWasStale, globalsAttempted = globalsAttempted,
+            retryableFailure = retryableFailure)
     }
 
     /**
@@ -1009,6 +1076,12 @@ private fun List<Achievement>.canonicalContent() = map { it.copy(fetchedAt = 0) 
 
 private fun List<Achievement>.xpInputs() =
     filter { it.unlocked && !it.retired }.associate { it.apiName to it.snapshotPercent }
+
+private fun isRetryableAchievementFailure(error: Exception): Boolean = when (error) {
+    is HttpException -> error.code() == 408 || error.code() == 429 || error.code() >= 500
+    is IOException -> true
+    else -> error !is IllegalArgumentException
+}
 
 private fun AchievementCounts.toDomain() = AchievementCountSummary(
     appId = appId,
