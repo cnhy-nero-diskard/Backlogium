@@ -27,8 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -234,7 +234,8 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.representedDayCount,
+                questOutcomesAvailableDayCount = state.questOutcomesAvailableDayCount,
+                questOutcomesUnavailableDayCount = state.questOutcomesUnavailableDayCount,
             )
             if (state.pendingDateUnknownMinutes > 0) {
                 PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
@@ -246,6 +247,7 @@ internal fun AnalyticsContent(
         } else {
             DailyPlaytimeChart(
                 days = chartDays,
+                representedDays = state.dailyMinutes,
                 questThreshold = state.questThreshold,
                 gamesByDate = state.gamesByDate,
                 estimatedSharesByDate = state.estimatedSharesByDate,
@@ -260,7 +262,8 @@ internal fun AnalyticsContent(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
                 questMetDaysCount = state.questMetDaysCount,
-                windowDays = state.representedDayCount,
+                questOutcomesAvailableDayCount = state.questOutcomesAvailableDayCount,
+                questOutcomesUnavailableDayCount = state.questOutcomesUnavailableDayCount,
             )
 
             SessionInsightsCard(
@@ -537,6 +540,15 @@ private fun windowPeriodLabel(window: AnalyticsWindow, bounds: AnalyticsWindowBo
 }
 
 @Composable
+private fun analyticsDateGapLabel(gap: AnalyticsDateGap, formatter: DateTimeFormatter): String =
+    stringResource(
+        R.string.analytics_omitted_date_range,
+        UiFormat.count(gap.dayCount),
+        gap.start.format(formatter),
+        gap.endInclusive.format(formatter),
+    )
+
+@Composable
 internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
     val window = snapshot.window
     val headline = snapshot.headline
@@ -694,6 +706,7 @@ internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
 @Composable
 private fun DailyPlaytimeChart(
     days: List<AnalyticsDay>,
+    representedDays: List<AnalyticsDay>,
     questThreshold: Int,
     gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
     estimatedSharesByDate: Map<java.time.LocalDate, List<RecoveryWindowShare>> = emptyMap(),
@@ -711,26 +724,27 @@ private fun DailyPlaytimeChart(
     )
     val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
     val totalMinutes = days.sumOf { it.minutes }
-    var selectedIndex by remember(days) {
-        mutableIntStateOf(initialAnalyticsDaySelection(days) ?: -1)
+    var selectedDate by remember {
+        mutableStateOf(initialAnalyticsDaySelection(days)?.let { days[it].date })
     }
+    val selectedIndex = days.indexOfFirst { it.date == selectedDate }
+        .takeIf { it >= 0 } ?: initialAnalyticsDaySelection(days) ?: -1
     val selectDay: (Int) -> Unit = { requestedIndex ->
-        analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedIndex = it }
+        analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedDate = days[it].date }
     }
     val selectedDay = days.getOrNull(selectedIndex)
+    SideEffect {
+        if (selectedDate != selectedDay?.date) selectedDate = selectedDay?.date
+    }
+    val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
+    val dateGapDescriptions = analyticsDateGaps(representedDays, days, selectedIndex)
+        .map { analyticsDateGapLabel(it, dayFormatter) }
     val previousDayLabel = stringResource(R.string.analytics_previous_day)
     val nextDayLabel = stringResource(R.string.analytics_next_day)
     val selectedDayLabel = selectedDay?.date?.format(dayFormatter)
         ?: stringResource(R.string.analytics_no_day_selected)
     val selectedDayDescription = selectedDay?.let { day ->
-        val goal = when {
-            questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
-            day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
-            else -> stringResource(
-                R.string.analytics_to_goal,
-                UiFormat.localizedMinutes(questThreshold - day.minutes),
-            )
-        }
+        val goal = analyticsDayQuestOutcomeLabel(day.questMet, questThreshold)
         val games = gamesByDate[day.date].orEmpty()
         val breakdown = if (games.isEmpty()) {
             stringResource(R.string.analytics_no_games_day)
@@ -756,12 +770,15 @@ private fun DailyPlaytimeChart(
             )
         }
         val described = if (estimateClause == null) breakdown else "$estimateClause. $breakdown"
+        val describedWithGaps = listOf(described, dateGapDescriptions.joinToString(" "))
+            .filter { it.isNotBlank() }
+            .joinToString(". ")
         stringResource(
             R.string.analytics_selected_day_summary,
             day.date.format(dayFormatter),
             UiFormat.localizedMinutes(day.minutes),
             goal,
-            described,
+            describedWithGaps,
         )
     } ?: stringResource(R.string.analytics_no_day_selected)
     val chartSummary = stringResource(
@@ -902,6 +919,17 @@ private fun DailyPlaytimeChart(
                     }
                 }
             }
+            if (omittedDateCount > 0) {
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.analytics_active_only_omission_note,
+                        omittedDateCount,
+                        UiFormat.count(omittedDateCount),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = labelColor,
+                )
+            }
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -980,14 +1008,7 @@ private fun DailyPlaytimeChart(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            text = when {
-                                questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
-                                day.minutes >= questThreshold -> stringResource(R.string.analytics_daily_goal_met)
-                                else -> stringResource(
-                                    R.string.analytics_to_goal,
-                                    UiFormat.localizedMinutes(questThreshold - day.minutes),
-                                )
-                            },
+                            text = analyticsDayQuestOutcomeLabel(day.questMet, questThreshold),
                             style = MaterialTheme.typography.labelSmall,
                             color = labelColor,
                         )
@@ -1009,7 +1030,7 @@ private fun DailyPlaytimeChart(
                             text = UiFormat.localizedMinutes(day.minutes),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = if (day.minutes >= questThreshold && questThreshold > 0) {
+                            color = if (day.questMet == true) {
                                 thresholdColor
                             } else {
                                 barColor
@@ -1023,6 +1044,14 @@ private fun DailyPlaytimeChart(
                             )
                         }
                     }
+                }
+                dateGapDescriptions.forEach { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = labelColor,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
                 val games = gamesByDate[day.date].orEmpty()
                 if (games.isNotEmpty()) {
@@ -1087,7 +1116,8 @@ private fun StreakSummaryCard(
     currentStreak: Int,
     longestStreak: Int,
     questMetDaysCount: Int,
-    windowDays: Int,
+    questOutcomesAvailableDayCount: Int,
+    questOutcomesUnavailableDayCount: Int,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1102,25 +1132,41 @@ private fun StreakSummaryCard(
                 Text(stringResource(R.string.analytics_streak_summary), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.analytics_lifetime_streaks),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SummaryStat(
                     label = stringResource(R.string.analytics_current_streak),
                     value = UiFormat.count(currentStreak),
+                    modifier = Modifier.weight(1f),
                 )
                 SummaryStat(
                     label = stringResource(R.string.analytics_longest_streak),
                     value = UiFormat.count(longestStreak),
+                    modifier = Modifier.weight(1f),
                 )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+            Text(
+                text = stringResource(R.string.analytics_window_quest_outcomes),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
                 SummaryStat(
                     label = stringResource(R.string.analytics_quest_met),
                     value = stringResource(
                         R.string.analytics_quest_met_count,
                         UiFormat.count(questMetDaysCount),
-                        UiFormat.count(windowDays),
+                        UiFormat.count(questOutcomesAvailableDayCount),
                     ),
+                    modifier = Modifier.weight(1f),
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -1129,8 +1175,28 @@ private fun StreakSummaryCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (questOutcomesUnavailableDayCount > 0) {
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.analytics_quest_outcomes_unavailable,
+                        questOutcomesUnavailableDayCount,
+                        UiFormat.count(questOutcomesUnavailableDayCount),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun analyticsDayQuestOutcomeLabel(questMet: Boolean?, questThreshold: Int): String = when {
+    questThreshold <= 0 -> stringResource(R.string.analytics_no_daily_goal)
+    questMet == true -> stringResource(R.string.analytics_daily_goal_met)
+    questMet == false -> stringResource(R.string.analytics_quest_outcome_not_met)
+    else -> stringResource(R.string.analytics_quest_outcome_unavailable)
 }
 
 @Composable
@@ -1336,8 +1402,13 @@ private fun TimeOfDayCard(
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.analytics_play_time_of_day), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.analytics_session_start_attribution), style = MaterialTheme.typography.titleSmall)
             }
+            Text(
+                text = stringResource(R.string.analytics_session_start_attribution_note),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(12.dp))
             if (timingUnavailable) {
                 Text(

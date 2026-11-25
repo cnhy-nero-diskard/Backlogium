@@ -658,7 +658,10 @@ private fun analyticsState(
         selectedDay -> listOf(0, 25, 40, 0, 0, 95, 0)
         else -> listOf(25, 45, 0, 75, 120, 95, 35)
     }
-    val days = dates.zip(minutes).map { (date, value) -> AnalyticsDay(date, value) }
+    val outcomes = listOf(false, false, false, null, true, true, false)
+    val days = dates.indices.map { index ->
+        AnalyticsDay(dates[index], minutes[index], questMet = outcomes[index])
+    }
     val games = listOf(
         AnalyticsGame(
             appId = 440L,
@@ -709,7 +712,9 @@ private fun analyticsState(
         questThreshold = 45,
         currentStreak = 4,
         longestStreak = 9,
-        questMetDaysCount = if (empty) 0 else 4,
+        questMetDaysCount = days.count { it.questMet == true },
+        questOutcomesAvailableDayCount = days.count { it.questMet != null },
+        questOutcomesUnavailableDayCount = days.count { it.questMet == null },
         topGames = games,
         rarityBreakdown = if (empty) {
             RarityBreakdown()
@@ -789,6 +794,8 @@ private fun analyticsAllocationsOnlyState(): AnalyticsUiState {
         currentStreak = 0,
         longestStreak = 0,
         questMetDaysCount = 0,
+        questOutcomesAvailableDayCount = 0,
+        questOutcomesUnavailableDayCount = days.size,
         topGames = listOf(game),
         sessionInsights = SessionInsights(),
         timeOfDayPattern = TimeOfDayPattern(),

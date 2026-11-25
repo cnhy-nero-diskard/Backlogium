@@ -2258,6 +2258,31 @@ the day's expanded game list.
 - **WHEN** a day tile shows both game thumbnails and achievement icons
 - **THEN** the two rows are visually distinct and separately identifiable
 
+### Requirement: Analytics labels its denominators and date gaps
+Analytics SHALL identify average playtime as an average per active day and label quest consistency with its evidenced denominator. Filtered chart days SHALL retain actual dates and disclose omitted dates.
+
+#### Scenario: Current year or recent tracking start
+- **WHEN** the selected calendar period contains future dates or dates before tracking began
+- **THEN** windowed metrics use represented dates only and do not imply zero play or a failed quest on unsupported dates
+
+#### Scenario: Active days only
+- **WHEN** zero-minute dates are filtered between consecutive visible bars
+- **THEN** the chart and accessible day inspection expose real dates and make the omitted interval apparent
+
+### Requirement: Lifetime figures are visually separate in Analytics
+The Analytics screen SHALL group current and longest streaks and the all-time rarity breakdown separately from selected-period figures.
+
+#### Scenario: Period changes while data loads
+- **WHEN** the selected range changes before its data arrives
+- **THEN** retained content identifies the range it describes and lifetime figures do not acquire the selected date label
+
+### Requirement: Session start buckets disclose their attribution
+The time-of-day view SHALL label its buckets as session-start attribution. It SHALL disclose that recorded session minutes are grouped by the local start hour and that minutes with no session start are absent from the clock breakdown.
+
+#### Scenario: Overnight or timing-free play
+- **WHEN** a recorded session crosses a clock bucket boundary or another date carries only recovered day-level minutes
+- **THEN** the session stays grouped by its start hour and recovered minutes without a session stay outside the clock breakdown
+
 ### Requirement: Analytics screen
 The system SHALL provide an Analytics screen, reachable as a top-level destination, that
 summarizes the player's tracked play over a user-selected window using a daily
@@ -2276,46 +2301,61 @@ stepping differently.
 The anchor SHALL be movable to earlier periods so previous months and years are reachable, and
 SHALL default to the period ending today. Moving the anchor SHALL step by one calendar period for a
 calendar length and by the selected length for a rolling length. The anchor SHALL NOT be movable
-earlier than the period containing the earliest tracked session, so periods that no data could ever
-populate are unreachable.
+earlier than the period containing the earliest eligible canonical dated activity, including
+credited dated allocations that precede the first timestamped session, so periods that no data could
+ever populate are unreachable.
 
-The window SHALL apply to every figure derived from tracked sessions: the daily playtime chart, the
-most-played-games list, the session-insights summary, the count of quest-met days, and the
-time-of-day pattern. The current streak, the longest streak, and the achievement-rarity breakdown
-SHALL NOT follow the window — they are player-level and all-time figures respectively — and the
-screen SHALL make that distinction evident rather than presenting them as describing the selected
-period. Every windowed figure SHALL derive from the same resolved window bounds.
+The window SHALL apply to every selected-period figure. The daily playtime chart, most-played-games
+list, and count of quest-met days SHALL derive from eligible canonical dated activity, including
+credited dated allocations. The session-insights summary and time-of-day pattern SHALL derive only
+from recorded sessions in the window; when eligible dated activity exists but no sessions do, those
+session-only insights SHALL be marked unavailable rather than presented as zero-valued activity.
+The current streak, the longest streak, and the achievement-rarity breakdown SHALL NOT follow the
+window — they are player-level and all-time figures respectively — and the screen SHALL make that
+distinction evident rather than presenting them as describing the selected period. Every
+selected-period figure SHALL derive from the same represented activity bounds, clipped to today and
+the earliest eligible canonical dated activity where applicable.
 
 The chart SHALL offer omitting zero-minute dates as a display option, independent of the selected
 window length. The screen SHALL render purely
-from locally stored state so it is usable offline, and SHALL present an empty state when no tracked
-sessions exist in the window. The daily playtime chart SHALL draw one bar per local day and SHALL
-mark the configured daily-quest threshold as a reference line, so met and unmet days are legible at
-a glance. The streak summary SHALL show the current streak, the longest streak, and the count of
+from locally stored state so it is usable offline, and SHALL present the window's empty state only
+when no eligible canonical dated activity exists in the window. Credited dated allocations count as
+activity even when no timestamped session exists. The daily playtime chart SHALL draw one bar per
+represented local day unless the active-days-only option is selected and SHALL mark the configured
+daily-quest threshold as a reference line. Quest-met labels SHALL use stored
+daily outcomes because the bar total and the eligible quest minutes can differ. The streak summary
+SHALL show the current streak, the longest streak, and the count of
 quest-met days within the window. The session-insights summary SHALL show the session count, the
 average session length, and the longest session within the window. The time-of-day pattern SHALL
-bucket tracked minutes into morning, afternoon, evening, and night and SHALL highlight the peak
+group recorded session minutes by local start hour into morning, afternoon, evening, and night and SHALL highlight the peak
 bucket. The achievement-rarity breakdown SHALL show the count of unlocked achievements per rarity
 tier as a stacked bar with a per-tier legend. The most-played-games list SHALL rank games by
 tracked minutes within the window, distinct from the Library's lifetime playtime ordering, and
 SHALL show at most five entries.
 
 #### Scenario: Viewing analytics with data
-- **WHEN** the Analytics screen is shown and tracked sessions exist within the selected window
+- **WHEN** the Analytics screen is shown and eligible canonical dated activity exists within the
+  selected window
 - **THEN** the screen presents a daily playtime bar chart, a streak summary, and a most-played-games
   list, each derived from locally stored state
 
+#### Scenario: Dated allocations without sessions
+- **WHEN** the selected window contains credited dated allocations but no recorded sessions
+- **THEN** the chart and most-played-games list include those dated minutes, play mix uses visible
+  dated minutes where shown, and the session-only insights identify timing as unavailable instead of
+  presenting the window as empty
+
 #### Scenario: Daily playtime chart
 - **WHEN** the Analytics screen is shown with tracked minutes on one or more days in the window
-- **THEN** the chart draws one bar per local day in the window, with the bar height proportional to
+- **THEN** the chart draws one bar per represented local day in the window, subject to the active-days-only display option, with the bar height proportional to
   that day's tracked minutes, and a horizontal reference line at the configured daily-quest
   threshold. The chart includes readable max, midpoint, and baseline labels, sparse date labels for
   the window endpoints, and a legend identifying the quest threshold
 
 #### Scenario: Quest threshold reference line
 - **WHEN** the daily-quest threshold is greater than zero
-- **THEN** the chart draws a reference line at that threshold value, so days whose bar reaches or
-  exceeds the line are legible as quest-met days
+- **THEN** the chart draws a reference line at that threshold value and uses stored outcomes to
+  identify quest-met days, including when Focus-only credit or missing evidence differs from bar totals
 
 #### Scenario: Readable chart scale
 - **WHEN** the daily playtime window contains a high-minute outlier
@@ -2378,15 +2418,19 @@ SHALL show at most five entries.
   that month
 
 #### Scenario: Anchor bounded by available history
-- **WHEN** the earliest tracked session is more recent than an earlier period the user attempts to
-  reach
+- **WHEN** an earlier period precedes the earliest eligible canonical dated activity
 - **THEN** the anchor cannot be moved to that period, rather than presenting a period that no data
   could populate
 
+#### Scenario: Allocation precedes the first session
+- **WHEN** an eligible credited dated allocation precedes the earliest timestamped session
+- **THEN** the anchor can reach the period containing that allocation and cannot move earlier than it
+
 #### Scenario: Anchor with no sessions inside available history
-- **WHEN** the selected anchor period lies within available history but contains no tracked sessions
+- **WHEN** the selected anchor period lies within available history but contains no sessions or
+  other eligible canonical dated activity
 - **THEN** the screen presents its empty state for that period, and the anchor remains movable back
-  to a period that has data
+  to a period that has eligible activity
 
 #### Scenario: Streak summary
 - **WHEN** the Analytics screen is shown
@@ -2415,7 +2459,7 @@ SHALL show at most five entries.
 
 #### Scenario: Time-of-day pattern
 - **WHEN** the Analytics screen is shown and one or more sessions exist in the window
-- **THEN** the time-of-day pattern buckets tracked minutes into morning, afternoon, evening, and
+- **THEN** the time-of-day pattern groups recorded minutes by local session start into morning, afternoon, evening, and
   night, and highlights the bucket with the most minutes as the peak time
 
 #### Scenario: Achievement rarity breakdown
@@ -2429,9 +2473,10 @@ SHALL show at most five entries.
   presented so it is not read as describing the selected period
 
 #### Scenario: No tracked sessions in the window
-- **WHEN** the Analytics screen is shown and no tracked sessions exist within the selected window
+- **WHEN** the Analytics screen is shown and no eligible canonical dated activity exists within the
+  selected window
 - **THEN** the screen presents an empty state explaining that analytics appear after playing and
-  syncing, rather than showing empty charts
+  syncing, rather than showing empty charts or session-only distributions
 
 #### Scenario: Offline rendering
 - **WHEN** the Analytics screen is shown without network

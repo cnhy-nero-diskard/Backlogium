@@ -48,6 +48,9 @@ For this repository's current template, use these conventions:
 
 - `Summary` explains what the PR does and why.
 - `Changes` lists the notable changes without copying an entire diff.
+- `Implemented specs` lists one GitHub link per OpenSpec spec implemented by the
+  branch. Use the committed diff and associated OpenSpec change artifacts to identify the specs.
+  Write exactly `N/A` when the branch implements none.
 - `Release note` contains one or two short user-facing bullets, or exactly `None` when users see
   no product change. Do not invent user-facing prose for documentation, tests, chores, proposals,
   or other technical-only work.
@@ -56,8 +59,8 @@ For this repository's current template, use these conventions:
 - `Notes` records follow-ups, tradeoffs, screenshots, or other reviewer context; omit empty
   placeholder text.
 
-If no template exists, use a concise `Summary`, `Changes`, `Testing`, and `Notes` body. Do not
-invent a release-note requirement that the repository has not defined.
+If no template exists, use a concise `Summary`, `Changes`, `Implemented specs`, `Testing`, and
+`Notes` body. Do not invent a release-note requirement that the repository has not defined.
 
 ## Prepare and validate
 
