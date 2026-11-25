@@ -1,7 +1,9 @@
 package com.example.backlogium.data.local
 
 import com.example.backlogium.data.local.dao.AchievementWatchDao
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.entity.AchievementWatchWork
+import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.dao.AchievementCatalogueDao
 import com.example.backlogium.data.local.entity.AchievementCatalogueEntry
 import com.example.backlogium.data.local.entity.AchievementCatalogueCache
@@ -91,6 +93,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         HltbDatasetLength::class,
         Achievement::class,
         AchievementWatchWork::class,
+        AchievementAdmissionWork::class,
         AchievementCatalogueEntry::class,
         AchievementCatalogueCache::class,
         SyncRun::class,
@@ -124,7 +127,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 48,
+    version = 49,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -140,6 +143,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun hltbDatasetDao(): HltbDatasetDao
     abstract fun achievementCatalogueDao(): AchievementCatalogueDao
     abstract fun achievementWatchDao(): AchievementWatchDao
+    abstract fun achievementAdmissionDao(): AchievementAdmissionDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
     abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
@@ -1369,6 +1373,27 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportRequestId TEXT")
                 db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportGeneration INTEGER")
                 db.execSQL("ALTER TABLE player_profile ADD COLUMN historyImportCaptured INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_48_49 = object : Migration(48, 49) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `achievement_admission_work` (" +
+                        "`steamId` TEXT NOT NULL, `accountGeneration` INTEGER NOT NULL, " +
+                        "`appId` INTEGER NOT NULL, `admittedAt` INTEGER NOT NULL, " +
+                        "`attempts` INTEGER NOT NULL, `nextEligibleAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`steamId`, `accountGeneration`, `appId`), " +
+                        "FOREIGN KEY(`appId`) REFERENCES `games`(`appId`) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_achievement_admission_work_appId` " +
+                        "ON `achievement_admission_work` (`appId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_achievement_admission_work_steamId_accountGeneration_nextEligibleAt_admittedAt` " +
+                        "ON `achievement_admission_work` (`steamId`, `accountGeneration`, `nextEligibleAt`, `admittedAt`)",
+                )
             }
         }
 

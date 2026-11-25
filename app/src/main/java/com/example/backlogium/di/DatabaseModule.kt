@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.dao.AchievementDao
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.DiagnosticsDao
@@ -88,6 +89,7 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_45_46,
                 BacklogiumDatabase.MIGRATION_46_47,
                 BacklogiumDatabase.MIGRATION_47_48,
+                BacklogiumDatabase.MIGRATION_48_49,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
@@ -123,6 +125,9 @@ object DatabaseModule {
 
     @Provides
     fun provideAchievementWatchDao(db: BacklogiumDatabase): AchievementWatchDao = db.achievementWatchDao()
+
+    @Provides
+    fun provideAchievementAdmissionDao(db: BacklogiumDatabase): AchievementAdmissionDao = db.achievementAdmissionDao()
 
     @Provides
     fun provideAchievementDao(db: BacklogiumDatabase): AchievementDao = db.achievementDao()

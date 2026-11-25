@@ -103,6 +103,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_45_46,
         BacklogiumDatabase.MIGRATION_46_47,
         BacklogiumDatabase.MIGRATION_47_48,
+        BacklogiumDatabase.MIGRATION_48_49,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -1911,6 +1912,31 @@ class MigrationTest {
                     assertEquals("{}", it.getString(0))
                 }
                 db.query("SELECT * FROM library_poll_commits").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v48ToV49StartsWithNoAdmissionBacklogAndKeepsTheLibrary() {
+        val databaseName = "migration-v48-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(databaseName, 48).use { db ->
+                db.execSQL(
+                    "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                        "lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+                        "VALUES (10, 'Existing', '', 0, 0, 0, 0, 1, 0, 'STEAM_OWNED', 0)",
+                )
+            }
+            migrationTestHelper.runMigrationsAndValidate(
+                databaseName, currentDatabaseVersion, true, BacklogiumDatabase.MIGRATION_48_49,
+            ).use { db ->
+                db.query("SELECT name FROM games WHERE appId = 10").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals("Existing", it.getString(0))
+                }
+                db.query("SELECT * FROM achievement_admission_work").use { assertFalse(it.moveToFirst()) }
             }
         } finally {
             context.deleteDatabase(databaseName)
