@@ -416,8 +416,11 @@ class FamilySharedGameRepositoryTest {
             },
         )
         val gameDao = FakeGameDao(emptyList())
+        val admissionDao = FakeAdmissionDao()
 
-        val result = repository(gameDao = gameDao, steamApi = steamApi, storeApi = storeApi)
+        val result = repository(
+            gameDao = gameDao, steamApi = steamApi, storeApi = storeApi, admissionDao = admissionDao,
+        )
             .importManually("300", "key", "76561198000000000")
 
         assertEquals(
@@ -425,6 +428,7 @@ class FamilySharedGameRepositoryTest {
             result,
         )
         assertEquals(GameSource.FAMILY_SHARED, gameDao.getById(appId)?.source)
+        assertTrue(admissionDao.pendingIdentities().isEmpty())
     }
 
     /**

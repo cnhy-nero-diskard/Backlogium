@@ -14,6 +14,7 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.RecoveryReadStatusStore
 import com.example.backlogium.data.local.SettingsDataStore
+import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.data.remote.dto.OwnedGameDto
 import com.example.backlogium.data.remote.dto.OwnedGamesResponse
@@ -27,6 +28,7 @@ import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationRecoveryDerivedCompute
 import com.example.backlogium.domain.GamificationUpdater
+import com.example.backlogium.domain.GameSource
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.domain.RecoveryDailyCreditCoordinator
@@ -71,11 +73,17 @@ class SteamSyncLibraryEvidenceWorkerTest {
     }
     private val sync = SteamSyncCoordinator()
     private val admissionWakes = mutableListOf<Pair<String, Long>>()
+    private var failAdmissionWake = false
     private val admissionScheduler = object : AchievementAdmissionWorkScheduler {
         override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
+            if (failAdmissionWake) throw IOException("fixture scheduler interruption")
             admissionWakes += steamId to generation
         }
-        override suspend fun recoverPending() = Unit
+        override suspend fun recoverPending() {
+            db.achievementAdmissionDao().pendingIdentities().forEach { identity ->
+                enqueue(identity.steamId, identity.accountGeneration)
+            }
+        }
     }
     private val derived = DerivedStateWriteCoordinator()
     private val settings = SettingsDataStore(context)
@@ -160,16 +168,63 @@ class SteamSyncLibraryEvidenceWorkerTest {
         assertTrue(db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).isEmpty())
 
         now = now.plusSeconds(30 * 60)
+        db.gameDao().upsert(Game(
+            appId = 12L, name = "Borrowed game", iconUrl = "", playtimeForever = 0,
+            playtime2Weeks = 0, lastPlaytime = 0, source = GameSource.FAMILY_SHARED,
+        ))
         ownedGames = {
-            OwnedGamesResponse(OwnedGamesResult(2, listOf(
+            OwnedGamesResponse(OwnedGamesResult(3, listOf(
                 OwnedGameDto(10, "Fixture", playtimeForever = 100),
                 OwnedGameDto(11, "New zero-play game", playtimeForever = 0),
+                OwnedGameDto(12, "Borrowed game", playtimeForever = 50),
             )))
         }
         assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
 
         val pending = db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20)
         assertEquals(listOf(11L), pending.map { it.appId })
+        assertEquals(GameSource.STEAM_OWNED, db.gameDao().getById(12L)?.source)
+        assertEquals(listOf(ACCOUNT to generation), admissionWakes)
+
+        // Seeing the same library snapshot again does not create another admission or wake.
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        assertEquals(listOf(11L), db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).map { it.appId })
+        assertEquals(listOf(ACCOUNT to generation), admissionWakes)
+    }
+
+    @Test
+    fun restoredGamesAreNotReclassifiedAsNewAdmissions() = runTest {
+        db.gameDao().upsert(Game(
+            appId = 10L, name = "Restored game", iconUrl = "", playtimeForever = 100,
+            playtime2Weeks = 0, lastPlaytime = 0,
+        ))
+        ownedGames = { snapshot(100) }
+
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        assertTrue(db.achievementAdmissionDao().pendingIdentities().isEmpty())
+        assertTrue(admissionWakes.isEmpty())
+    }
+
+    @Test
+    fun committedAdmissionIsRecoveredWhenThePostCommitWakeFails() = runTest {
+        ownedGames = { snapshot(100) }
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        now = now.plusSeconds(30 * 60)
+        ownedGames = {
+            OwnedGamesResponse(OwnedGamesResult(2, listOf(
+                OwnedGameDto(10, "Fixture", playtimeForever = 100),
+                OwnedGameDto(11, "New zero-play game", playtimeForever = 0),
+            )))
+        }
+        failAdmissionWake = true
+
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val generation = marker.generation()
+        assertEquals(listOf(11L), db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).map { it.appId })
+        assertTrue(admissionWakes.isEmpty())
+
+        failAdmissionWake = false
+        admissionScheduler.recoverPending()
         assertEquals(listOf(ACCOUNT to generation), admissionWakes)
     }
 
