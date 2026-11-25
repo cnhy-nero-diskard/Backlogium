@@ -1118,8 +1118,8 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
         name: String,
         iconUrl: String,
         admittedAt: Long,
-    ) {
-        store.putIfAbsent(
+    ): Long {
+        val prior = store.putIfAbsent(
             appId,
             Game(
                 appId = appId,
@@ -1132,6 +1132,7 @@ private class FakeGameDao(private val store: MutableMap<Long, Game>) : GameDao {
                 source = GameSource.FAMILY_SHARED,
             ),
         )
+        return if (prior == null) 1L else -1L
     }
 
     override suspend fun ownedGamesForDiffing(): List<Game> =

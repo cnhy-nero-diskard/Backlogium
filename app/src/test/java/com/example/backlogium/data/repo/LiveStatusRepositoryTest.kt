@@ -1273,7 +1273,7 @@ class LiveStatusRepositoryTest {
         override suspend fun decrementImportedBalanceIfEnough(appId: Long, minutes: Int): Int = error("not used")
         override suspend fun restoreImportedBalanceDelta(appId: Long, minutes: Int): Int = error("not used")
         override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
-        override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) = error("not used")
+        override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long): Long = error("not used")
         override suspend fun ownedGamesForDiffing(): List<Game> = error("not used")
         override suspend fun sharedGames(): List<Game> = error("not used")
         override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long) = error("not used")

@@ -5,6 +5,7 @@ import org.junit.Rule
 
 import androidx.room.Room
 import com.example.backlogium.data.backup.PassThroughTransactionScope
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
@@ -15,6 +16,7 @@ import com.example.backlogium.data.local.dao.AchievementUnlock
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameAchievementSyncDao
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HltbDataDao
@@ -24,11 +26,15 @@ import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
+import com.example.backlogium.data.local.entity.AchievementAdmissionIdentity
+import com.example.backlogium.data.local.entity.AchievementAdmissionQueueState
+import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import com.example.backlogium.data.remote.SteamApi
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.CurrentPlayersResponse
 import com.example.backlogium.data.remote.dto.GameSchemaResponse
@@ -63,6 +69,7 @@ import com.example.backlogium.domain.InMemoryProgressMarksStore
 import com.example.backlogium.domain.ProgressMarks
 import com.example.backlogium.domain.RecomputeSource
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.work.AchievementAdmissionWorkScheduler
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -252,12 +259,16 @@ class FamilySharedGameRepositoryTest {
         database: BacklogiumDatabase,
         gamificationUpdater: GamificationUpdater,
         excludedDao: ExcludedSharedGameDao = FakeExcludedSharedGameDao(),
+        settings: SettingsDataStore = settingsFixture.create(),
+        storeApi: SteamStoreApi = noOpProxy(SteamStoreApi::class.java),
+        admissionDao: AchievementAdmissionDao = database.achievementAdmissionDao(),
+        admissionScheduler: AchievementAdmissionWorkScheduler = NoopAdmissionScheduler,
     ) = FamilySharedGameRepository(
         gameDao = database.gameDao(),
         excludedDao = excludedDao,
         profileDao = database.playerProfileDao(),
-        settings = settingsFixture.create(),
-        store = SteamStoreAppDataSource(noOpProxy(SteamStoreApi::class.java)),
+        settings = settings,
+        store = SteamStoreAppDataSource(storeApi),
         genres = GameGenreRepository(
             cacheDao = noOpProxy(GameGenreCacheDao::class.java),
             store = SteamStoreGenreDataSource(noOpProxy(SteamStoreApi::class.java)),
@@ -269,7 +280,7 @@ class FamilySharedGameRepositoryTest {
         time = FixedTimeProvider,
         sessionDao = database.sessionDao(),
         dailyProgressDao = database.dailyProgressDao(),
-        transaction = PassThroughTransactionScope,
+        transaction = RoomDatabaseTransactionScope(database),
         gamificationUpdater = gamificationUpdater,
         derivedStateWrites = DerivedStateWriteCoordinator(),
         achievementRepository = AchievementRepository(
@@ -280,6 +291,9 @@ class FamilySharedGameRepositoryTest {
             hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = FixedTimeProvider,
         ),
+        admissionDao = admissionDao,
+        admissionScheduler = admissionScheduler,
+        accountChangeMarker = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()),
     )
 
     @Test
@@ -558,6 +572,50 @@ class FamilySharedGameRepositoryTest {
         assertEquals(listOf(Triple(account, 1L, "Shared 1")), notices)
     }
 
+    @Test
+    fun `automatic shared insert commits one admission row and wakes its account chain`() = runTest {
+        val account = "76561198000000208"
+        val appId = 501L
+        val database = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
+        ).allowMainThreadQueries().build()
+        val wakes = mutableListOf<Pair<String, Long>>()
+        val scheduler = object : AchievementAdmissionWorkScheduler {
+            override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
+                wakes += steamId to generation
+            }
+            override suspend fun recoverPending() = Unit
+        }
+        val settings = settingsFixture.create()
+        try {
+            val profile = database.playerProfileDao()
+            profile.insertIfMissing()
+            profile.updateSteamIdentity(account, 0, null, null, null)
+            profile.updateSyncStatus(20L, null)
+            val repo = repositoryWithRealGamification(
+                database = database,
+                gamificationUpdater = GamificationUpdater(
+                    database.sessionDao(), database.dailyProgressDao(), profile, database.hltbDataDao(),
+                    database.achievementDao(), database.gameDao(), database.hiddenGameDao(),
+                ),
+                settings = settings,
+                storeApi = FakeSteamStoreApi(respond = { id ->
+                    Response.success(mapOf(id.toString() to StoreAppDetails(true, StoreAppData(type = "game", name = "Shared"))))
+                }),
+                admissionScheduler = scheduler,
+            )
+            settings.setSharedGameCandidate(appId, 10L)
+
+            assertEquals(AdmissionDecision.Admit, repo.considerAdmission(appId, 30L, account))
+            val generation = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()).generation()
+            val queued = database.achievementAdmissionDao().eligible(account, generation, Long.MAX_VALUE, 10)
+            assertEquals(listOf(appId), queued.map { it.appId })
+            assertEquals(listOf(account to generation), wakes)
+        } finally {
+            database.close()
+        }
+    }
+
     private fun repository(
         gameDao: GameDao = FakeGameDao(emptyList()),
         excludedDao: ExcludedSharedGameDao = FakeExcludedSharedGameDao(),
@@ -574,6 +632,8 @@ class FamilySharedGameRepositoryTest {
         dailyProgressDao: DailyProgressDao = FakeDailyProgressDao(emptyList()),
         profileDao: PlayerProfileDao = FakePlayerProfileDao(),
         notifier: SharedGameNotifier = SharedGameNotifier { _, _, _ -> false },
+        admissionDao: AchievementAdmissionDao = FakeAdmissionDao(),
+        admissionScheduler: AchievementAdmissionWorkScheduler = NoopAdmissionScheduler,
     ) = FamilySharedGameRepository(
         gameDao = gameDao,
         excludedDao = excludedDao,
@@ -610,7 +670,49 @@ class FamilySharedGameRepositoryTest {
             hiddenGamesRepository = fakeHiddenGamesRepository(),
             time = FixedTimeProvider,
         ),
+        admissionDao = admissionDao,
+        admissionScheduler = admissionScheduler,
+        accountChangeMarker = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()),
     )
+
+    private object NoopAdmissionScheduler : AchievementAdmissionWorkScheduler {
+        override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) = Unit
+        override suspend fun recoverPending() = Unit
+    }
+
+    private class FakeAdmissionDao : AchievementAdmissionDao {
+        private val rows = linkedMapOf<Triple<String, Long, Long>, AchievementAdmissionWork>()
+        override suspend fun insert(work: AchievementAdmissionWork): Long {
+            val key = Triple(work.steamId, work.accountGeneration, work.appId)
+            if (rows.putIfAbsent(key, work) != null) return -1L
+            return 1L
+        }
+        override suspend fun insertAll(work: List<AchievementAdmissionWork>) { work.forEach { insert(it) } }
+        override suspend fun eligible(steamId: String, generation: Long, now: Long, limit: Int) =
+            rows.values.filter { it.steamId == steamId && it.accountGeneration == generation && it.nextEligibleAt <= now }
+                .sortedWith(compareBy<AchievementAdmissionWork> { it.admittedAt }.thenBy { it.appId }).take(limit)
+        override suspend fun get(steamId: String, generation: Long, appId: Long) = rows[Triple(steamId, generation, appId)]
+        override suspend fun beginAttempt(steamId: String, generation: Long, appId: Long, now: Long): Int {
+            val key = Triple(steamId, generation, appId)
+            val row = rows[key]?.takeIf { it.nextEligibleAt <= now } ?: return 0
+            rows[key] = row.copy(attempts = row.attempts + 1)
+            return 1
+        }
+        override suspend fun defer(steamId: String, generation: Long, appId: Long, nextEligibleAt: Long) {
+            val key = Triple(steamId, generation, appId)
+            rows[key]?.let { rows[key] = it.copy(nextEligibleAt = nextEligibleAt) }
+        }
+        override suspend fun delete(steamId: String, generation: Long, appId: Long) {
+            rows.remove(Triple(steamId, generation, appId))
+        }
+        override suspend fun state(steamId: String, generation: Long): AchievementAdmissionQueueState {
+            val matching = rows.values.filter { it.steamId == steamId && it.accountGeneration == generation }
+            return AchievementAdmissionQueueState(matching.size, matching.minOfOrNull { it.nextEligibleAt })
+        }
+        override suspend fun pendingIdentities(): List<AchievementAdmissionIdentity> = rows.values
+            .map { AchievementAdmissionIdentity(it.steamId, it.accountGeneration) }.distinct()
+        override suspend fun deleteAll() { rows.clear() }
+    }
 
     /** A minimal [SteamApi] double: only the two endpoints manual import reaches are wired. */
     private class FakeSteamApi(
