@@ -70,6 +70,13 @@ class SteamSyncLibraryEvidenceWorkerTest {
             CredentialsState.Configured("fixture-key", ACCOUNT).takeIf { configured }
     }
     private val sync = SteamSyncCoordinator()
+    private val admissionWakes = mutableListOf<Pair<String, Long>>()
+    private val admissionScheduler = object : AchievementAdmissionWorkScheduler {
+        override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
+            admissionWakes += steamId to generation
+        }
+        override suspend fun recoverPending() = Unit
+    }
     private val derived = DerivedStateWriteCoordinator()
     private val settings = SettingsDataStore(context)
     private val testSettings = FakeSettingsRepository()
@@ -143,6 +150,27 @@ class SteamSyncLibraryEvidenceWorkerTest {
         assertEquals(Result.retry(), failed.doWork())
         assertNull(commits.get(failed.id.toString(), ACCOUNT))
         assertTrue(commits.hasBaseline(ACCOUNT))
+    }
+
+    @Test
+    fun newOwnedGamesAreQueuedInsideTheConfirmedPollButBaselineGamesAreNot() = runTest {
+        ownedGames = { snapshot(100) }
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val generation = marker.generation()
+        assertTrue(db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).isEmpty())
+
+        now = now.plusSeconds(30 * 60)
+        ownedGames = {
+            OwnedGamesResponse(OwnedGamesResult(2, listOf(
+                OwnedGameDto(10, "Fixture", playtimeForever = 100),
+                OwnedGameDto(11, "New zero-play game", playtimeForever = 0),
+            )))
+        }
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+
+        val pending = db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20)
+        assertEquals(listOf(11L), pending.map { it.appId })
+        assertEquals(listOf(ACCOUNT to generation), admissionWakes)
     }
 
     @Test
@@ -238,6 +266,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
                         RoomDatabaseTransactionScope(db),
                     ),
                     RecoveryReadStatusStore(context),
+                    admissionScheduler,
                 )
         }).build()
     }
