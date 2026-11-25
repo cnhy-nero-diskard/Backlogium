@@ -737,15 +737,8 @@ private fun DailyPlaytimeChart(
         if (selectedDate != selectedDay?.date) selectedDate = selectedDay?.date
     }
     val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
-    val dateGaps = if (selectedDay == null) {
-        emptyList()
-    } else {
-        analyticsDateGaps(representedDays, days, selectedIndex)
-    }
-    val dateGapDescriptions = listOfNotNull(
-        dateGaps.getOrNull(0)?.let { analyticsDateGapLabel(it, dayFormatter) },
-        dateGaps.getOrNull(1)?.let { analyticsDateGapLabel(it, dayFormatter) },
-    )
+    val dateGapDescriptions = analyticsDateGaps(representedDays, days, selectedIndex)
+        .map { analyticsDateGapLabel(it, dayFormatter) }
     val previousDayLabel = stringResource(R.string.analytics_previous_day)
     val nextDayLabel = stringResource(R.string.analytics_next_day)
     val selectedDayLabel = selectedDay?.date?.format(dayFormatter)

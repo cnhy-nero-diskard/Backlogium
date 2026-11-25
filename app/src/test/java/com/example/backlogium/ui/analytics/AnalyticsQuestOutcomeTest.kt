@@ -11,10 +11,11 @@ class AnalyticsQuestOutcomeTest {
         val dates = (1..4).map { LocalDate.of(2026, 9, it) }
 
         val summary = deriveAnalyticsQuestOutcomeSummary(
-            representedDates = dates,
-            outcomesByDate = mapOf(
-                dates[0] to true,
-                dates[2] to false,
+            days = listOf(
+                AnalyticsDay(dates[0], 0, questMet = true),
+                AnalyticsDay(dates[1], 90),
+                AnalyticsDay(dates[2], 90, questMet = false),
+                AnalyticsDay(dates[3], 0),
             ),
         )
 

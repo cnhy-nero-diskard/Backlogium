@@ -85,14 +85,13 @@ data class AnalyticsQuestOutcomeSummary(
 )
 
 internal fun deriveAnalyticsQuestOutcomeSummary(
-    representedDates: List<LocalDate>,
-    outcomesByDate: Map<LocalDate, Boolean>,
+    days: List<AnalyticsDay>,
 ): AnalyticsQuestOutcomeSummary {
-    val available = representedDates.count { it in outcomesByDate }
+    val available = days.count { it.questMet != null }
     return AnalyticsQuestOutcomeSummary(
-        metDays = representedDates.count { outcomesByDate[it] == true },
+        metDays = days.count { it.questMet == true },
         availableDays = available,
-        unavailableDays = representedDates.size - available,
+        unavailableDays = days.size - available,
     )
 }
 
@@ -179,9 +178,6 @@ internal fun deriveTimeOfDayPattern(
         else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
     }
 }
-
-internal fun analyticsTimingUnavailable(totalMinutes: Int, sessions: List<PlaySession>): Boolean =
-    totalMinutes > 0 && sessions.isEmpty()
 
 /** A factual first sentence for the selected Analytics window. */
 sealed interface AnalyticsHeadline {
@@ -635,10 +631,6 @@ class AnalyticsViewModel @Inject constructor(
                 .getOrNull()
                 ?.let { date -> date to progress }
         }.toMap()
-        val questOutcomes = deriveAnalyticsQuestOutcomeSummary(
-            representedDates = dates,
-            outcomesByDate = progressByDate.mapValues { (_, progress) -> progress.questMet },
-        )
         val dailyMinutes = dates.map { date ->
             AnalyticsDay(
                 date = date,
@@ -648,6 +640,8 @@ class AnalyticsViewModel @Inject constructor(
                 questMet = progressByDate[date]?.questMet,
             )
         }
+
+        val questOutcomes = deriveAnalyticsQuestOutcomeSummary(dailyMinutes)
 
         val allocationMinutesByGame = inputs.allocations.groupBy { it.appId }
             .mapValues { (_, allocations) -> allocations.sumOf { it.minutes } }
@@ -713,7 +707,7 @@ class AnalyticsViewModel @Inject constructor(
         // Session-shape and time-of-day inputs stay session-only. A period with played minutes but
         // zero sessions is an allocations-only window: the chart and totals are honest, while the
         // session insights must state that timing is unavailable rather than show measured zeros.
-        val timingUnavailable = analyticsTimingUnavailable(totalMinutes, inputs.sessions)
+        val timingUnavailable = totalMinutes > 0 && inputs.sessions.isEmpty()
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,

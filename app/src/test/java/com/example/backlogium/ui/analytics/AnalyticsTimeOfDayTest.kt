@@ -4,7 +4,6 @@ import com.example.backlogium.data.repo.PlaySession
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AnalyticsTimeOfDayTest {
@@ -30,10 +29,9 @@ class AnalyticsTimeOfDayTest {
     }
 
     @Test
-    fun recoveredMinutesWithoutSessionStartsStayOutOfClockBuckets() {
+    fun noRecordedSessionsProduceNoClockBuckets() {
         val sessions = emptyList<PlaySession>()
 
         assertEquals(TimeOfDayPattern(), deriveTimeOfDayPattern(sessions, zone))
-        assertTrue(analyticsTimingUnavailable(totalMinutes = 105, sessions = sessions))
     }
 }

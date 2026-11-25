@@ -355,11 +355,9 @@ class AnalyticsWindowTest {
         )
         assertEquals(AnalyticsWindowBounds(firstActivity, firstActivity), representedBounds)
         val questOutcomes = deriveAnalyticsQuestOutcomeSummary(
-            representedDates = representedBounds.dates(),
-            outcomesByDate = mapOf(
-                LocalDate.of(2026, 10, 1) to true,
-                firstActivity to false,
-            ),
+            days = representedBounds.dates().map { date ->
+                AnalyticsDay(date, 0, questMet = date != firstActivity)
+            },
         )
         assertEquals(0, questOutcomes.metDays)
         assertEquals(1, questOutcomes.availableDays)
