@@ -61,6 +61,22 @@ data class AnalyticsWindow(
         }
     }
 
+    /** Keep a length change in available history when its preserved anchor would be too old. */
+    fun withLength(
+        length: AnalyticsWindowLength,
+        earliestTrackedDate: LocalDate?,
+    ): AnalyticsWindow {
+        val candidate = copy(length = length)
+        return if (
+            earliestTrackedDate != null &&
+            candidate.resolve().endInclusive.isBefore(earliestTrackedDate)
+        ) {
+            candidate.copy(anchor = earliestTrackedDate)
+        } else {
+            candidate
+        }
+    }
+
     /** Move to the immediately preceding window, with no gap or overlap for rolling lengths. */
     fun stepEarlier(): AnalyticsWindow = copy(
         anchor = when (length) {
@@ -129,7 +145,7 @@ data class AnalyticsWindow(
         earliestTrackedDate: LocalDate?,
     ): AnalyticsWindowBounds? {
         val previous = comparablePreviousBounds(today) ?: return null
-        val current = resolveActivityBounds(today)
+        val current = resolveActivityBounds(today) ?: return null
         return previous.takeIf { bounds ->
             earliestTrackedDate != null &&
                 !earliestTrackedDate.isAfter(current.start) &&
@@ -142,22 +158,16 @@ data class AnalyticsWindow(
      * windows, but only the elapsed subrange through [today] for the current calendar month/year.
      * When tracking began inside the selected window, [earliestTrackedDate] removes the
      * pre-tracking dates rather than presenting them as inactivity. Future dates never appear as
-     * zero-activity days.
+     * zero-activity days. Returns null when no supported dates intersect this window.
      */
     fun resolveActivityBounds(
         today: LocalDate,
         earliestTrackedDate: LocalDate? = null,
-    ): AnalyticsWindowBounds {
+    ): AnalyticsWindowBounds? {
         val full = resolve()
-        val end = when {
-            !full.endInclusive.isAfter(today) -> full.endInclusive
-            full.start.isAfter(today) -> full.endInclusive
-            else -> today
-        }
-        val start = earliestTrackedDate
-            ?.takeIf { !it.isBefore(full.start) && !it.isAfter(end) }
-            ?: full.start
-        return AnalyticsWindowBounds(start = start, endInclusive = end)
+        val end = minOf(full.endInclusive, today)
+        val start = maxOf(full.start, earliestTrackedDate ?: full.start)
+        return if (start.isAfter(end)) null else AnalyticsWindowBounds(start = start, endInclusive = end)
     }
 }
 

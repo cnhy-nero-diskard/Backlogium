@@ -315,7 +315,7 @@ data class AnalyticsUiState(
 private data class AnalyticsInputs(
     val window: AnalyticsWindow,
     /** The exact represented-date scope queried for this retained snapshot. */
-    val activityBounds: AnalyticsWindowBounds,
+    val activityBounds: AnalyticsWindowBounds?,
     val sessions: List<PlaySession>,
     val datedTotals: List<DatedCreditedTotal>,
     val previousMinutesByGame: Map<Long, Int>,
@@ -343,6 +343,19 @@ internal data class AnalyticsWindowSelection(
 internal fun AnalyticsWindowSelection.forDate(today: LocalDate): AnalyticsWindow =
     if (followsCurrent) window.copy(anchor = today) else window
 
+internal fun AnalyticsWindowSelection.withLength(
+    effectiveWindow: AnalyticsWindow,
+    length: AnalyticsWindowLength,
+    today: LocalDate,
+    earliestTrackedDate: LocalDate?,
+): AnalyticsWindowSelection {
+    val selectedWindow = effectiveWindow.withLength(length, earliestTrackedDate)
+    return copy(
+        window = selectedWindow,
+        followsCurrent = selectedWindow.isCurrentWindow(today),
+    )
+}
+
 internal fun AnalyticsWindowSelection.stepEarlierFrom(
     effectiveWindow: AnalyticsWindow,
     earliestTrackedDate: LocalDate,
@@ -362,8 +375,8 @@ private data class ResolvedAnalyticsWindow(
     val window: AnalyticsWindow,
     val today: LocalDate,
     /** Dates that all windowed data sources are allowed to represent. */
-    val activityBounds: AnalyticsWindowBounds,
-    val epochBounds: HistoryWindowBounds,
+    val activityBounds: AnalyticsWindowBounds?,
+    val epochBounds: HistoryWindowBounds?,
     val earliestTrackedDate: LocalDate?,
     val canStepEarlier: Boolean,
     val canStepLater: Boolean,
@@ -449,11 +462,13 @@ class AnalyticsViewModel @Inject constructor(
             window = window,
             today = today,
             activityBounds = activityBounds,
-            epochBounds = historyWindowBounds(
-                start = activityBounds.start,
-                endInclusive = activityBounds.endInclusive,
-                zone = time.zone(),
-            ),
+            epochBounds = activityBounds?.let { bounds ->
+                historyWindowBounds(
+                    start = bounds.start,
+                    endInclusive = bounds.endInclusive,
+                    zone = time.zone(),
+                )
+            },
             earliestTrackedDate = earliest,
             canStepEarlier = window.canStepEarlier(earliest),
             canStepLater = window.canStepLater(today),
@@ -474,11 +489,12 @@ class AnalyticsViewModel @Inject constructor(
     /** Select a new length while keeping the current anchor period. */
     fun selectWindowLength(length: AnalyticsWindowLength) {
         val dated = datedWindow.value
-        val window = dated.window.copy(length = length)
         selectedWindow.update {
-            AnalyticsWindowSelection(
-                window = window,
-                followsCurrent = window.isCurrentWindow(dated.today),
+            it.withLength(
+                effectiveWindow = dated.window,
+                length = length,
+                today = dated.today,
+                earliestTrackedDate = earliestTrackedDate.value,
             )
         }
     }
@@ -550,22 +566,31 @@ class AnalyticsViewModel @Inject constructor(
                     }
             }
         }
+        val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
+            sessionRepository.sessionsBetween(
+                startInclusiveMillis = bounds.startInclusiveMillis,
+                endExclusiveMillis = bounds.endExclusiveMillis,
+            )
+        } ?: flowOf(emptyList())
+        val datedTotalsFlow: Flow<List<DatedCreditedTotal>> = resolved.activityBounds?.let { bounds ->
+            sessionRepository.datedCreditedTotalsBetween(
+                zone = time.zone(),
+                startDateInclusive = bounds.start,
+                endDateExclusive = bounds.endInclusive.plusDays(1),
+            )
+        } ?: flowOf(emptyList())
+        val allocationsFlow: Flow<List<CreditedAllocation>> = resolved.activityBounds?.let { bounds ->
+            sessionRepository.datedAllocationsBetween(
+                startInclusiveDate = bounds.start,
+                endInclusiveDate = bounds.endInclusive,
+            )
+        } ?: flowOf(emptyList())
         combine(
             combine(
-                sessionRepository.sessionsBetween(
-                    startInclusiveMillis = resolved.epochBounds.startInclusiveMillis,
-                    endExclusiveMillis = resolved.epochBounds.endExclusiveMillis,
-                ),
-                sessionRepository.datedCreditedTotalsBetween(
-                    zone = time.zone(),
-                    startDateInclusive = resolved.activityBounds.start,
-                    endDateExclusive = resolved.activityBounds.endInclusive.plusDays(1),
-                ),
+                sessionsFlow,
+                datedTotalsFlow,
                 previousMinutesFlow,
-                sessionRepository.datedAllocationsBetween(
-                    startInclusiveDate = resolved.activityBounds.start,
-                    endInclusiveDate = resolved.activityBounds.endInclusive,
-                ),
+                allocationsFlow,
             ) { sessions, datedTotals, previousMinutesByGame, allocations ->
                 AnalyticsWindowed(sessions, datedTotals, previousMinutesByGame, allocations)
             },
@@ -601,7 +626,7 @@ class AnalyticsViewModel @Inject constructor(
         val periodBounds = inputs.window.resolve()
         // Keep the old snapshot and its exact query bounds together while a new window loads.
         val dataBounds = inputs.activityBounds
-        val dates = dataBounds.dates()
+        val dates = dataBounds?.dates().orEmpty()
         val gamesById = inputs.library.associateBy { it.appId }
         val allocationsByDate = inputs.allocations.groupBy { it.date }
         val totalsByDate = inputs.datedTotals.associateBy { it.date }
@@ -693,7 +718,7 @@ class AnalyticsViewModel @Inject constructor(
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,
             activeDays = dailyMinutes.count { it.minutes > 0 },
-            totalDays = dataBounds.dayCount,
+            totalDays = dataBounds?.dayCount ?: 0,
             leadingGame = topGames.firstOrNull(),
             previousMinutes = inputs.previousMinutesByGame.values.sum().takeIf { it > 0 },
         )

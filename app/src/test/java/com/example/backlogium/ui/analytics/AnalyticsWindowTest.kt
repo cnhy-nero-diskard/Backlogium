@@ -173,13 +173,13 @@ class AnalyticsWindowTest {
             AnalyticsWindow(LocalDate.of(2026, 8, 1), AnalyticsWindowLength.ONE_MONTH),
             allocationPeriod.window,
         )
-        assertEquals(
-            earliestAllocationDate,
+        val allocationBounds = requireNotNull(
             allocationPeriod.window.resolveActivityBounds(
                 today = LocalDate.of(2026, 9, 30),
                 earliestTrackedDate = earliestAllocationDate,
-            ).start,
+            ),
         )
+        assertEquals(earliestAllocationDate, allocationBounds.start)
         assertEquals(
             allocationPeriod,
             allocationPeriod.stepEarlierFrom(
@@ -269,7 +269,7 @@ class AnalyticsWindowTest {
             current.resolve(),
         )
         // Represented activity stops at today so Sep 22-30 never appear as zero-minute days.
-        val activity = current.resolveActivityBounds(today)
+        val activity = requireNotNull(current.resolveActivityBounds(today))
         assertEquals(
             AnalyticsWindowBounds(LocalDate.of(2026, 9, 1), today),
             activity,
@@ -287,7 +287,7 @@ class AnalyticsWindowTest {
             AnalyticsWindowBounds(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31)),
             current.resolve(),
         )
-        val activity = current.resolveActivityBounds(today)
+        val activity = requireNotNull(current.resolveActivityBounds(today))
         assertEquals(
             AnalyticsWindowBounds(LocalDate.of(2026, 1, 1), today),
             activity,
@@ -327,10 +327,50 @@ class AnalyticsWindowTest {
     }
 
     @Test
+    fun calendarToRollingLengthChangeReanchorsAtFirstActivityAndLimitsQuestDenominator() {
+        val today = LocalDate.of(2026, 11, 25)
+        val firstActivity = LocalDate.of(2026, 10, 20)
+        val october = AnalyticsWindow(LocalDate.of(2026, 10, 1), AnalyticsWindowLength.ONE_MONTH)
+        val preTrackingRolling = AnalyticsWindow(
+            LocalDate.of(2026, 10, 1),
+            AnalyticsWindowLength.TWO_WEEKS,
+        )
+
+        assertNull(preTrackingRolling.resolveActivityBounds(today, firstActivity))
+
+        val selection = AnalyticsWindowSelection(
+            window = october,
+            followsCurrent = false,
+        ).withLength(
+            effectiveWindow = october,
+            length = AnalyticsWindowLength.TWO_WEEKS,
+            today = today,
+            earliestTrackedDate = firstActivity,
+        )
+        assertEquals(AnalyticsWindow(firstActivity, AnalyticsWindowLength.TWO_WEEKS), selection.window)
+        assertFalse(selection.followsCurrent)
+
+        val representedBounds = requireNotNull(
+            selection.window.resolveActivityBounds(today, firstActivity),
+        )
+        assertEquals(AnalyticsWindowBounds(firstActivity, firstActivity), representedBounds)
+        val questOutcomes = deriveAnalyticsQuestOutcomeSummary(
+            representedDates = representedBounds.dates(),
+            outcomesByDate = mapOf(
+                LocalDate.of(2026, 10, 1) to true,
+                firstActivity to false,
+            ),
+        )
+        assertEquals(0, questOutcomes.metDays)
+        assertEquals(1, questOutcomes.availableDays)
+        assertEquals(0, questOutcomes.unavailableDays)
+    }
+
+    @Test
     fun representedDayCountUsesElapsedDaysWithFallbackToPeriod() {
         val today = LocalDate.of(2026, 9, 21)
         val window = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
-        val activity = window.resolveActivityBounds(today)
+        val activity = requireNotNull(window.resolveActivityBounds(today))
         val days = activity.dates().map { AnalyticsDay(it, 0) }
 
         val populated = AnalyticsUiState(
