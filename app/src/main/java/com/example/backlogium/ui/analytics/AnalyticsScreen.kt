@@ -27,8 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -724,13 +724,18 @@ private fun DailyPlaytimeChart(
     )
     val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
     val totalMinutes = days.sumOf { it.minutes }
-    var selectedIndex by remember(days) {
-        mutableIntStateOf(initialAnalyticsDaySelection(days) ?: -1)
+    var selectedDate by remember {
+        mutableStateOf(initialAnalyticsDaySelection(days)?.let { days[it].date })
     }
+    val selectedIndex = days.indexOfFirst { it.date == selectedDate }
+        .takeIf { it >= 0 } ?: initialAnalyticsDaySelection(days) ?: -1
     val selectDay: (Int) -> Unit = { requestedIndex ->
-        analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedIndex = it }
+        analyticsDaySelectionIndex(days.size, requestedIndex)?.let { selectedDate = days[it].date }
     }
     val selectedDay = days.getOrNull(selectedIndex)
+    SideEffect {
+        if (selectedDate != selectedDay?.date) selectedDate = selectedDay?.date
+    }
     val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
     val dateGaps = if (selectedDay == null) {
         emptyList()

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assert
@@ -103,6 +104,45 @@ class AnalyticsScreenTest {
         composeRule.onNodeWithText("Quest outcome unavailable").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("1/2").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("1 date has no stored quest outcome.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun inspectedDateSurvivesQuestOutcomeRefreshAndFallsBackWhenRemoved() {
+        val state = mutableStateOf(
+            analyticsState().copy(
+                dailyMinutes = listOf(
+                    AnalyticsDay(TODAY.minusDays(2), 20, questMet = false),
+                    AnalyticsDay(TODAY.minusDays(1), 30, questMet = null),
+                    AnalyticsDay(TODAY, 40, questMet = false),
+                ),
+            ),
+        )
+        composeRule.setContent {
+            BacklogiumTheme {
+                AnalyticsContent(state = state.value, actions = AnalyticsActions())
+            }
+        }
+        val chart = composeRule.onNodeWithTag(TAG_ANALYTICS_CHART)
+
+        chart.assert(hasContentDescription("Quest not met", substring = true))
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PREVIOUS_DAY).performScrollTo().performClick()
+        chart.assert(hasContentDescription("Quest outcome unavailable", substring = true))
+
+        composeRule.runOnIdle {
+            state.value = state.value.copy(
+                dailyMinutes = state.value.dailyMinutes.map { day ->
+                    if (day.date == TODAY.minusDays(1)) day.copy(questMet = true) else day
+                },
+            )
+        }
+        chart.assert(hasContentDescription("Daily goal met", substring = true))
+
+        composeRule.runOnIdle {
+            state.value = state.value.copy(
+                dailyMinutes = state.value.dailyMinutes.filterNot { it.date == TODAY.minusDays(1) },
+            )
+        }
+        chart.assert(hasContentDescription("Quest not met", substring = true))
     }
 
     @Test
