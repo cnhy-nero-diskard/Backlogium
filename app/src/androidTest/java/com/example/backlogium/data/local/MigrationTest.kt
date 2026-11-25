@@ -104,6 +104,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_46_47,
         BacklogiumDatabase.MIGRATION_47_48,
         BacklogiumDatabase.MIGRATION_48_49,
+        BacklogiumDatabase.MIGRATION_49_50,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -140,6 +141,25 @@ class MigrationTest {
             db.query("SELECT recomputeSource FROM achievement_watch_work").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("SYNC", cursor.getString(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun admissionComponentMigrationPreservesQueuedWorkAsOutstanding() {
+        val name = "migration-admission-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 49).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO achievement_admission_work (steamId, accountGeneration, appId, admittedAt, attempts, nextEligibleAt) VALUES ('fixture', 1, 1, 10, 2, 20)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 50, true, BacklogiumDatabase.MIGRATION_49_50).use { db ->
+            db.query("SELECT cataloguePending, personalStatePending, globalPercentagesPending FROM achievement_admission_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+                assertEquals(1, cursor.getInt(1))
+                assertEquals(1, cursor.getInt(2))
             }
         }
         context.deleteDatabase(name)
@@ -1930,7 +1950,8 @@ class MigrationTest {
                 )
             }
             migrationTestHelper.runMigrationsAndValidate(
-                databaseName, currentDatabaseVersion, true, BacklogiumDatabase.MIGRATION_48_49,
+                databaseName, currentDatabaseVersion, true,
+                BacklogiumDatabase.MIGRATION_48_49, BacklogiumDatabase.MIGRATION_49_50,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())

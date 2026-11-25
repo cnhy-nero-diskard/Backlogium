@@ -48,6 +48,21 @@ interface AchievementAdmissionDao {
     suspend fun defer(steamId: String, generation: Long, appId: Long, nextEligibleAt: Long)
 
     @Query(
+        "UPDATE achievement_admission_work SET cataloguePending = :cataloguePending, " +
+            "personalStatePending = :personalStatePending, " +
+            "globalPercentagesPending = :globalPercentagesPending " +
+            "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId",
+    )
+    suspend fun updatePendingComponents(
+        steamId: String,
+        generation: Long,
+        appId: Long,
+        cataloguePending: Boolean,
+        personalStatePending: Boolean,
+        globalPercentagesPending: Boolean,
+    ): Int
+
+    @Query(
         "DELETE FROM achievement_admission_work " +
             "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId",
     )

@@ -1,5 +1,6 @@
 package com.example.backlogium.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -28,6 +29,9 @@ data class AchievementAdmissionWork(
     val admittedAt: Long,
     val attempts: Int = 0,
     val nextEligibleAt: Long = 0,
+    @ColumnInfo(defaultValue = "1") val cataloguePending: Boolean = true,
+    @ColumnInfo(defaultValue = "1") val personalStatePending: Boolean = true,
+    @ColumnInfo(defaultValue = "1") val globalPercentagesPending: Boolean = true,
 )
 
 data class AchievementAdmissionIdentity(

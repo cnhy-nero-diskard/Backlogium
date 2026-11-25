@@ -706,6 +706,23 @@ class FamilySharedGameRepositoryTest {
             val key = Triple(steamId, generation, appId)
             rows[key]?.let { rows[key] = it.copy(nextEligibleAt = nextEligibleAt) }
         }
+        override suspend fun updatePendingComponents(
+            steamId: String,
+            generation: Long,
+            appId: Long,
+            cataloguePending: Boolean,
+            personalStatePending: Boolean,
+            globalPercentagesPending: Boolean,
+        ): Int {
+            val key = Triple(steamId, generation, appId)
+            val row = rows[key] ?: return 0
+            rows[key] = row.copy(
+                cataloguePending = cataloguePending,
+                personalStatePending = personalStatePending,
+                globalPercentagesPending = globalPercentagesPending,
+            )
+            return 1
+        }
         override suspend fun delete(steamId: String, generation: Long, appId: Long) {
             rows.remove(Triple(steamId, generation, appId))
         }

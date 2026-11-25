@@ -2,12 +2,18 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.room.Room
+import androidx.work.Configuration
 import androidx.work.ListenableWorker
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
+import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.testing.WorkManagerTestInitHelper
 import androidx.work.workDataOf
 import com.example.backlogium.data.achievement.AchievementObservationStore
+import com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.AchievementAdmissionWork
@@ -28,8 +34,13 @@ import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.HiddenGamesRepository
+import com.example.backlogium.data.repo.SettingsRepository
 import com.example.backlogium.data.repo.SingleGameRefresh
+import com.example.backlogium.domain.DerivedStateWriteCoordinator
+import com.example.backlogium.domain.FakeSettingsRepository
+import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.VersionedRuleConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -39,11 +50,15 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -89,6 +104,26 @@ class AchievementAdmissionWorkerTest {
     private val hiddenGamesRepository = HiddenGamesRepository(
         database.hiddenGameDao(), database.gameDao(), database.gameGenreCacheDao(), time,
     )
+    private val baseSettings = FakeSettingsRepository()
+    private var interruptRecompute = false
+    private val recoverySettings = object : SettingsRepository by baseSettings {
+        override suspend fun readRuleConfigWithVersion(): VersionedRuleConfig {
+            check(!interruptRecompute) { "Simulated interruption after admission commit" }
+            return baseSettings.readRuleConfigWithVersion()
+        }
+    }
+    private val recomputeRecovery = AchievementRecomputeRecovery(
+        database,
+        recoverySettings,
+        GamificationUpdater(
+            database.sessionDao(), database.dailyProgressDao(), database.playerProfileDao(),
+            database.hltbDataDao(), database.achievementDao(), database.gameDao(), database.hiddenGameDao(),
+        ),
+        time,
+        syncCoordinator,
+        DerivedStateWriteCoordinator(),
+        marker,
+    )
     private val achievementRepository = AchievementRepository(
         steamApi = api,
         achievementDao = database.achievementDao(),
@@ -120,7 +155,8 @@ class AchievementAdmissionWorkerTest {
         }
 
         assertEquals(total, (1L..total.toLong()).sumOf { database.achievementDao().getForGame(it).size })
-        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).isEmpty())
+        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).all { it.payload == null })
+        assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
         assertEquals(3, scheduled.size)
     }
 
@@ -140,6 +176,167 @@ class AchievementAdmissionWorkerTest {
         assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
         assertEquals(listOf(1L, 1L), api.playerCalls)
         assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+    }
+
+    @Test
+    fun retryableSchemaFailureKeepsCatalogueWorkAfterPersonalStateCommits() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        api.failSchemaOnceFor[1L] = unavailable()
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val queued = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+        assertTrue(queued.cataloguePending)
+        assertFalse(queued.personalStatePending)
+        assertFalse(queued.globalPercentagesPending)
+        assertTrue(queued.nextEligibleAt > now)
+        assertTrue(database.gameAchievementSyncDao().get(1L)?.playerStateFetchedAt != null)
+        assertTrue(database.achievementDao().getForGame(1L).single().unlocked)
+        assertTrue(database.achievementCatalogueDao().entries(1L).isEmpty())
+
+        now = queued.nextEligibleAt
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        assertEquals("ACH_1", database.achievementCatalogueDao().entries(1L).single().apiName)
+    }
+
+    @Test
+    fun globalRetryAfterRetainsAdmissionAndBackfillsUnlockedRarity() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val queued = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+        assertEquals(now + 120_000L, queued.nextEligibleAt)
+        assertFalse(queued.cataloguePending)
+        assertFalse(queued.personalStatePending)
+        assertTrue(queued.globalPercentagesPending)
+        assertTrue(database.achievementDao().getForGame(1L).single().unlocked)
+        assertEquals(null, database.achievementDao().getForGame(1L).single().snapshotPercent)
+
+        now = queued.nextEligibleAt
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        assertEquals(12.5, database.achievementDao().getForGame(1L).single().snapshotPercent!!, 0.0)
+    }
+
+    @Test
+    fun admissionRecomputesXpAndLevelWithoutCreatingUnlockDelivery() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val profile = database.playerProfileDao().get()!!
+        assertTrue(profile.totalXp > 0L)
+        assertTrue(profile.level > 1)
+        val recompute = database.achievementWatchDao().getAll(ACCOUNT).single()
+        assertNull(recompute.payload)
+        assertEquals("XP_INTEGRITY_CORRECTION", recompute.recomputeSource)
+        assertFalse(recompute.recomputeNeeded)
+        assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
+    }
+
+    @Test
+    fun duplicateConcurrentAdmissionRefreshRecomputesXpOnlyOnce() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
+        val gate = CompletableDeferred<Unit>()
+        api.gate = gate
+        val firstPlayerCall = api.expectNextPlayerCall()
+
+        val first = async(start = CoroutineStart.UNDISPATCHED) { worker(generation).doWork() }
+        assertEquals(1L, firstPlayerCall.await())
+        val second = async(start = CoroutineStart.UNDISPATCHED) { worker(generation).doWork() }
+        withTimeout(5_000L) {
+            while (inFlightSubscriberCount(achievementRepository) < 2) {
+                runCurrent()
+                yield()
+            }
+        }
+        gate.complete(Unit)
+
+        assertTrue(first.await() is ListenableWorker.Result.Success)
+        assertTrue(second.await() is ListenableWorker.Result.Success)
+        assertEquals(listOf(1L), api.playerCalls)
+        val profile = database.playerProfileDao().get()!!
+        assertTrue(profile.totalXp > 0L)
+        assertTrue(profile.level > 1)
+        assertEquals(1, database.achievementWatchDao().getAll(ACCOUNT).size)
+        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).single().payload == null)
+    }
+
+    @Test
+    fun admissionRecomputeMarkerSurvivesInterruptionAfterRawCommit() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        interruptRecompute = true
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Retry)
+
+        assertTrue(database.achievementDao().getForGame(1L).single().unlocked)
+        assertEquals(0L, database.playerProfileDao().get()!!.totalXp)
+        val markerWork = database.achievementWatchDao().needingRecompute().single()
+        assertNull(markerWork.payload)
+        assertEquals("XP_INTEGRITY_CORRECTION", markerWork.recomputeSource)
+        assertEquals(1, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+
+        interruptRecompute = false
+        recomputeRecovery.resume()
+        assertTrue(database.playerProfileDao().get()!!.totalXp > 0L)
+        assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
+    }
+
+    @Test
+    fun freshAdmissionRunsBeforeDeferredRetryDeadlineInWorkManager() = runBlocking {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        api.failOnceFor[1L] = tooManyRequests("120")
+        val realScheduler = WorkManagerAchievementAdmissionScheduler(context, database.achievementAdmissionDao())
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setExecutor(SynchronousExecutor())
+                .setWorkerFactory(admissionWorkerFactory(realScheduler))
+                .build(),
+        )
+        val workManager = WorkManager.getInstance(context)
+        try {
+            val drainName = WorkManagerAchievementAdmissionScheduler.workName(ACCOUNT, generation)
+            val priorWorkIds = emptySet<UUID>()
+            realScheduler.enqueue(ACCOUNT, generation)
+            val firstDrain = runNext(workManager, drainName, priorWorkIds)
+            assertEquals(WorkInfo.State.SUCCEEDED, firstDrain.state)
+
+            val delayed = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+            assertEquals(now + 120_000L, delayed.nextEligibleAt)
+            assertEquals(WorkInfo.State.ENQUEUED, workManager.getWorkInfosForUniqueWorkFlow(
+                WorkManagerAchievementAdmissionScheduler.wakeWorkName(ACCOUNT, generation),
+            ).first().single().state)
+            assertEquals(listOf(1L), api.playerCalls)
+
+            val second = Game(2, "Game 2", "", 0, 0, 0)
+            database.gameDao().upsert(second)
+            database.gameAchievementSyncDao().upsert(GameAchievementSync(2, null, null, null, now))
+            database.achievementAdmissionDao().insert(AchievementAdmissionWork(ACCOUNT, generation, 2, now))
+            val completedWorkIds = workManager.getWorkInfosForUniqueWorkFlow(drainName).first().map { it.id }.toSet()
+            realScheduler.enqueue(ACCOUNT, generation)
+
+            val secondDrain = runNext(workManager, drainName, completedWorkIds)
+            assertEquals(WorkInfo.State.SUCCEEDED, secondDrain.state)
+            assertEquals(listOf(1L, 2L), api.playerCalls)
+            assertEquals(1, database.achievementDao().getForGame(2L).size)
+            assertEquals(now + 120_000L, database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)?.nextEligibleAt)
+            assertEquals(1, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        } finally {
+            workManager.cancelAllWork().result.get()
+            WorkManagerTestInitHelper.closeWorkDatabase()
+        }
     }
 
     @Test
@@ -257,10 +454,42 @@ class AchievementAdmissionWorkerTest {
                 AchievementAdmissionWorker(
                     appContext, workerParameters, credentials, marker, database,
                     database.achievementAdmissionDao(), database.gameDao(), database.playerProfileDao(),
-                    database.gameAchievementSyncDao(), hiddenGamesRepository, achievementRepository,
+                    hiddenGamesRepository, achievementRepository, recomputeRecovery,
                     scheduler, syncCoordinator, time,
                 )
         }).build()
+
+    private fun admissionWorkerFactory(realScheduler: AchievementAdmissionWorkScheduler) = object : WorkerFactory() {
+        override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker? =
+            when (workerClassName) {
+                AchievementAdmissionWorker::class.java.name -> AchievementAdmissionWorker(
+                    appContext, workerParameters, credentials, marker, database,
+                    database.achievementAdmissionDao(), database.gameDao(), database.playerProfileDao(),
+                    hiddenGamesRepository, achievementRepository, recomputeRecovery,
+                    realScheduler, syncCoordinator, time,
+                )
+                AchievementAdmissionWakeWorker::class.java.name -> AchievementAdmissionWakeWorker(
+                    appContext, workerParameters, realScheduler,
+                )
+                else -> null
+            }
+    }
+
+    private suspend fun runNext(workManager: WorkManager, uniqueName: String, previousIds: Set<UUID>): WorkInfo {
+        val request = withTimeout(5_000L) {
+            workManager.getWorkInfosForUniqueWorkFlow(uniqueName).first { infos ->
+                infos.any { it.id !in previousIds }
+            }.first { it.id !in previousIds }
+        }
+        if (request.state == WorkInfo.State.ENQUEUED) {
+            val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+            driver.setAllConstraintsMet(request.id)
+            driver.setInitialDelayMet(request.id)
+        }
+        return withTimeout(5_000L) {
+            workManager.getWorkInfoByIdFlow(request.id).first { it?.state?.isFinished == true }!!
+        }
+    }
 
     /** Wait until detail has actually joined the suspended flight, past its Room reads. */
     private fun inFlightSubscriberCount(repository: AchievementRepository): Int {
@@ -278,6 +507,8 @@ class AchievementAdmissionWorkerTest {
     private inner class AdmissionSteamApi : SteamApi by unusedSteamApi {
         val playerCalls = mutableListOf<Long>()
         val failOnceFor = mutableMapOf<Long, Exception>()
+        val failSchemaOnceFor = mutableMapOf<Long, Exception>()
+        val failGlobalsOnceFor = mutableMapOf<Long, Exception>()
         val noStatsFor = mutableSetOf<Long>()
         var gate: CompletableDeferred<Unit>? = null
         private var nextPlayerCall: CompletableDeferred<Long>? = null
@@ -288,9 +519,12 @@ class AchievementAdmissionWorkerTest {
             key: String,
             appId: Long,
             scope: com.example.backlogium.data.diagnostics.SyncRunRecorder.RunScope?,
-        ) = GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(listOf(
-            AchievementSchemaDto("ACH_1", "First", "icon"),
-        ))))
+        ): GameSchemaResponse {
+            failSchemaOnceFor.remove(appId)?.let { throw it }
+            return GameSchemaResponse(GameSchemaResult(AvailableGameStatsDto(listOf(
+                AchievementSchemaDto("ACH_1", "First", "icon"),
+            ))))
+        }
 
         override suspend fun getPlayerAchievements(
             key: String,
@@ -313,10 +547,25 @@ class AchievementAdmissionWorkerTest {
         override suspend fun getGlobalAchievementPercentages(
             gameId: Long,
             scope: com.example.backlogium.data.diagnostics.SyncRunRecorder.RunScope?,
-        ) = GlobalAchievementPercentagesResponse(GlobalAchievementPercentagesResult(listOf(
-            GlobalAchievementPercentageDto("ACH_1", 12.5),
-        )))
+        ): GlobalAchievementPercentagesResponse {
+            failGlobalsOnceFor.remove(gameId)?.let { throw it }
+            return GlobalAchievementPercentagesResponse(GlobalAchievementPercentagesResult(listOf(
+                GlobalAchievementPercentageDto("ACH_1", 12.5),
+            )))
+        }
     }
+
+    private fun unavailable() = HttpException(
+        Response.error<PlayerAchievementsResponse>(
+            "unavailable".toResponseBody(),
+            okhttp3.Response.Builder()
+                .request(Request.Builder().url("https://api.steampowered.com").build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(500)
+                .message("Internal Server Error")
+                .build(),
+        ),
+    )
 
     private fun tooManyRequests(seconds: String): HttpException {
         val raw = okhttp3.Response.Builder()

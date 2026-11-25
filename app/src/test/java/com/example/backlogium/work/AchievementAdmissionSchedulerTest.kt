@@ -48,7 +48,7 @@ class AchievementAdmissionSchedulerTest {
     }
 
     @Test
-    fun concurrentWakesAppendToOneConnectedUniqueChainPerAccountGeneration() = runTest {
+    fun delayedWakesUseSeparateTimerChainsFromImmediateDrains() = runTest {
         val dao = database.achievementAdmissionDao()
         database.gameDao().upsertAll(listOf(Game(1, "One", "", 0, 0, 0), Game(2, "Two", "", 0, 0, 0)))
         dao.insertAll(listOf(
@@ -62,10 +62,13 @@ class AchievementAdmissionSchedulerTest {
         scheduler.enqueue("account-a", 5)
 
         val generationFour = workInfos(WorkManagerAchievementAdmissionScheduler.workName("account-a", 4))
-        assertEquals(2, generationFour.size)
+        assertEquals(1, generationFour.size)
         assertEquals(1, generationFour.count { it.state == WorkInfo.State.ENQUEUED })
-        assertEquals(1, generationFour.count { it.state == WorkInfo.State.BLOCKED })
         assertTrue(generationFour.all { it.constraints.requiredNetworkType == NetworkType.CONNECTED })
+        val timer = workInfos(WorkManagerAchievementAdmissionScheduler.wakeWorkName("account-a", 4))
+        assertEquals(1, timer.size)
+        assertEquals(WorkInfo.State.ENQUEUED, timer.single().state)
+        assertTrue(timer.single().constraints.requiredNetworkType == NetworkType.NOT_REQUIRED)
         assertTrue(workInfos(WorkManagerAchievementAdmissionScheduler.workName("account-a", 5)).isNotEmpty())
     }
 

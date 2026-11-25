@@ -127,7 +127,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 49,
+    version = 50,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1394,6 +1394,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_achievement_admission_work_steamId_accountGeneration_nextEligibleAt_admittedAt` " +
                         "ON `achievement_admission_work` (`steamId`, `accountGeneration`, `nextEligibleAt`, `admittedAt`)",
                 )
+            }
+        }
+
+        val MIGRATION_49_50 = object : Migration(49, 50) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN cataloguePending INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN personalStatePending INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN globalPercentagesPending INTEGER NOT NULL DEFAULT 1")
             }
         }
 
