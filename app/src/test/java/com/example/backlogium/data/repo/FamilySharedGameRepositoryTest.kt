@@ -766,6 +766,10 @@ class FamilySharedGameRepositoryTest {
         }
         override suspend fun pendingIdentities(): List<AchievementAdmissionIdentity> = rows.values
             .map { AchievementAdmissionIdentity(it.steamId, it.accountGeneration) }.distinct()
+        override suspend fun hasPendingForCommit(steamId: String, generation: Long, committedAt: Long) =
+            rows.values.any {
+                it.steamId == steamId && it.accountGeneration == generation && it.admittedAt == committedAt
+            }
         override suspend fun deleteAll() { rows.clear() }
     }
 

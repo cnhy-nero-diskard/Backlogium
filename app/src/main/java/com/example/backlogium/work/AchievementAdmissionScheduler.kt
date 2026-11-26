@@ -13,6 +13,7 @@ import androidx.work.await
 import androidx.work.workDataOf
 import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -62,7 +63,7 @@ class WorkManagerAchievementAdmissionScheduler @Inject constructor(
     override suspend fun recoverPending() {
         admissionDao.pendingIdentities().forEach { identity ->
             val name = workName(identity.steamId, identity.accountGeneration)
-            val alreadyScheduled = workManager.getWorkInfosForUniqueWork(name).await()
+            val alreadyScheduled = workManager.getWorkInfosForUniqueWorkFlow(name).first()
                 .any { !it.state.isFinished }
             if (!alreadyScheduled) enqueue(identity.steamId, identity.accountGeneration)
         }

@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.entity.Game
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +27,8 @@ class AchievementAdmissionDaoTest {
             first.achievementAdmissionDao().insert(
                 AchievementAdmissionWork("account", 7L, 10L, 100L, attempts = 2, nextEligibleAt = 500L),
             )
+            assertTrue(first.achievementAdmissionDao().hasPendingForCommit("account", 7L, 100L))
+            assertFalse(first.achievementAdmissionDao().hasPendingForCommit("account", 7L, 101L))
             first.close()
 
             val reopened = open()

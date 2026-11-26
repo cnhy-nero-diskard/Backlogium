@@ -20,6 +20,8 @@ import com.example.backlogium.data.achievement.AchievementObservationStore
 import com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
+import com.example.backlogium.data.local.entity.AchievementAdmissionQueueState
 import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Game
@@ -75,6 +77,9 @@ import java.io.IOException
 import java.lang.reflect.Proxy
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
@@ -566,6 +571,71 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
+    fun admissionAppendedAfterFinalQueueReadRunsAfterCurrentDrainFinishes() = runBlocking {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        val realScheduler = WorkManagerAchievementAdmissionScheduler(context, database.achievementAdmissionDao())
+        val finalReadReturned = CountDownLatch(1)
+        val allowWorkerToFinish = CountDownLatch(1)
+        val actualDao = database.achievementAdmissionDao()
+        val gatedDao = object : AchievementAdmissionDao by actualDao {
+            override suspend fun state(steamId: String, generation: Long): AchievementAdmissionQueueState {
+                val state = actualDao.state(steamId, generation)
+                if (state.pendingCount == 0) {
+                    finalReadReturned.countDown()
+                    check(allowWorkerToFinish.await(5, TimeUnit.SECONDS))
+                }
+                return state
+            }
+        }
+        val workerExecutor = Executors.newFixedThreadPool(2)
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setExecutor(workerExecutor)
+                .setWorkerFactory(admissionWorkerFactory(realScheduler, gatedDao))
+                .build(),
+        )
+        val workManager = WorkManager.getInstance(context)
+        try {
+            val drainName = WorkManagerAchievementAdmissionScheduler.workName(ACCOUNT, generation)
+            realScheduler.enqueue(ACCOUNT, generation)
+            val first = workManager.getWorkInfosForUniqueWorkFlow(drainName).first().single()
+            WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(first.id)
+            assertTrue(finalReadReturned.await(5, TimeUnit.SECONDS))
+            assertEquals(WorkInfo.State.RUNNING, workManager.getWorkInfoByIdFlow(first.id).first()?.state)
+
+            // This is the committed admission's producer wake, after the drain has made its last
+            // DAO read but before WorkManager can mark that drain finished.
+            val game = Game(2, "Game 2", "", 0, 0, 0)
+            database.gameDao().upsert(game)
+            database.gameAchievementSyncDao().upsert(GameAchievementSync(2, null, null, null, now))
+            actualDao.insert(AchievementAdmissionWork(ACCOUNT, generation, 2, now))
+            realScheduler.enqueue(ACCOUNT, generation)
+
+            val queued = workManager.getWorkInfosForUniqueWorkFlow(drainName).first { it.size == 2 }
+            assertEquals(1, queued.count { it.state == WorkInfo.State.RUNNING })
+            val continuation = queued.single { it.id != first.id }
+            assertEquals(WorkInfo.State.BLOCKED, continuation.state)
+            WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(continuation.id)
+            allowWorkerToFinish.countDown()
+
+            val finished = workManager.getWorkInfoByIdFlow(continuation.id)
+                .first { it?.state?.isFinished == true }!!
+            assertEquals(WorkInfo.State.SUCCEEDED, finished.state)
+            assertEquals(listOf(1L, 2L), api.playerCalls)
+            assertEquals(1, database.achievementDao().getForGame(1L).size)
+            assertEquals(1, database.achievementDao().getForGame(2L).size)
+            assertEquals(0, actualDao.state(ACCOUNT, generation).pendingCount)
+        } finally {
+            allowWorkerToFinish.countDown()
+            workManager.cancelAllWork().result.get()
+            WorkManagerTestInitHelper.closeWorkDatabase()
+            workerExecutor.shutdownNow()
+        }
+    }
+
+    @Test
     fun failedInitialHandoffRecoversToOneBoundedHydrationCycle() = runBlocking {
         val generation = prepare()
         seedAdmissions(1, generation)
@@ -810,12 +880,15 @@ class AchievementAdmissionWorkerTest {
         marker,
     )
 
-    private fun admissionWorkerFactory(realScheduler: AchievementAdmissionWorkScheduler) = object : WorkerFactory() {
+    private fun admissionWorkerFactory(
+        realScheduler: AchievementAdmissionWorkScheduler,
+        admissionDao: AchievementAdmissionDao = database.achievementAdmissionDao(),
+    ) = object : WorkerFactory() {
         override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker? =
             when (workerClassName) {
                 AchievementAdmissionWorker::class.java.name -> AchievementAdmissionWorker(
                     appContext, workerParameters, credentials, marker, database,
-                    database.achievementAdmissionDao(), database.gameDao(), database.playerProfileDao(),
+                    admissionDao, database.gameDao(), database.playerProfileDao(),
                     hiddenGamesRepository, achievementRepository, recomputeRecovery,
                     realScheduler, syncCoordinator, time,
                 )

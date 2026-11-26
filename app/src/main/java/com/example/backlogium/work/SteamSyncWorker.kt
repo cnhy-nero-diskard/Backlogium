@@ -13,6 +13,7 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.RecoveryReadStatusStore
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
@@ -202,6 +203,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val recoveryPlacementReconciler: RecoveryPlacementReconcileUseCase,
     private val recoveryReadStatus: RecoveryReadStatusStore,
     private val achievementAdmissionScheduler: AchievementAdmissionWorkScheduler,
+    private val achievementAdmissionDao: AchievementAdmissionDao,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
@@ -212,6 +214,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
     private data class RawCommitResult(
         val arrivedAppIds: Set<Long>,
+        val admittedAppIds: Set<Long>,
         val finalizationOperationId: String?,
         val creditedIncreaseAppIds: Set<Long>,
         val baselineEstablishedAppIds: Set<Long>,
@@ -262,10 +265,6 @@ class SteamSyncWorker @AssistedInject constructor(
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The stored library belongs to a different Steam account.")
             }
-            // This durable worker is the independent retry path for admission rows whose producer
-            // could not hand them to WorkManager. Reconcile before looking for a committed receipt
-            // so a failed retry leaves that receipt available instead of refetching the library.
-            achievementAdmissionScheduler.recoverPending()
             var committed: LibraryPollCommit? = null
             val recoveryReady = syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
@@ -292,11 +291,26 @@ class SteamSyncWorker @AssistedInject constructor(
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
             committed?.let { receipt ->
+                if (achievementAdmissionDao.hasPendingForCommit(
+                        steamId,
+                        checkNotNull(accountGeneration),
+                        receipt.committedAt,
+                    )
+                ) {
+                    // Retry the durable receipt with an unconditional append; recovery alone can
+                    // mistake a finishing drain for one that will observe the new admission.
+                    achievementAdmissionScheduler.enqueue(steamId, checkNotNull(accountGeneration))
+                }
+                achievementAdmissionScheduler.recoverPending()
                 examined = receipt.gameCount
                 updated = receipt.gameCount
                 outcome = SyncOutcome.SUCCESS
                 return committedResult(receipt.operationId)
             }
+
+            // This durable worker is the independent retry path for admission rows whose producer
+            // could not hand them to WorkManager.
+            achievementAdmissionScheduler.recoverPending()
 
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
@@ -544,9 +558,11 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (rawCommit.arrivedAppIds.isNotEmpty()) {
                     runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
                 }
-                // Reconcile the durable queue on every committed poll. Besides the admissions
-                // stamped here, this recovers handoffs that failed in another producer or before
-                // this poll's retryable commit receipt was replayed.
+                // Append for admissions committed by this poll even if an older drain is just
+                // finishing its empty-queue check. Recovery remains the fallback for missed wakes.
+                if (rawCommit.admittedAppIds.isNotEmpty()) {
+                    achievementAdmissionScheduler.enqueue(steamId, checkNotNull(accountGeneration))
+                }
                 achievementAdmissionScheduler.recoverPending()
                 runCatching {
                     recoveryReadStatus.successfulRead(
@@ -783,6 +799,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
         return RawCommitResult(
             arrivedAppIds = arrivedAppIds,
+            admittedAppIds = admissionAppIds,
             finalizationOperationId = committed.finalizationOperationId,
             creditedIncreaseAppIds = committed.playedDeltaByAppId
                 .filterValues { it > 0 }

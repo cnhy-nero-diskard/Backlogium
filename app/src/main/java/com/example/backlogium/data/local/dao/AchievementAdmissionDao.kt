@@ -93,6 +93,12 @@ interface AchievementAdmissionDao {
     @Query("SELECT DISTINCT steamId, accountGeneration FROM achievement_admission_work")
     suspend fun pendingIdentities(): List<AchievementAdmissionIdentity>
 
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM achievement_admission_work " +
+            "WHERE steamId = :steamId AND accountGeneration = :generation AND admittedAt = :committedAt)",
+    )
+    suspend fun hasPendingForCommit(steamId: String, generation: Long, committedAt: Long): Boolean
+
     @Query("DELETE FROM achievement_admission_work")
     suspend fun deleteAll()
 }

@@ -351,6 +351,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
                     ),
                     RecoveryReadStatusStore(context),
                     admissionScheduler,
+                    db.achievementAdmissionDao(),
                 )
         }).build()
     }
