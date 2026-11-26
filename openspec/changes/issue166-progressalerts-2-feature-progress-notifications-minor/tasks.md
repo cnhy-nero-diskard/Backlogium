@@ -13,4 +13,4 @@
 
 ## 3. Integration
 
-- [ ] 3.1 Exercise Settings through receipt delivery and notification taps on a targeted device or emulator. Verify local progress still appears when notifications are disabled and verify affected baselines.
+- [x] 3.1 Exercise Settings through receipt delivery and notification taps on a targeted device or emulator. Verify local progress still appears when notifications are disabled and verify affected baselines.
