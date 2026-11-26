@@ -21,6 +21,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Robolectric downloads Android runtimes outside Gradle's dependency cache.
+      - name: Cache Robolectric runtimes
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-v1-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'app/src/test/resources/robolectric.properties') }}
+
       - name: Run unit tests
         run: ./gradlew test
 
@@ -51,6 +58,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Share the same runtime cache with unit tests instead of downloading on every run.
+      - name: Cache Robolectric runtimes
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-v1-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'app/src/test/resources/robolectric.properties') }}
+
       - name: Compile unit test sources
         run: ./gradlew :app:compileDebugUnitTestKotlin
 
@@ -76,6 +90,8 @@ jobs:
             app/build/outputs/roborazzi/compare/
             app/build/test-results/roborazzi/
             app/build/reports/roborazzi/
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
 
   lint:
     name: Android lint
