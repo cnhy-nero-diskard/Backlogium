@@ -184,6 +184,32 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
+    fun lateRetryAfterStartsAtProviderResponseAndBlocksDispatchForTheFullDelay() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        api.advanceTimeAfterPlayer[1L] = 40_000L
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val receivedAt = 140_000L
+        val queued = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+        assertEquals(receivedAt + 120_000L, queued.nextEligibleAt)
+        assertEquals(120_000L, scheduled.last().third)
+        assertEquals(listOf(1L), api.playerCalls)
+
+        now = queued.nextEligibleAt - 1L
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        assertEquals(listOf(1L), api.playerCalls)
+        assertEquals(1L, scheduled.last().third)
+
+        now = queued.nextEligibleAt
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        assertEquals(listOf(1L, 1L), api.playerCalls)
+        assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+    }
+
+    @Test
     fun interruptedOutcomeTransactionLeavesFlagsAndRecoveryLeaseTogether() = runTest {
         val generation = prepare()
         seedAdmissions(1, generation)
@@ -533,6 +559,54 @@ class AchievementAdmissionWorkerTest {
             assertEquals(1, database.achievementDao().getForGame(2L).size)
             assertEquals(now + 120_000L, database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)?.nextEligibleAt)
             assertEquals(1, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        } finally {
+            workManager.cancelAllWork().result.get()
+            WorkManagerTestInitHelper.closeWorkDatabase()
+        }
+    }
+
+    @Test
+    fun failedInitialHandoffRecoversToOneBoundedHydrationCycle() = runBlocking {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        val realScheduler = WorkManagerAchievementAdmissionScheduler(context, database.achievementAdmissionDao())
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            context,
+            Configuration.Builder()
+                .setExecutor(SynchronousExecutor())
+                .setWorkerFactory(admissionWorkerFactory(realScheduler))
+                .build(),
+        )
+        val workManager = WorkManager.getInstance(context)
+        var failInitialEnqueue = true
+        val producerScheduler = object : AchievementAdmissionWorkScheduler {
+            override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
+                if (failInitialEnqueue) {
+                    failInitialEnqueue = false
+                    throw IOException("Simulated initial WorkManager enqueue failure")
+                }
+                realScheduler.enqueue(steamId, generation, delayMillis)
+            }
+
+            override suspend fun recoverPending() = realScheduler.recoverPending()
+        }
+        try {
+            try {
+                producerScheduler.enqueue(ACCOUNT, generation)
+                error("Expected the initial handoff to fail")
+            } catch (_: IOException) {
+                // The admission row is durable even though its first WorkManager handoff failed.
+            }
+            producerScheduler.recoverPending()
+            producerScheduler.recoverPending()
+
+            val drainName = WorkManagerAchievementAdmissionScheduler.workName(ACCOUNT, generation)
+            val drain = runNext(workManager, drainName, emptySet())
+            assertEquals(WorkInfo.State.SUCCEEDED, drain.state)
+            assertEquals(listOf(1L), api.playerCalls)
+            assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+            assertEquals(1, workManager.getWorkInfosForUniqueWorkFlow(drainName).first()
+                .count { it.state == WorkInfo.State.SUCCEEDED })
         } finally {
             workManager.cancelAllWork().result.get()
             WorkManagerTestInitHelper.closeWorkDatabase()

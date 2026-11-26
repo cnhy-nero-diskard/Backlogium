@@ -73,11 +73,13 @@ class SteamSyncLibraryEvidenceWorkerTest {
     }
     private val sync = SteamSyncCoordinator()
     private val admissionWakes = mutableListOf<Pair<String, Long>>()
+    private val scheduledAdmissionIdentities = mutableSetOf<Pair<String, Long>>()
     private var failAdmissionWake = false
     private val admissionScheduler = object : AchievementAdmissionWorkScheduler {
         override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
             if (failAdmissionWake) throw IOException("fixture scheduler interruption")
-            admissionWakes += steamId to generation
+            val identity = steamId to generation
+            if (scheduledAdmissionIdentities.add(identity)) admissionWakes += identity
         }
         override suspend fun recoverPending() {
             db.achievementAdmissionDao().pendingIdentities().forEach { identity ->
@@ -218,14 +220,41 @@ class SteamSyncLibraryEvidenceWorkerTest {
         }
         failAdmissionWake = true
 
-        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val failedHandoff = worker()
+        assertEquals(Result.retry(), failedHandoff.doWork())
         val generation = marker.generation()
         assertEquals(listOf(11L), db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).map { it.appId })
         assertTrue(admissionWakes.isEmpty())
 
         failAdmissionWake = false
-        admissionScheduler.recoverPending()
+        ownedGames = { error("The committed retry must not fetch the library again") }
+        val replay = output(worker(id = failedHandoff.id))
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, replay.getString(SteamSyncWorker.KEY_POLL_RESULT))
         assertEquals(listOf(ACCOUNT to generation), admissionWakes)
+    }
+
+    @Test
+    fun unchangedOwnedSyncRecoversPendingSharedAdmission() = runTest {
+        ownedGames = { snapshot(100) }
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val generation = marker.generation()
+        val sharedAppId = 11L
+        db.gameDao().upsert(Game(
+            appId = sharedAppId, name = "Shared", iconUrl = "", playtimeForever = 0,
+            playtime2Weeks = 0, lastPlaytime = 0, source = GameSource.FAMILY_SHARED,
+        ))
+        db.achievementAdmissionDao().insert(
+            com.example.backlogium.data.local.entity.AchievementAdmissionWork(
+                ACCOUNT, generation, sharedAppId, now.toEpochMilli(),
+            ),
+        )
+
+        assertTrue(admissionWakes.isEmpty())
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
+
+        assertEquals(listOf(ACCOUNT to generation), admissionWakes)
+        assertEquals(listOf(sharedAppId), db.achievementAdmissionDao()
+            .eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).map { it.appId })
     }
 
     @Test

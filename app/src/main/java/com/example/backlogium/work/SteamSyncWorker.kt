@@ -212,7 +212,6 @@ class SteamSyncWorker @AssistedInject constructor(
 
     private data class RawCommitResult(
         val arrivedAppIds: Set<Long>,
-        val admissionAppIds: Set<Long>,
         val finalizationOperationId: String?,
         val creditedIncreaseAppIds: Set<Long>,
         val baselineEstablishedAppIds: Set<Long>,
@@ -263,6 +262,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The stored library belongs to a different Steam account.")
             }
+            // This durable worker is the independent retry path for admission rows whose producer
+            // could not hand them to WorkManager. Reconcile before looking for a committed receipt
+            // so a failed retry leaves that receipt available instead of refetching the library.
+            achievementAdmissionScheduler.recoverPending()
             var committed: LibraryPollCommit? = null
             val recoveryReady = syncCoordinator.withLock {
                 if (!isAccountActive(steamId)) {
@@ -541,11 +544,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (rawCommit.arrivedAppIds.isNotEmpty()) {
                     runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
                 }
-                if (rawCommit.admissionAppIds.isNotEmpty()) {
-                    runCatching {
-                        achievementAdmissionScheduler.enqueue(steamId, checkNotNull(accountGeneration))
-                    }
-                }
+                // Reconcile the durable queue on every committed poll. Besides the admissions
+                // stamped here, this recovers handoffs that failed in another producer or before
+                // this poll's retryable commit receipt was replayed.
+                achievementAdmissionScheduler.recoverPending()
                 runCatching {
                     recoveryReadStatus.successfulRead(
                         account = steamId,
@@ -781,7 +783,6 @@ class SteamSyncWorker @AssistedInject constructor(
 
         return RawCommitResult(
             arrivedAppIds = arrivedAppIds,
-            admissionAppIds = admissionAppIds,
             finalizationOperationId = committed.finalizationOperationId,
             creditedIncreaseAppIds = committed.playedDeltaByAppId
                 .filterValues { it > 0 }

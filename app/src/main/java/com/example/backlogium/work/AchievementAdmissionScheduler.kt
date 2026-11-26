@@ -60,7 +60,12 @@ class WorkManagerAchievementAdmissionScheduler @Inject constructor(
     }
 
     override suspend fun recoverPending() {
-        admissionDao.pendingIdentities().forEach { enqueue(it.steamId, it.accountGeneration) }
+        admissionDao.pendingIdentities().forEach { identity ->
+            val name = workName(identity.steamId, identity.accountGeneration)
+            val alreadyScheduled = workManager.getWorkInfosForUniqueWork(name).await()
+                .any { !it.state.isFinished }
+            if (!alreadyScheduled) enqueue(identity.steamId, identity.accountGeneration)
+        }
     }
 
     companion object {

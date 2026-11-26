@@ -577,18 +577,27 @@ class FamilySharedGameRepositoryTest {
     }
 
     @Test
-    fun `automatic shared insert commits one admission row and wakes its account chain`() = runTest {
+    fun `failed automatic shared wake is recovered from the durable admission row`() = runTest {
         val account = "76561198000000208"
         val appId = 501L
         val database = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
         ).allowMainThreadQueries().build()
         val wakes = mutableListOf<Pair<String, Long>>()
+        var failFirstEnqueue = true
         val scheduler = object : AchievementAdmissionWorkScheduler {
             override suspend fun enqueue(steamId: String, generation: Long, delayMillis: Long) {
+                if (failFirstEnqueue) {
+                    failFirstEnqueue = false
+                    throw IOException("Simulated initial WorkManager enqueue failure")
+                }
                 wakes += steamId to generation
             }
-            override suspend fun recoverPending() = Unit
+            override suspend fun recoverPending() {
+                database.achievementAdmissionDao().pendingIdentities().forEach { identity ->
+                    enqueue(identity.steamId, identity.accountGeneration)
+                }
+            }
         }
         val settings = settingsFixture.create()
         try {
@@ -614,7 +623,12 @@ class FamilySharedGameRepositoryTest {
             val generation = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()).generation()
             val queued = database.achievementAdmissionDao().eligible(account, generation, Long.MAX_VALUE, 10)
             assertEquals(listOf(appId), queued.map { it.appId })
+
+            assertTrue(wakes.isEmpty())
+            scheduler.recoverPending()
             assertEquals(listOf(account to generation), wakes)
+            assertEquals(listOf(appId), database.achievementAdmissionDao()
+                .eligible(account, generation, Long.MAX_VALUE, 10).map { it.appId })
         } finally {
             database.close()
         }

@@ -973,7 +973,10 @@ class AchievementRepository @Inject constructor(
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
                     onFailure(error)
-                    achievementRetryAfter(error, now)?.let { deadline = it; rateLimitDeadlines.merge(key, it, ::maxOf) }
+                    achievementRetryAfter(error, time.nowMillis())?.let {
+                        deadline = maxOf(deadline ?: 0L, it)
+                        rateLimitDeadlines.merge(key, it, ::maxOf)
+                    }
                     null
                 }
             val schemaAttempted = deadline == null
@@ -1058,7 +1061,7 @@ class AchievementRepository @Inject constructor(
                 retryableFailure = retryableFailure || retryable
                 onFailure(error)
                 providerBlocked = providerBlocked || blocksFurtherAchievementRequests(error)
-                achievementRetryAfter(error, now)?.let {
+                achievementRetryAfter(error, time.nowMillis())?.let {
                     retryAt = maxOf(retryAt ?: 0, it)
                     rateLimitDeadlines.merge(key, it, ::maxOf)
                 }

@@ -87,5 +87,17 @@ class AchievementAdmissionSchedulerTest {
         assertEquals(1, workInfos(WorkManagerAchievementAdmissionScheduler.workName("account-b", 8)).size)
     }
 
+    @Test
+    fun repeatedRecoveryDoesNotAppendAnotherActiveDrain() = runTest {
+        database.gameDao().upsert(Game(1, "One", "", 0, 0, 0))
+        database.achievementAdmissionDao().insert(AchievementAdmissionWork("account-a", 4, 1, 1))
+        val name = WorkManagerAchievementAdmissionScheduler.workName("account-a", 4)
+
+        scheduler.recoverPending()
+        scheduler.recoverPending()
+
+        assertEquals(1, workInfos(name).count { !it.state.isFinished })
+    }
+
     private suspend fun workInfos(name: String) = workManager.getWorkInfosForUniqueWorkFlow(name).first()
 }
