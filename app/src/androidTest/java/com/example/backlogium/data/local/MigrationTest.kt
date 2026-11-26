@@ -105,6 +105,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_47_48,
         BacklogiumDatabase.MIGRATION_48_49,
         BacklogiumDatabase.MIGRATION_49_50,
+        BacklogiumDatabase.MIGRATION_50_51,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -160,6 +161,40 @@ class MigrationTest {
                 assertEquals(1, cursor.getInt(0))
                 assertEquals(1, cursor.getInt(1))
                 assertEquals(1, cursor.getInt(2))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun globalPercentageFreshnessMigrationPreservesExistingAchievementSyncState() {
+        val name = "migration-global-freshness-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 50).apply {
+            execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+                    "VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)",
+            )
+            execSQL(
+                "INSERT INTO game_achievement_sync " +
+                    "(appId, playerStateFetchedAt, schemaFetchedAt, hasAchievements, checkedAt) " +
+                    "VALUES (1, 10, 20, 1, 30)",
+            )
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(
+            name, 51, true, BacklogiumDatabase.MIGRATION_50_51,
+        ).use { db ->
+            db.query(
+                "SELECT playerStateFetchedAt, schemaFetchedAt, hasAchievements, checkedAt, " +
+                    "globalPercentagesFetchedAt FROM game_achievement_sync WHERE appId = 1",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(10L, cursor.getLong(0))
+                assertEquals(20L, cursor.getLong(1))
+                assertEquals(1, cursor.getInt(2))
+                assertEquals(30L, cursor.getLong(3))
+                assertTrue(cursor.isNull(4))
             }
         }
         context.deleteDatabase(name)
@@ -1951,7 +1986,9 @@ class MigrationTest {
             }
             migrationTestHelper.runMigrationsAndValidate(
                 databaseName, currentDatabaseVersion, true,
-                BacklogiumDatabase.MIGRATION_48_49, BacklogiumDatabase.MIGRATION_49_50,
+                BacklogiumDatabase.MIGRATION_48_49,
+                BacklogiumDatabase.MIGRATION_49_50,
+                BacklogiumDatabase.MIGRATION_50_51,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())
