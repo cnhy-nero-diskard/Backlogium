@@ -14,9 +14,13 @@ class ProgressAlertWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val alerts: ProgressAlerts,
+    private val recap: com.example.backlogium.data.notifications.PreviousDayRecap,
+    private val scheduler: ProgressAlertScheduler,
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = try {
+        recap.recordCurrentDay()
         alerts.dispatch()
+        scheduler.scheduleNextRecap()
         Result.success()
     } catch (cancelled: CancellationException) {
         throw cancelled

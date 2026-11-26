@@ -8,8 +8,8 @@
 
 ## 2. Previous-day recap
 
-- [ ] 2.1 Schedule recap delivery against the current local day and persist its account/date receipt. Verify midnight, daylight-saving, zone changes, delayed jobs and repeat execution.
-- [ ] 2.2 Build the recap from canonical dated play and supported unlock evidence. Verify missing coverage and timing estimates remain disclosed.
+- [x] 2.1 Schedule recap delivery against the current local day and persist its account/date receipt. Verify midnight, daylight-saving, zone changes, delayed jobs and repeat execution.
+- [x] 2.2 Build the recap from canonical dated play and supported unlock evidence. Verify missing coverage and timing estimates remain disclosed.
 
 ## 3. Integration
 

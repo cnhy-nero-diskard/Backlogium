@@ -20,6 +20,7 @@ class ProgressAlerts @Inject constructor(
     private val marker: AccountChangeMarkerStore,
     private val credentials: CredentialsProvider,
     private val coordinator: SteamSyncCoordinator,
+    private val time: com.example.backlogium.domain.TimeProvider = com.example.backlogium.domain.SystemTimeProvider(),
 ) {
     suspend fun enabled(category: ProgressCategory) = settings.progressAlertPreferences.first()[category] == true
 
@@ -89,7 +90,9 @@ class ProgressAlerts @Inject constructor(
                 val category = ProgressCategory.valueOf(alert.category)
                 val current = marker.pendingSteamId() == null && marker.generation() == alert.generation &&
                     credentials.currentCredentials()?.steamId == alert.account
-                if (!current || !enabled(category) || !platform.permissionGranted() || platform.channelAllowed(category) == false) {
+                val staleRecap = category == ProgressCategory.RECAP &&
+                    alert.sourceId != previousRecapDate(time.nowMillis(), time.zone()).toString()
+                if (!current || staleRecap || !enabled(category) || !platform.permissionGranted() || platform.channelAllowed(category) == false) {
                     database.progressAlertDao().transition(alert.eventKey, ProgressAlert.PENDING, ProgressAlert.SUPPRESSED)
                 } else {
                     check(platform.channelAllowed(category) == true) { "Progress channel registration incomplete" }
