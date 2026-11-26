@@ -178,6 +178,9 @@ data class AchievementAdmissionOutcome(
     val globalPercentagesPending: Boolean,
     val retryAt: Long?,
     val retryableFailure: Boolean,
+    val catalogueObserved: Boolean = false,
+    val personalStateObserved: Boolean = false,
+    val globalPercentagesObserved: Boolean = false,
 )
 
 /**
@@ -639,6 +642,9 @@ class AchievementRepository @Inject constructor(
             },
             retryAt = refresh.retryAt,
             retryableFailure = retryableFailure,
+            catalogueObserved = refresh.schemaLoaded,
+            personalStateObserved = refresh.achievements != null,
+            globalPercentagesObserved = refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty(),
         )
         val result = commitFetchedRefresh(steamId, appId, refresh) { merge -> commit(merge, outcome) }
         val personalStateAvailable = result is SingleGameRefresh.Persisted ||
@@ -1112,8 +1118,9 @@ class AchievementRepository @Inject constructor(
         val catalogue = db?.achievementCatalogueDao()
         val previousRows = achievementDao.getForGame(refresh.appId)
         val metadata = gameAchievementSyncDao.get(refresh.appId)
-        val globalPercentagesFresh = (refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty()) &&
-            (metadata?.checkedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
+        val globalObservationAvailable = refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty()
+        val globalPercentagesFresh = globalObservationAvailable &&
+            (metadata?.globalPercentagesFetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
         val freshGlobalPercentByName = refresh.globalPercentByName.takeIf { globalPercentagesFresh }.orEmpty()
         val previousCatalogue = catalogue?.entries(refresh.appId).orEmpty().associateBy { it.apiName }
         if (catalogue != null && refresh.schemaLoaded &&
@@ -1128,16 +1135,13 @@ class AchievementRepository @Inject constructor(
             ) })
             catalogue.upsert(AchievementCatalogueCache(refresh.appId, refresh.schemaFetchedAt ?: refresh.fetchedAt))
         }
-        if (catalogue != null && freshGlobalPercentByName.isNotEmpty() &&
-            (catalogue.cache(refresh.appId)?.fetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
-        ) {
+        if (catalogue != null && freshGlobalPercentByName.isNotEmpty()) {
             catalogue.upsert(catalogue.entries(refresh.appId).mapNotNull { entry ->
                 freshGlobalPercentByName[entry.apiName]?.let { entry.copy(globalPercent = it) }
             })
         }
         if (freshGlobalPercentByName.isNotEmpty()) {
             val updatedGlobals = previousRows.mapNotNull { prior ->
-                if (prior.fetchedAt > refresh.fetchedAt) return@mapNotNull null
                 val globalPercent = freshGlobalPercentByName[prior.apiName] ?: return@mapNotNull null
                 prior.copy(
                     globalPercent = globalPercent,
@@ -1146,7 +1150,7 @@ class AchievementRepository @Inject constructor(
             }
             if (updatedGlobals.isNotEmpty()) achievementDao.upsertAll(updatedGlobals)
         }
-        if (globalPercentagesFresh && metadata != null) {
+        if (globalPercentagesFresh) {
             gameAchievementSyncDao.upsert(
                 GameAchievementSync(
                     appId = refresh.appId,
@@ -1154,6 +1158,7 @@ class AchievementRepository @Inject constructor(
                     schemaFetchedAt = metadata?.schemaFetchedAt,
                     hasAchievements = metadata?.hasAchievements,
                     checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
+                    globalPercentagesFetchedAt = refresh.fetchedAt,
                 ),
             )
         }
@@ -1177,7 +1182,7 @@ class AchievementRepository @Inject constructor(
                     com.example.backlogium.data.achievement.AchievementMerge.merge(
                         appId = refresh.appId,
                         dto = dto,
-                        globalPercent = freshGlobalPercentByName[dto.apiName] ?: prior?.globalPercent,
+                        globalPercent = freshGlobalPercentByName[dto.apiName],
                         schema = refresh.schemaByName[dto.apiName],
                         prior = prior,
                         now = refresh.fetchedAt,
@@ -1202,6 +1207,8 @@ class AchievementRepository @Inject constructor(
                 schemaFetchedAt = refresh.schemaFetchedAt ?: metadata?.schemaFetchedAt,
                 hasAchievements = incoming.isNotEmpty(),
                 checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
+                globalPercentagesFetchedAt = if (globalPercentagesFresh) refresh.fetchedAt
+                    else metadata?.globalPercentagesFetchedAt,
             ),
         )
         return true

@@ -37,9 +37,30 @@ interface AchievementAdmissionDao {
     @Query(
         "UPDATE achievement_admission_work SET attempts = attempts + 1, nextEligibleAt = :recoveryAt " +
             "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId " +
-            "AND nextEligibleAt <= :now",
+            "AND attempts = :expectedAttempts AND attempts < :maxAttempts AND nextEligibleAt <= :now",
     )
-    suspend fun beginAttempt(steamId: String, generation: Long, appId: Long, now: Long, recoveryAt: Long): Int
+    suspend fun beginAttempt(
+        steamId: String,
+        generation: Long,
+        appId: Long,
+        expectedAttempts: Int,
+        maxAttempts: Int,
+        now: Long,
+        recoveryAt: Long,
+    ): Int
+
+    @Query(
+        "DELETE FROM achievement_admission_work " +
+            "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId " +
+            "AND attempts >= :maxAttempts AND nextEligibleAt <= :now",
+    )
+    suspend fun deleteExhausted(
+        steamId: String,
+        generation: Long,
+        appId: Long,
+        maxAttempts: Int,
+        now: Long,
+    ): Int
 
     @Query(
         "UPDATE achievement_admission_work SET cataloguePending = :cataloguePending, " +

@@ -140,7 +140,7 @@ class AchievementDetailHydrationTest {
         assertTrue(row.hidden)
         assertNull(row.rarityPercent)
         assertTrue(repo.counts.first().isEmpty())
-        assertTrue(repo.smartCollectionSignals.first().isEmpty())
+        assertEquals(AchievementDataState.NOT_FETCHED, repo.smartCollectionSignals.first()[1]?.state)
         assertTrue(db.achievementWatchDao().getAll("fixture").isEmpty())
         repo.hydrateDetail(1).toList()
         assertEquals(listOf(1L), requestedGames)
@@ -189,7 +189,9 @@ class AchievementDetailHydrationTest {
     @Test fun contradictoryEmptyPlayerPreservesCatalogueThenAuthoritativePlayerMergesWithoutAlert() = runBlocking {
         player = PlayerAchievementsResult(success = true)
         repo.hydrateDetail(1).toList()
-        assertNull(db.gameAchievementSyncDao().get(1))
+        val sync = db.gameAchievementSyncDao().get(1)!!
+        assertNull(sync.playerStateFetchedAt)
+        assertNotNull(sync.globalPercentagesFetchedAt)
         assertEquals(1, db.achievementCatalogueDao().entries(1).size)
         // Stale the catalogue to authorize a later detail hydration, without forcing all games.
         db.achievementCatalogueDao().upsert(com.example.backlogium.data.local.entity.AchievementCatalogueCache(1, 0))

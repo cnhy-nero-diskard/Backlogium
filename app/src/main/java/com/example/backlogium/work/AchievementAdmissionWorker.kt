@@ -50,8 +50,7 @@ class AchievementAdmissionWorker @AssistedInject constructor(
             syncCoordinator.withLock { recomputeRecovery.resumeWhileLocked() }
             val creds = credentials.currentCredentials() as? CredentialsState.Configured ?: return Result.success()
             if (creds.steamId != steamId || !isActive(steamId, generation)) return Result.success()
-            val now = time.nowMillis()
-            val batch = admissionDao.eligible(steamId, generation, now, PER_RUN_CAP)
+            val batch = admissionDao.eligible(steamId, generation, time.nowMillis(), PER_RUN_CAP)
             for (candidate in batch) {
                 if (!isActive(steamId, generation)) return Result.success()
                 if (gameDao.getById(candidate.appId) == null || hiddenGamesRepository.isHidden(candidate.appId)) {
@@ -62,8 +61,20 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                     admissionDao.delete(steamId, generation, candidate.appId)
                     continue
                 }
-                val recoveryAt = now + retryDelayMillis(candidate.attempts + 1)
-                if (admissionDao.beginAttempt(steamId, generation, candidate.appId, now, recoveryAt) == 0) continue
+                // A reserved attempt is consumed even if cancellation or process death interrupts it.
+                val dispatchAt = time.nowMillis()
+                val recoveryAt = dispatchAt + retryDelayMillis(candidate.attempts + 1)
+                if (admissionDao.beginAttempt(
+                        steamId, generation, candidate.appId,
+                        expectedAttempts = candidate.attempts,
+                        maxAttempts = MAX_ATTEMPTS,
+                        now = dispatchAt,
+                        recoveryAt = recoveryAt,
+                    ) == 0
+                ) {
+                    admissionDao.deleteExhausted(steamId, generation, candidate.appId, MAX_ATTEMPTS, dispatchAt)
+                    continue
+                }
                 val attempt = admissionDao.get(steamId, generation, candidate.appId)?.attempts ?: continue
                 achievementRepository.refreshAdmission(
                     apiKey = creds.apiKey,
@@ -108,22 +119,40 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                                                     recomputeSource = "XP_INTEGRITY_CORRECTION",
                                                 ))
                                             }
+                                            val metadata = database.gameAchievementSyncDao().get(candidate.appId)
+                                            val catalogueFetchedAt = database.achievementCatalogueDao().cache(candidate.appId)?.fetchedAt
+                                            val catalogueAvailable = catalogueFetchedAt?.let {
+                                                time.nowMillis() - it <= AchievementRepository.SCHEMA_WINDOW_MILLIS
+                                            } == true
+                                            val personalStateAvailable =
+                                                (metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) >= candidate.admittedAt
+                                            val globalPercentagesAvailable =
+                                                (metadata?.globalPercentagesFetchedAt ?: Long.MIN_VALUE) >= candidate.admittedAt
+                                            val cataloguePending = candidate.cataloguePending && !catalogueAvailable &&
+                                                (outcome.cataloguePending || outcome.catalogueObserved)
+                                            val personalStatePending = candidate.personalStatePending && !personalStateAvailable &&
+                                                (outcome.personalStatePending || outcome.personalStateObserved)
+                                            val globalPercentagesPending = candidate.globalPercentagesPending && !globalPercentagesAvailable &&
+                                                (outcome.globalPercentagesPending || outcome.globalPercentagesObserved)
+                                            val retryNeeded = outcome.retryableFailure ||
+                                                (cataloguePending && outcome.catalogueObserved) ||
+                                                (personalStatePending && outcome.personalStateObserved) ||
+                                                (globalPercentagesPending && outcome.globalPercentagesObserved)
                                             when {
-                                                result is SingleGameRefresh.Stale || result is SingleGameRefresh.Discarded ->
+                                                result is SingleGameRefresh.Discarded ->
                                                     admissionDao.delete(steamId, generation, candidate.appId)
 
-                                                !outcome.cataloguePending && !outcome.personalStatePending &&
-                                                    !outcome.globalPercentagesPending ->
+                                                !cataloguePending && !personalStatePending && !globalPercentagesPending ->
                                                     admissionDao.delete(steamId, generation, candidate.appId)
 
-                                                outcome.retryableFailure && attempt < MAX_ATTEMPTS ->
+                                                retryNeeded && attempt < MAX_ATTEMPTS ->
                                                     admissionDao.recordOutcome(
                                                         steamId = steamId,
                                                         generation = generation,
                                                         appId = candidate.appId,
-                                                        cataloguePending = outcome.cataloguePending,
-                                                        personalStatePending = outcome.personalStatePending,
-                                                        globalPercentagesPending = outcome.globalPercentagesPending,
+                                                        cataloguePending = cataloguePending,
+                                                        personalStatePending = personalStatePending,
+                                                        globalPercentagesPending = globalPercentagesPending,
                                                         nextEligibleAt = maxOf(
                                                             time.nowMillis() + retryDelayMillis(attempt),
                                                             outcome.retryAt ?: 0L,

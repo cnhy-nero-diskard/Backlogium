@@ -21,6 +21,7 @@ import com.example.backlogium.data.achievement.AchievementRecomputeRecovery
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.AchievementAdmissionWork
+import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.remote.SteamApi
@@ -188,7 +189,7 @@ class AchievementAdmissionWorkerTest {
         seedAdmissions(1, generation)
         val dao = database.achievementAdmissionDao()
         val recoveryAt = now + 60_000L
-        assertEquals(1, dao.beginAttempt(ACCOUNT, generation, 1L, now, recoveryAt))
+        assertEquals(1, dao.beginAttempt(ACCOUNT, generation, 1L, 0, AchievementAdmissionWorker.MAX_ATTEMPTS, now, recoveryAt))
 
         try {
             database.withTransaction {
@@ -251,6 +252,93 @@ class AchievementAdmissionWorkerTest {
         assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
         assertEquals(12.5, database.achievementDao().getForGame(1L).single().snapshotPercent!!, 0.0)
         assertEquals(12.5, database.achievementCatalogueDao().entries(1L).single().globalPercent!!, 0.0)
+    }
+
+    @Test
+    fun cachedLockedDisplayPercentageIsNotFrozenIntoXpDuringAdmissionRetry() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        database.achievementDao().upsertAll(listOf(
+            Achievement(1L, "ACH_1", unlocked = false, globalPercent = 1.0, fetchedAt = 0L),
+        ))
+        baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
+        api.failGlobalsOnceFor[1L] = tooManyRequests("60")
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        val lockedCachePrior = database.achievementDao().getForGame(1L).single()
+        assertTrue(lockedCachePrior.unlocked)
+        assertEquals(1.0, lockedCachePrior.globalPercent!!, 0.0)
+        assertNull(lockedCachePrior.snapshotPercent)
+
+        now = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!.nextEligibleAt
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val stored = database.achievementDao().getForGame(1L).single()
+        assertEquals(12.5, stored.snapshotPercent!!, 0.0)
+        assertEquals(40L, database.playerProfileDao().get()!!.totalXp)
+    }
+
+    @Test
+    fun lateCandidateGetsRecoveryLeaseFromItsActualDispatchTime() = runTest {
+        val generation = prepare()
+        seedAdmissions(2, generation)
+        api.advanceTimeAfterPlayer[1L] = 120_000L
+        val secondPlayerGate = CompletableDeferred<Unit>()
+        api.playerGates[2L] = secondPlayerGate
+        val secondPlayerStarted = api.expectPlayerCall(2L)
+
+        val drain = async(start = CoroutineStart.UNDISPATCHED) { worker(generation).doWork() }
+        secondPlayerStarted.await()
+        assertEquals(220_000L, now)
+        drain.cancelAndJoin()
+
+        val interrupted = database.achievementAdmissionDao().get(ACCOUNT, generation, 2L)!!
+        assertEquals(1, interrupted.attempts)
+        assertEquals(280_000L, interrupted.nextEligibleAt)
+        assertEquals(listOf(1L, 2L), api.playerCalls)
+    }
+
+    @Test
+    fun fiveInterruptedAttemptsAcrossReopensRetireWithoutASixthRequest() = runBlocking {
+        marker.clear()
+        val name = "admission-interrupted-${UUID.randomUUID()}.db"
+        fun open() = Room.databaseBuilder(context, BacklogiumDatabase::class.java, name)
+            .allowMainThreadQueries().build()
+        var disk = open()
+        try {
+            disk.playerProfileDao().insertIfMissing()
+            disk.playerProfileDao().updateSteamIdentity(ACCOUNT, 0, null, null, null)
+            val generation = marker.generation()
+            disk.gameDao().upsert(Game(1L, "Game 1", "", 0, 0, 0))
+            disk.achievementAdmissionDao().insert(AchievementAdmissionWork(ACCOUNT, generation, 1L, now))
+
+            repeat(AchievementAdmissionWorker.MAX_ATTEMPTS) { index ->
+                val gate = CompletableDeferred<Unit>()
+                api.playerGates[1L] = gate
+                val started = api.expectNextPlayerCall()
+                val drain = async(start = CoroutineStart.UNDISPATCHED) {
+                    worker(generation, disk, repositoryFor(disk), recoveryFor(disk), hiddenFor(disk)).doWork()
+                }
+                assertEquals(1L, started.await())
+                drain.cancelAndJoin()
+
+                val work = disk.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+                assertEquals(index + 1, work.attempts)
+                disk.close()
+                disk = open()
+                now = work.nextEligibleAt
+            }
+
+            api.playerGates.remove(1L)
+            val callsBeforeExhaustion = api.playerCalls.size
+            assertTrue(worker(generation, disk, repositoryFor(disk), recoveryFor(disk), hiddenFor(disk))
+                .doWork() is ListenableWorker.Result.Success)
+            assertEquals(callsBeforeExhaustion, api.playerCalls.size)
+            assertEquals(0, disk.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        } finally {
+            disk.close()
+            context.deleteDatabase(name)
+        }
     }
 
     @Test
@@ -660,10 +748,14 @@ class AchievementAdmissionWorkerTest {
         val failSchemaOnceFor = mutableMapOf<Long, Exception>()
         val failGlobalsOnceFor = mutableMapOf<Long, Exception>()
         val noStatsFor = mutableSetOf<Long>()
+        val playerGates = mutableMapOf<Long, CompletableDeferred<Unit>>()
+        val advanceTimeAfterPlayer = mutableMapOf<Long, Long>()
         var gate: CompletableDeferred<Unit>? = null
         private var nextPlayerCall: CompletableDeferred<Long>? = null
+        private val playerCallSignals = mutableMapOf<Long, CompletableDeferred<Unit>>()
 
         fun expectNextPlayerCall() = CompletableDeferred<Long>().also { nextPlayerCall = it }
+        fun expectPlayerCall(appId: Long) = CompletableDeferred<Unit>().also { playerCallSignals[appId] = it }
 
         override suspend fun getSchemaForGame(
             key: String,
@@ -685,9 +777,12 @@ class AchievementAdmissionWorkerTest {
             playerCalls += appId
             nextPlayerCall?.complete(appId)
             nextPlayerCall = null
+            playerCallSignals.remove(appId)?.complete(Unit)
+            playerGates[appId]?.await()
             gate?.await()
             failOnceFor.remove(appId)?.let { throw it }
             if (appId in noStatsFor) return PlayerAchievementsResponse(PlayerAchievementsResult(success = false))
+            advanceTimeAfterPlayer.remove(appId)?.let { now += it }
             return PlayerAchievementsResponse(PlayerAchievementsResult(
                 success = true,
                 achievements = listOf(PlayerAchievementDto("ACH_1", achieved = 1, unlocktime = 5L)),

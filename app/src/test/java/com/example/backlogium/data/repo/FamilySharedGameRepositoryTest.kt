@@ -700,12 +700,28 @@ class FamilySharedGameRepositoryTest {
             steamId: String,
             generation: Long,
             appId: Long,
+            expectedAttempts: Int,
+            maxAttempts: Int,
             now: Long,
             recoveryAt: Long,
         ): Int {
             val key = Triple(steamId, generation, appId)
-            val row = rows[key]?.takeIf { it.nextEligibleAt <= now } ?: return 0
+            val row = rows[key]?.takeIf {
+                it.attempts == expectedAttempts && it.attempts < maxAttempts && it.nextEligibleAt <= now
+            } ?: return 0
             rows[key] = row.copy(attempts = row.attempts + 1, nextEligibleAt = recoveryAt)
+            return 1
+        }
+        override suspend fun deleteExhausted(
+            steamId: String,
+            generation: Long,
+            appId: Long,
+            maxAttempts: Int,
+            now: Long,
+        ): Int {
+            val key = Triple(steamId, generation, appId)
+            val row = rows[key]?.takeIf { it.attempts >= maxAttempts && it.nextEligibleAt <= now } ?: return 0
+            rows.remove(key)
             return 1
         }
         override suspend fun recordOutcome(

@@ -38,6 +38,7 @@ data class GameAchievementSync(
     val schemaFetchedAt: Long?,
     val hasAchievements: Boolean?,
     val checkedAt: Long,
+    val globalPercentagesFetchedAt: Long? = null,
 )
 
 @Entity(tableName = "request_breakdowns", foreignKeys = [ForeignKey(entity = SyncRun::class, parentColumns = ["id"], childColumns = ["runId"], onDelete = ForeignKey.CASCADE)], indices = [Index("runId")])

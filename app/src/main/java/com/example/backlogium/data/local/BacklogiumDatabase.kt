@@ -127,7 +127,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 50,
+    version = 51,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -1402,6 +1402,13 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN cataloguePending INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN personalStatePending INTEGER NOT NULL DEFAULT 1")
                 db.execSQL("ALTER TABLE achievement_admission_work ADD COLUMN globalPercentagesPending INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        /** v50 → v51: track global achievement observations independently from player-state checks. */
+        val MIGRATION_50_51 = object : Migration(50, 51) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `game_achievement_sync` ADD COLUMN `globalPercentagesFetchedAt` INTEGER")
             }
         }
 
