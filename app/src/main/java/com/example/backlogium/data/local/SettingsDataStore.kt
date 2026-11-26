@@ -286,6 +286,20 @@ class SettingsDataStore internal constructor(
     }
 
     /** Durable progress-event marks. Unset level/streak keys mean no baseline has been seeded yet. */
+    private val progressAlertHandoffsKey = stringSetPreferencesKey("progress_alert_handoffs")
+    val progressAlertHandoffs = store.data.map { it[progressAlertHandoffsKey].orEmpty() }
+    val progressAlertPreferences = store.data.map { prefs ->
+        com.example.backlogium.data.notifications.ProgressCategory.entries.associateWith {
+            prefs[booleanPreferencesKey("progress_alert_${it.name}")] ?: it.defaultEnabled
+        }
+    }
+    suspend fun setProgressAlert(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) {
+        store.edit { it[booleanPreferencesKey("progress_alert_${category.name}")] = enabled }
+    }
+    suspend fun removeProgressAlertHandoff(raw: String) {
+        store.edit { it[progressAlertHandoffsKey] = it[progressAlertHandoffsKey].orEmpty() - raw }
+    }
+
     val progressMarksFlow: Flow<ProgressMarks> = store.data.map(::decodeProgressMarks)
 
     suspend fun readProgressMarks(): ProgressMarks = progressMarksFlow.first()
@@ -302,10 +316,15 @@ class SettingsDataStore internal constructor(
      */
     suspend fun updateProgressMarks(
         transform: (ProgressMarks) -> ProgressMarks,
+        notificationBoundary: ((ProgressMarks, ProgressMarks) -> Set<String>)? = null,
     ): ProgressMarks {
         lateinit var result: ProgressMarks
         store.edit { prefs ->
-            result = transform(decodeProgressMarks(prefs))
+            val before = decodeProgressMarks(prefs)
+            result = transform(before)
+            notificationBoundary?.let {
+                prefs[progressAlertHandoffsKey] = prefs[progressAlertHandoffsKey].orEmpty() + it(before, result)
+            }
             encodeProgressMarks(prefs, result)
         }
         return result
@@ -1163,6 +1182,7 @@ class SettingsDataStore internal constructor(
      */
     suspend fun clearAccountDerivedState() {
         store.edit { prefs ->
+            prefs.remove(progressAlertHandoffsKey)
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)

@@ -81,6 +81,7 @@ import com.example.backlogium.data.local.entity.SyncRun
 
 @Database(
     entities = [
+        com.example.backlogium.data.notifications.ProgressAlert::class,
         Game::class,
         GamePreference::class,
         Session::class,
@@ -127,11 +128,12 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 51,
+    version = 52,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class BacklogiumDatabase : RoomDatabase() {
+    abstract fun progressAlertDao(): com.example.backlogium.data.local.dao.ProgressAlertDao
     abstract fun gamePreferenceDao(): GamePreferenceDao
     abstract fun dailyActivityDao(): com.example.backlogium.data.local.dao.DailyActivityDao
     abstract fun gameDao(): GameDao
@@ -161,6 +163,12 @@ abstract class BacklogiumDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "backlogium.db"
+
+        val MIGRATION_51_52 = object : Migration(51, 52) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `progress_alerts` (`eventKey` TEXT NOT NULL, `account` TEXT NOT NULL, `generation` INTEGER NOT NULL, `category` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `appId` INTEGER, `title` TEXT NOT NULL, `text` TEXT NOT NULL, `state` TEXT NOT NULL, `sharedFallbackPending` INTEGER NOT NULL, PRIMARY KEY(`eventKey`))")
+            }
+        }
 
         /**
          * v1 → v2: additive only — create the `hltb_data` cache table. No existing data is

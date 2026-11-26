@@ -165,8 +165,12 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
         .components { add(steamAssetInterceptor) }
         .build()
 
+    @Inject lateinit var progressAlertPlatform: com.example.backlogium.data.notifications.ProgressAlertPlatform
+    @Inject lateinit var progressAlertScheduler: com.example.backlogium.work.ProgressAlertScheduler
+
     override fun onCreate() {
         super.onCreate()
+        progressAlertPlatform.registerChannels()
         // Narrative debugging only — structured records (SyncRunRecorder, PresenceDecisionRecorder)
         // are the durable diagnostic surface and are active in release builds regardless. No tree
         // is planted here in release, so Timber calls are no-ops and nothing reaches logcat.
@@ -207,6 +211,7 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
                 .isSuccess
             if (!recoveryReady) return@launch
 
+            progressAlertScheduler.start(scope)
             runCatching { achievementAdmissionScheduler.recoverPending() }
                 .onFailure { Timber.e(it, "Achievement admission recovery remains pending") }
 

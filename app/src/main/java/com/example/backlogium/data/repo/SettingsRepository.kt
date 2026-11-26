@@ -154,6 +154,10 @@ interface SettingsRepository : SessionEndOutbox {
     suspend fun setNotificationPermissionRequested()
 
     /** Explicit opt-in to keep the foreground presence service polling before a game is detected. */
+    val progressAlerts: Flow<Map<com.example.backlogium.data.notifications.ProgressCategory, Boolean>>
+        get() = kotlinx.coroutines.flow.flowOf(com.example.backlogium.data.notifications.ProgressCategory.entries.associateWith { it.defaultEnabled })
+    suspend fun setProgressAlert(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) = Unit
+
     val achievementWatch: Flow<com.example.backlogium.domain.AchievementWatchPreferences>
         get() = flowOf(com.example.backlogium.domain.AchievementWatchPreferences())
 
@@ -445,6 +449,10 @@ class DataStoreSettingsRepository @Inject constructor(
 
     override suspend fun setNotificationPermissionRequested() =
         settings.setNotificationPermissionRequested()
+
+    override val progressAlerts = settings.progressAlertPreferences
+    override suspend fun setProgressAlert(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) =
+        settings.setProgressAlert(category, enabled)
 
     override val achievementWatch = settings.achievementWatchFlow
 

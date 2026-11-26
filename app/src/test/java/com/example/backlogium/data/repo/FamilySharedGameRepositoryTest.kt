@@ -263,6 +263,7 @@ class FamilySharedGameRepositoryTest {
         storeApi: SteamStoreApi = noOpProxy(SteamStoreApi::class.java),
         admissionDao: AchievementAdmissionDao = database.achievementAdmissionDao(),
         admissionScheduler: AchievementAdmissionWorkScheduler = NoopAdmissionScheduler,
+        progressAlerts: com.example.backlogium.data.notifications.ProgressAlerts? = null,
     ) = FamilySharedGameRepository(
         gameDao = database.gameDao(),
         excludedDao = excludedDao,
@@ -294,6 +295,7 @@ class FamilySharedGameRepositoryTest {
         admissionDao = admissionDao,
         admissionScheduler = admissionScheduler,
         accountChangeMarker = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()),
+        progressAlerts = progressAlerts,
     )
 
     @Test
@@ -605,8 +607,17 @@ class FamilySharedGameRepositoryTest {
             profile.insertIfMissing()
             profile.updateSteamIdentity(account, 0, null, null, null)
             profile.updateSyncStatus(20L, null)
+            val platform = com.example.backlogium.data.notifications.ProgressAlertPlatform(RuntimeEnvironment.getApplication())
+            platform.registerChannels()
+            org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+            val credentials = object : CredentialsProvider {
+                override suspend fun currentCredentials() = CredentialsState.Configured("fixture-key", account)
+            }
+            val alerts = com.example.backlogium.data.notifications.ProgressAlerts(database, settings, platform,
+                AccountChangeMarkerStore(RuntimeEnvironment.getApplication()), credentials, com.example.backlogium.work.SteamSyncCoordinator())
             val repo = repositoryWithRealGamification(
                 database = database,
+                progressAlerts = alerts,
                 gamificationUpdater = GamificationUpdater(
                     database.sessionDao(), database.dailyProgressDao(), profile, database.hltbDataDao(),
                     database.achievementDao(), database.gameDao(), database.hiddenGameDao(),
@@ -625,6 +636,13 @@ class FamilySharedGameRepositoryTest {
             assertEquals(listOf(appId), queued.map { it.appId })
 
             assertTrue(wakes.isEmpty())
+            assertEquals(listOf(appId), database.progressAlertDao().pending().map { it.appId })
+            alerts.dispatch()
+            val notifications = RuntimeEnvironment.getApplication().getSystemService(android.app.NotificationManager::class.java)
+            assertEquals(1, notifications.activeNotifications.size)
+            notifications.cancelAll()
+            alerts.dispatch()
+            assertTrue(notifications.activeNotifications.isEmpty())
             scheduler.recoverPending()
             assertEquals(listOf(account to generation), wakes)
             assertEquals(listOf(appId), database.achievementAdmissionDao()

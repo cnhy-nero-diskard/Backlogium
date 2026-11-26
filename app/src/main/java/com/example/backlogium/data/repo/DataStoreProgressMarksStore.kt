@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 @Singleton
 class DataStoreProgressMarksStore @Inject constructor(
     private val settings: SettingsDataStore,
+    private val alerts: com.example.backlogium.data.notifications.ProgressAlerts? = null,
 ) : ProgressMarksStore {
     override val marks: Flow<ProgressMarks> = settings.progressMarksFlow
 
@@ -19,5 +20,5 @@ class DataStoreProgressMarksStore @Inject constructor(
     override suspend fun write(marks: ProgressMarks) = settings.writeProgressMarks(marks)
 
     override suspend fun update(transform: (ProgressMarks) -> ProgressMarks): ProgressMarks =
-        settings.updateProgressMarks(transform)
+        settings.updateProgressMarks(transform, alerts?.earnedBoundary())
 }
