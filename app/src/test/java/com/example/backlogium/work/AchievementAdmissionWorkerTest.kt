@@ -2,12 +2,16 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
+import androidx.work.BackoffPolicy
 import androidx.work.Configuration
 import androidx.work.ListenableWorker
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
+import androidx.work.WorkRequest
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -179,6 +183,31 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
+    fun interruptedOutcomeTransactionLeavesFlagsAndRecoveryLeaseTogether() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        val dao = database.achievementAdmissionDao()
+        val recoveryAt = now + 60_000L
+        assertEquals(1, dao.beginAttempt(ACCOUNT, generation, 1L, now, recoveryAt))
+
+        try {
+            database.withTransaction {
+                dao.recordOutcome(ACCOUNT, generation, 1L, false, false, true, now + 120_000L)
+                error("Simulated interruption before the outcome transaction commits")
+            }
+        } catch (_: IllegalStateException) {
+            // The component flags and deadline must roll back together.
+        }
+
+        val queued = dao.get(ACCOUNT, generation, 1L)!!
+        assertTrue(queued.cataloguePending)
+        assertTrue(queued.personalStatePending)
+        assertTrue(queued.globalPercentagesPending)
+        assertEquals(recoveryAt, queued.nextEligibleAt)
+        assertTrue(dao.eligible(ACCOUNT, generation, recoveryAt - 1, 8).isEmpty())
+    }
+
+    @Test
     fun retryableSchemaFailureKeepsCatalogueWorkAfterPersonalStateCommits() = runTest {
         val generation = prepare()
         seedAdmissions(1, generation)
@@ -221,6 +250,48 @@ class AchievementAdmissionWorkerTest {
         assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
         assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
         assertEquals(12.5, database.achievementDao().getForGame(1L).single().snapshotPercent!!, 0.0)
+        assertEquals(12.5, database.achievementCatalogueDao().entries(1L).single().globalPercent!!, 0.0)
+    }
+
+    @Test
+    fun globalRetryUsesCachedCatalogueWhenPlayerEndpointReturns503() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        now = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!.nextEligibleAt
+        api.failOnceFor[1L] = unavailable503()
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        assertEquals(listOf(1L, 1L), api.playerCalls)
+        assertEquals(listOf(1L, 1L), api.globalCalls)
+        assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        val achievement = database.achievementDao().getForGame(1L).single()
+        assertEquals(12.5, achievement.globalPercent!!, 0.0)
+        assertEquals(12.5, achievement.snapshotPercent!!, 0.0)
+        assertEquals(12.5, database.achievementCatalogueDao().entries(1L).single().globalPercent!!, 0.0)
+    }
+
+    @Test
+    fun globalRetryBackfillsXpWithoutFreshPlayerResponse() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+        assertEquals(0L, database.playerProfileDao().get()!!.totalXp)
+        now = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!.nextEligibleAt
+        api.noStatsFor += 1L
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        assertEquals(12.5, database.achievementDao().getForGame(1L).single().snapshotPercent!!, 0.0)
+        assertTrue(database.playerProfileDao().get()!!.totalXp > 0L)
+        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).all { it.payload == null })
+        assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
     }
 
     @Test
@@ -242,7 +313,7 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
-    fun duplicateConcurrentAdmissionRefreshRecomputesXpOnlyOnce() = runTest {
+    fun concurrentDrainDoesNotDuplicateAnInProgressAdmission() = runTest {
         val generation = prepare()
         seedAdmissions(1, generation)
         baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
@@ -253,12 +324,8 @@ class AchievementAdmissionWorkerTest {
         val first = async(start = CoroutineStart.UNDISPATCHED) { worker(generation).doWork() }
         assertEquals(1L, firstPlayerCall.await())
         val second = async(start = CoroutineStart.UNDISPATCHED) { worker(generation).doWork() }
-        withTimeout(5_000L) {
-            while (inFlightSubscriberCount(achievementRepository) < 2) {
-                runCurrent()
-                yield()
-            }
-        }
+        assertTrue(second.await() is ListenableWorker.Result.Success)
+        assertEquals(1, inFlightSubscriberCount(achievementRepository))
         gate.complete(Unit)
 
         assertTrue(first.await() is ListenableWorker.Result.Success)
@@ -272,9 +339,10 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
-    fun admissionRecomputeMarkerSurvivesInterruptionAfterRawCommit() = runTest {
+    fun workerRecoversPendingXpBeforeUnavailableSteamRetry() = runTest {
         val generation = prepare()
         seedAdmissions(1, generation)
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
         interruptRecompute = true
 
         assertTrue(worker(generation).doWork() is ListenableWorker.Result.Retry)
@@ -287,9 +355,13 @@ class AchievementAdmissionWorkerTest {
         assertEquals(1, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
 
         interruptRecompute = false
-        recomputeRecovery.resume()
+        now = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!.nextEligibleAt
+        api.failOnceFor[1L] = unavailable()
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
         assertTrue(database.playerProfileDao().get()!!.totalXp > 0L)
         assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
+        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).all { it.payload == null })
     }
 
     @Test
@@ -336,6 +408,50 @@ class AchievementAdmissionWorkerTest {
         } finally {
             workManager.cancelAllWork().result.get()
             WorkManagerTestInitHelper.closeWorkDatabase()
+        }
+    }
+
+    @Test
+    fun retryDeadlineSurvivesDatabaseReopenAndFreshRepository() = runBlocking {
+        marker.clear()
+        val databaseName = "admission-retry-${UUID.randomUUID()}.db"
+        var disk = Room.databaseBuilder(context, BacklogiumDatabase::class.java, databaseName)
+            .allowMainThreadQueries().build()
+        try {
+            disk.playerProfileDao().insertIfMissing()
+            disk.playerProfileDao().updateSteamIdentity(ACCOUNT, 0, null, null, null)
+            val generation = marker.generation()
+            disk.gameDao().upsert(Game(1, "Game 1", "", 0, 0, 0))
+            disk.gameAchievementSyncDao().upsert(GameAchievementSync(1, null, null, null, now))
+            disk.achievementAdmissionDao().insert(AchievementAdmissionWork(ACCOUNT, generation, 1, now))
+            api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+
+            assertTrue(worker(generation, disk, repositoryFor(disk), recoveryFor(disk), hiddenFor(disk))
+                .doWork() is ListenableWorker.Result.Success)
+            val deadline = disk.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!.nextEligibleAt
+            assertEquals(now + 120_000L, deadline)
+
+            disk.close()
+            disk = Room.databaseBuilder(context, BacklogiumDatabase::class.java, databaseName)
+                .allowMainThreadQueries().build()
+            val freshRepository = repositoryFor(disk)
+            val freshRecovery = recoveryFor(disk)
+            val freshHiddenRepository = hiddenFor(disk)
+            now = deadline - 1L
+            val playerCallsBeforeWake = api.playerCalls.size
+            assertTrue(worker(generation, disk, freshRepository, freshRecovery, freshHiddenRepository)
+                .doWork() is ListenableWorker.Result.Success)
+            assertEquals(playerCallsBeforeWake, api.playerCalls.size)
+            assertEquals(1L, scheduled.last().third)
+
+            now = deadline
+            assertTrue(worker(generation, disk, freshRepository, freshRecovery, freshHiddenRepository)
+                .doWork() is ListenableWorker.Result.Success)
+            assertEquals(playerCallsBeforeWake + 1, api.playerCalls.size)
+            assertEquals(0, disk.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        } finally {
+            disk.close()
+            context.deleteDatabase(databaseName)
         }
     }
 
@@ -442,7 +558,13 @@ class AchievementAdmissionWorkerTest {
         })
     }
 
-    private fun worker(generation: Long): AchievementAdmissionWorker =
+    private fun worker(
+        generation: Long,
+        db: BacklogiumDatabase = database,
+        repository: AchievementRepository = achievementRepository,
+        recovery: AchievementRecomputeRecovery = recomputeRecovery,
+        hidden: HiddenGamesRepository = hiddenGamesRepository,
+    ): AchievementAdmissionWorker =
         TestListenableWorkerBuilder<AchievementAdmissionWorker>(
             context,
             inputData = workDataOf(
@@ -452,12 +574,39 @@ class AchievementAdmissionWorkerTest {
         ).setId(UUID.randomUUID()).setWorkerFactory(object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
                 AchievementAdmissionWorker(
-                    appContext, workerParameters, credentials, marker, database,
-                    database.achievementAdmissionDao(), database.gameDao(), database.playerProfileDao(),
-                    hiddenGamesRepository, achievementRepository, recomputeRecovery,
+                    appContext, workerParameters, credentials, marker, db,
+                    db.achievementAdmissionDao(), db.gameDao(), db.playerProfileDao(),
+                    hidden, repository, recovery,
                     scheduler, syncCoordinator, time,
                 )
         }).build()
+
+    private fun hiddenFor(db: BacklogiumDatabase) = HiddenGamesRepository(
+        db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time,
+    )
+
+    private fun repositoryFor(db: BacklogiumDatabase) = AchievementRepository(
+        steamApi = api,
+        achievementDao = db.achievementDao(),
+        gameAchievementSyncDao = db.gameAchievementSyncDao(),
+        gameDao = db.gameDao(),
+        hiddenGamesRepository = hiddenFor(db),
+        time = time,
+        observationStore = AchievementObservationStore(db, credentials, marker, syncCoordinator),
+    )
+
+    private fun recoveryFor(db: BacklogiumDatabase) = AchievementRecomputeRecovery(
+        db,
+        recoverySettings,
+        GamificationUpdater(
+            db.sessionDao(), db.dailyProgressDao(), db.playerProfileDao(),
+            db.hltbDataDao(), db.achievementDao(), db.gameDao(), db.hiddenGameDao(),
+        ),
+        time,
+        syncCoordinator,
+        DerivedStateWriteCoordinator(),
+        marker,
+    )
 
     private fun admissionWorkerFactory(realScheduler: AchievementAdmissionWorkScheduler) = object : WorkerFactory() {
         override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker? =
@@ -506,6 +655,7 @@ class AchievementAdmissionWorkerTest {
 
     private inner class AdmissionSteamApi : SteamApi by unusedSteamApi {
         val playerCalls = mutableListOf<Long>()
+        val globalCalls = mutableListOf<Long>()
         val failOnceFor = mutableMapOf<Long, Exception>()
         val failSchemaOnceFor = mutableMapOf<Long, Exception>()
         val failGlobalsOnceFor = mutableMapOf<Long, Exception>()
@@ -548,6 +698,7 @@ class AchievementAdmissionWorkerTest {
             gameId: Long,
             scope: com.example.backlogium.data.diagnostics.SyncRunRecorder.RunScope?,
         ): GlobalAchievementPercentagesResponse {
+            globalCalls += gameId
             failGlobalsOnceFor.remove(gameId)?.let { throw it }
             return GlobalAchievementPercentagesResponse(GlobalAchievementPercentagesResult(listOf(
                 GlobalAchievementPercentageDto("ACH_1", 12.5),
@@ -563,6 +714,18 @@ class AchievementAdmissionWorkerTest {
                 .protocol(Protocol.HTTP_1_1)
                 .code(500)
                 .message("Internal Server Error")
+                .build(),
+        ),
+    )
+
+    private fun unavailable503() = HttpException(
+        Response.error<PlayerAchievementsResponse>(
+            "unavailable".toResponseBody(),
+            okhttp3.Response.Builder()
+                .request(Request.Builder().url("https://api.steampowered.com").build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(503)
+                .message("Service Unavailable")
                 .build(),
         ),
     )

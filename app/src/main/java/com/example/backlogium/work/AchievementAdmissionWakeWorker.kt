@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 
 /** A deadline timer only; the drain re-reads authoritative eligibility from Room. */
 @HiltWorker
@@ -19,7 +20,13 @@ class AchievementAdmissionWakeWorker @AssistedInject constructor(
             ?.takeIf { it.isNotBlank() } ?: return Result.success()
         val generation = inputData.getLong(AchievementAdmissionWorker.KEY_GENERATION, -1L)
         if (generation < 0L) return Result.success()
-        scheduler.enqueue(steamId, generation)
-        return Result.success()
+        return try {
+            scheduler.enqueue(steamId, generation)
+            Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            Result.retry()
+        }
     }
 }

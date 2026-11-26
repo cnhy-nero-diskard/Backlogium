@@ -46,11 +46,11 @@ class AchievementAdmissionWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val steamId = inputData.getString(KEY_STEAM_ID)?.takeIf { it.isNotBlank() } ?: return Result.success()
         val generation = inputData.getLong(KEY_GENERATION, -1L)
-        val creds = credentials.currentCredentials() as? CredentialsState.Configured ?: return Result.success()
-        if (creds.steamId != steamId || !isActive(steamId, generation)) return Result.success()
-
-        val now = time.nowMillis()
         return try {
+            syncCoordinator.withLock { recomputeRecovery.resumeWhileLocked() }
+            val creds = credentials.currentCredentials() as? CredentialsState.Configured ?: return Result.success()
+            if (creds.steamId != steamId || !isActive(steamId, generation)) return Result.success()
+            val now = time.nowMillis()
             val batch = admissionDao.eligible(steamId, generation, now, PER_RUN_CAP)
             for (candidate in batch) {
                 if (!isActive(steamId, generation)) return Result.success()
@@ -62,9 +62,10 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                     admissionDao.delete(steamId, generation, candidate.appId)
                     continue
                 }
-                if (admissionDao.beginAttempt(steamId, generation, candidate.appId, now) == 0) continue
+                val recoveryAt = now + retryDelayMillis(candidate.attempts + 1)
+                if (admissionDao.beginAttempt(steamId, generation, candidate.appId, now, recoveryAt) == 0) continue
                 val attempt = admissionDao.get(steamId, generation, candidate.appId)?.attempts ?: continue
-                val refresh = achievementRepository.refreshAdmission(
+                achievementRepository.refreshAdmission(
                     apiKey = creds.apiKey,
                     steamId = steamId,
                     appId = candidate.appId,
@@ -72,7 +73,8 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                     cataloguePending = candidate.cataloguePending,
                     personalStatePending = candidate.personalStatePending,
                     globalPercentagesPending = candidate.globalPercentagesPending,
-                    commit = { merge ->
+                    commit = { merge, outcome ->
+                        var recomputeNeeded = false
                         syncCoordinator.withLock {
                             val committed = accountChangeMarker.withAccountState {
                                 if (!isActive(steamId, generation) ||
@@ -80,11 +82,21 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                                     gameDao.getById(candidate.appId) == null ||
                                     hiddenGamesRepository.isHidden(candidate.appId)
                                 ) {
+                                    database.withTransaction {
+                                        admissionDao.delete(steamId, generation, candidate.appId)
+                                    }
                                     SingleGameRefresh.Discarded
                                 } else {
                                     database.withTransaction {
+                                        val beforeXpInputs = database.achievementDao().getForGame(candidate.appId)
+                                            .filter { it.unlocked && !it.retired }
+                                            .associate { it.apiName to it.snapshotPercent }
                                         merge().also { result ->
-                                            if (result is SingleGameRefresh.Persisted && result.xpInputsChanged) {
+                                            val afterXpInputs = database.achievementDao().getForGame(candidate.appId)
+                                                .filter { it.unlocked && !it.retired }
+                                                .associate { it.apiName to it.snapshotPercent }
+                                            recomputeNeeded = beforeXpInputs != afterXpInputs
+                                            if (recomputeNeeded) {
                                                 database.achievementWatchDao().insert(AchievementWatchWork(
                                                     eventId = UUID.randomUUID().toString(),
                                                     account = steamId,
@@ -96,40 +108,40 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                                                     recomputeSource = "XP_INTEGRITY_CORRECTION",
                                                 ))
                                             }
+                                            when {
+                                                result is SingleGameRefresh.Stale || result is SingleGameRefresh.Discarded ->
+                                                    admissionDao.delete(steamId, generation, candidate.appId)
+
+                                                !outcome.cataloguePending && !outcome.personalStatePending &&
+                                                    !outcome.globalPercentagesPending ->
+                                                    admissionDao.delete(steamId, generation, candidate.appId)
+
+                                                outcome.retryableFailure && attempt < MAX_ATTEMPTS ->
+                                                    admissionDao.recordOutcome(
+                                                        steamId = steamId,
+                                                        generation = generation,
+                                                        appId = candidate.appId,
+                                                        cataloguePending = outcome.cataloguePending,
+                                                        personalStatePending = outcome.personalStatePending,
+                                                        globalPercentagesPending = outcome.globalPercentagesPending,
+                                                        nextEligibleAt = maxOf(
+                                                            time.nowMillis() + retryDelayMillis(attempt),
+                                                            outcome.retryAt ?: 0L,
+                                                        ),
+                                                    )
+
+                                                else -> admissionDao.delete(steamId, generation, candidate.appId)
+                                            }
                                         }
                                     }
                                 }
                             }
-                            if (committed is SingleGameRefresh.Persisted) recomputeRecovery.resumeWhileLocked()
+                            if (recomputeNeeded) recomputeRecovery.resumeWhileLocked()
                             committed
                         }
                     },
                 )
                 if (!isActive(steamId, generation)) return Result.success()
-                when {
-                    refresh.result is SingleGameRefresh.Stale || refresh.result is SingleGameRefresh.Discarded ->
-                        admissionDao.delete(steamId, generation, candidate.appId)
-
-                    else -> {
-                        admissionDao.updatePendingComponents(
-                            steamId, generation, candidate.appId,
-                            refresh.cataloguePending,
-                            refresh.personalStatePending,
-                            refresh.globalPercentagesPending,
-                        )
-                        if (!refresh.cataloguePending && !refresh.personalStatePending && !refresh.globalPercentagesPending) {
-                            admissionDao.delete(steamId, generation, candidate.appId)
-                        } else if (refresh.retryableFailure && attempt < MAX_ATTEMPTS) {
-                            val backoffAt = time.nowMillis() + retryDelayMillis(attempt)
-                            admissionDao.defer(
-                                steamId, generation, candidate.appId,
-                                maxOf(backoffAt, refresh.retryAt ?: 0L),
-                            )
-                        } else {
-                            admissionDao.delete(steamId, generation, candidate.appId)
-                        }
-                    }
-                }
             }
 
             val remaining = admissionDao.state(steamId, generation)

@@ -171,6 +171,15 @@ data class AchievementAdmissionRefresh(
     val globalPercentagesPending: Boolean = false,
 )
 
+/** Durable queue decision persisted with the admission merge. */
+data class AchievementAdmissionOutcome(
+    val cataloguePending: Boolean,
+    val personalStatePending: Boolean,
+    val globalPercentagesPending: Boolean,
+    val retryAt: Long?,
+    val retryableFailure: Boolean,
+)
+
 /**
  * Owns fetching, merging, and caching Steam achievement data. Covers every game in the
  * library — not just games the player is actively engaged with — but selects what to refresh
@@ -561,52 +570,63 @@ class AchievementRepository @Inject constructor(
         cataloguePending: Boolean,
         personalStatePending: Boolean,
         globalPercentagesPending: Boolean,
-        commit: (suspend (suspend () -> SingleGameRefresh) -> SingleGameRefresh)? = null,
+        commit: suspend (
+            suspend () -> SingleGameRefresh,
+            AchievementAdmissionOutcome,
+        ) -> SingleGameRefresh,
     ): AchievementAdmissionRefresh {
         val metadata = gameAchievementSyncDao.get(appId)
         val catalogueDao = observationStore?.database?.achievementCatalogueDao()
         val cachedSchemaAt = catalogueDao?.cache(appId)?.fetchedAt
         val schemaFresh = cachedSchemaAt?.let { time.nowMillis() - it <= SCHEMA_WINDOW_MILLIS } == true
         if (hiddenGamesRepository.isHidden(appId)) {
-            return AchievementAdmissionRefresh(SingleGameRefresh.NoUsableData, hasCatalogue(appId),
-                metadata?.playerStateFetchedAt != null)
+            val outcome = AchievementAdmissionOutcome(false, false, false, null, false)
+            val result = commit({ SingleGameRefresh.NoUsableData }, outcome)
+            return AchievementAdmissionRefresh(result, hasCatalogue(appId), metadata?.playerStateFetchedAt != null)
         }
         val refresh = try {
             fetchGame(apiKey, steamId, appId, if (schemaFresh) metadata?.schemaFetchedAt ?: cachedSchemaAt else null)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            val retryable = isRetryableAchievementFailure(error)
+            val retryAt = achievementRetryAfter(error, time.nowMillis())
+            val outcome = AchievementAdmissionOutcome(
+                cataloguePending = cataloguePending && !schemaFresh && retryable,
+                personalStatePending = personalStatePending &&
+                    (metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) < admittedAt && retryable,
+                globalPercentagesPending = globalPercentagesPending && retryable,
+                retryAt = retryAt,
+                retryableFailure = retryable,
+            )
+            val result = commit({ SingleGameRefresh.Unavailable }, outcome)
             return AchievementAdmissionRefresh(
-                result = SingleGameRefresh.Unavailable,
+                result = result,
                 catalogueAvailable = hasCatalogue(appId),
                 personalStateAvailable = metadata?.playerStateFetchedAt != null,
-                retryAt = achievementRetryAfter(error, time.nowMillis()),
-                retryableFailure = isRetryableAchievementFailure(error),
-                cataloguePending = cataloguePending && !schemaFresh && isRetryableAchievementFailure(error),
-                personalStatePending = personalStatePending &&
-                    (metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) < admittedAt && isRetryableAchievementFailure(error),
-                globalPercentagesPending = globalPercentagesPending && isRetryableAchievementFailure(error),
+                retryAt = retryAt,
+                retryableFailure = retryable,
+                cataloguePending = outcome.cataloguePending,
+                personalStatePending = outcome.personalStatePending,
+                globalPercentagesPending = outcome.globalPercentagesPending,
             )
-        } ?: return AchievementAdmissionRefresh(SingleGameRefresh.NoUsableData, hasCatalogue(appId),
-            metadata?.playerStateFetchedAt != null)
+        } ?: run {
+            val outcome = AchievementAdmissionOutcome(false, false, false, null, false)
+            val result = commit({ SingleGameRefresh.NoUsableData }, outcome)
+            return AchievementAdmissionRefresh(result, hasCatalogue(appId), metadata?.playerStateFetchedAt != null)
+        }
 
-        val result = commitFetchedRefresh(steamId, appId, refresh, commit)
-        val personalStateAvailable = result is SingleGameRefresh.Persisted ||
-            (gameAchievementSyncDao.get(appId)?.playerStateFetchedAt ?: Long.MIN_VALUE) >= admittedAt
+        val hasPersonalState = refresh.achievements != null ||
+            (metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) >= admittedAt
         val retryableFailure = refresh.retryableFailure || refresh.retryAt != null
-        return AchievementAdmissionRefresh(
-            result = result,
-            catalogueAvailable = refresh.schemaLoaded || hasCatalogue(appId),
-            personalStateAvailable = personalStateAvailable,
-            retryAt = refresh.retryAt,
-            retryableFailure = retryableFailure,
+        val outcome = AchievementAdmissionOutcome(
             cataloguePending = cataloguePending && !refresh.schemaLoaded && when {
                 refresh.schemaAttempted -> refresh.retryableSchemaFailure
                 refresh.retryAt != null && !schemaFresh -> true
                 refresh.retryableFailure && !schemaFresh -> true
                 else -> false
             },
-            personalStatePending = personalStatePending && !personalStateAvailable && when {
+            personalStatePending = personalStatePending && !hasPersonalState && when {
                 refresh.playerAttempted -> refresh.retryablePlayerFailure
                 refresh.retryAt != null || refresh.retryableFailure -> true
                 else -> false
@@ -617,6 +637,21 @@ class AchievementRepository @Inject constructor(
                 refresh.retryAt != null || refresh.retryableFailure -> true
                 else -> false
             },
+            retryAt = refresh.retryAt,
+            retryableFailure = retryableFailure,
+        )
+        val result = commitFetchedRefresh(steamId, appId, refresh) { merge -> commit(merge, outcome) }
+        val personalStateAvailable = result is SingleGameRefresh.Persisted ||
+            (gameAchievementSyncDao.get(appId)?.playerStateFetchedAt ?: Long.MIN_VALUE) >= admittedAt
+        return AchievementAdmissionRefresh(
+            result = result,
+            catalogueAvailable = refresh.schemaLoaded || hasCatalogue(appId),
+            personalStateAvailable = personalStateAvailable,
+            retryAt = refresh.retryAt,
+            retryableFailure = retryableFailure,
+            cataloguePending = outcome.cataloguePending,
+            personalStatePending = outcome.personalStatePending,
+            globalPercentagesPending = outcome.globalPercentagesPending,
         )
     }
 
@@ -1005,6 +1040,7 @@ class AchievementRepository @Inject constructor(
         var retryablePlayerFailure = false
         var retryableGlobalsFailure = false
         var globalPercentagesLoaded = false
+        var providerBlocked = false
         var playerFailure: Exception? = null
         suspend fun <T> attempt(onFailure: (Exception) -> Unit, block: suspend () -> T): T? = try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -1012,6 +1048,7 @@ class AchievementRepository @Inject constructor(
                 val retryable = isRetryableAchievementFailure(error)
                 retryableFailure = retryableFailure || retryable
                 onFailure(error)
+                providerBlocked = providerBlocked || blocksFurtherAchievementRequests(error)
                 achievementRetryAfter(error, now)?.let {
                     retryAt = maxOf(retryAt ?: 0, it)
                     rateLimitDeadlines.merge(key, it, ::maxOf)
@@ -1023,22 +1060,26 @@ class AchievementRepository @Inject constructor(
             steamApi.getSchemaForGame(apiKey, appId, scope)
         } else null
         val schema = schemaResponse?.game?.availableGameStats?.achievements.orEmpty()
-        val playerAttempted = retryAt == null
+        val playerAttempted = !providerBlocked
         val player = if (playerAttempted) attempt({ retryablePlayerFailure = isRetryableAchievementFailure(it) }) {
             try { steamApi.getPlayerAchievements(apiKey, steamId, appId, scope).playerstats }
             catch (error: Exception) { playerFailure = error; throw error }
         } else null
-        val globalsAttempted = retryAt == null && (schema.isNotEmpty() || !player?.achievements.isNullOrEmpty())
+        val cachedCatalogue = observationStore?.database?.achievementCatalogueDao()?.entries(appId).orEmpty()
+        val existing = achievementDao.getForGame(appId)
+        val globalsAttempted = !providerBlocked && (
+            schema.isNotEmpty() || !player?.achievements.isNullOrEmpty() ||
+                cachedCatalogue.isNotEmpty() || existing.isNotEmpty()
+            )
         val globals = if (globalsAttempted) attempt({ retryableGlobalsFailure = isRetryableAchievementFailure(it) }) {
             val response = steamApi.getGlobalAchievementPercentages(appId, scope)
             globalPercentagesLoaded = true
             response.achievementpercentages.achievements
                 .filter { it.percent.isFinite() && it.percent in 0.0..100.0 }.associate { it.name to it.percent }
         }.orEmpty() else emptyMap()
-        val knownCatalogue = if (schemaResponse != null) schema else observationStore?.database?.achievementCatalogueDao()?.entries(appId)?.map {
+        val knownCatalogue = if (schemaResponse != null) schema else cachedCatalogue.map {
             AchievementSchemaDto(it.apiName, it.displayName, it.iconUrl.orEmpty(), it.description.orEmpty(), if (it.hidden) 1 else 0)
         }
-        val existing = achievementDao.getForGame(appId)
         val usablePlayer = player?.takeIf { it.success }?.achievements?.takeUnless {
             it.isEmpty() && (!knownCatalogue.isNullOrEmpty() || existing.isNotEmpty())
         }
@@ -1070,6 +1111,11 @@ class AchievementRepository @Inject constructor(
         }
         val catalogue = db?.achievementCatalogueDao()
         val previousRows = achievementDao.getForGame(refresh.appId)
+        val metadata = gameAchievementSyncDao.get(refresh.appId)
+        val globalPercentagesFresh = (refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty()) &&
+            (metadata?.checkedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
+        val freshGlobalPercentByName = refresh.globalPercentByName.takeIf { globalPercentagesFresh }.orEmpty()
+        val previousCatalogue = catalogue?.entries(refresh.appId).orEmpty().associateBy { it.apiName }
         if (catalogue != null && refresh.schemaLoaded &&
             (catalogue.cache(refresh.appId)?.fetchedAt ?: Long.MIN_VALUE) <= (refresh.schemaFetchedAt ?: refresh.fetchedAt) &&
             (refresh.schemaByName.isNotEmpty() || (previousRows.isEmpty() && refresh.achievements.isNullOrEmpty()))
@@ -1077,16 +1123,46 @@ class AchievementRepository @Inject constructor(
             catalogue.clearEntries(refresh.appId)
             catalogue.upsert(refresh.schemaByName.values.map { schema -> AchievementCatalogueEntry(
                 refresh.appId, schema.name, schema.displayName, schema.icon.takeIf { it.isNotBlank() },
-                schema.description.takeIf { it.isNotBlank() }, schema.hidden != 0, refresh.globalPercentByName[schema.name],
+                schema.description.takeIf { it.isNotBlank() }, schema.hidden != 0,
+                freshGlobalPercentByName[schema.name] ?: previousCatalogue[schema.name]?.globalPercent,
             ) })
             catalogue.upsert(AchievementCatalogueCache(refresh.appId, refresh.schemaFetchedAt ?: refresh.fetchedAt))
         }
-        val metadata = gameAchievementSyncDao.get(refresh.appId)
+        if (catalogue != null && freshGlobalPercentByName.isNotEmpty() &&
+            (catalogue.cache(refresh.appId)?.fetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
+        ) {
+            catalogue.upsert(catalogue.entries(refresh.appId).mapNotNull { entry ->
+                freshGlobalPercentByName[entry.apiName]?.let { entry.copy(globalPercent = it) }
+            })
+        }
+        if (freshGlobalPercentByName.isNotEmpty()) {
+            val updatedGlobals = previousRows.mapNotNull { prior ->
+                if (prior.fetchedAt > refresh.fetchedAt) return@mapNotNull null
+                val globalPercent = freshGlobalPercentByName[prior.apiName] ?: return@mapNotNull null
+                prior.copy(
+                    globalPercent = globalPercent,
+                    snapshotPercent = prior.snapshotPercent ?: globalPercent.takeIf { prior.unlocked },
+                ).takeUnless { it == prior }
+            }
+            if (updatedGlobals.isNotEmpty()) achievementDao.upsertAll(updatedGlobals)
+        }
+        if (globalPercentagesFresh && metadata != null) {
+            gameAchievementSyncDao.upsert(
+                GameAchievementSync(
+                    appId = refresh.appId,
+                    playerStateFetchedAt = metadata?.playerStateFetchedAt,
+                    schemaFetchedAt = metadata?.schemaFetchedAt,
+                    hasAchievements = metadata?.hasAchievements,
+                    checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
+                ),
+            )
+        }
         if ((metadata?.playerStateFetchedAt ?: Long.MIN_VALUE) > refresh.fetchedAt) return false
 
         val existing = achievementDao.getForGame(refresh.appId)
         val existingByName = existing.associateBy { it.apiName }
-        val incoming = refresh.achievements ?: return true
+        val incoming = refresh.achievements
+        if (incoming == null) return true
         if (incoming.isEmpty() && (existing.isNotEmpty() || refresh.schemaByName.isNotEmpty() ||
                 catalogue?.entries(refresh.appId)?.isNotEmpty() == true)) return false
         val incomingNames = incoming.mapTo(mutableSetOf()) { it.apiName }
@@ -1101,7 +1177,7 @@ class AchievementRepository @Inject constructor(
                     com.example.backlogium.data.achievement.AchievementMerge.merge(
                         appId = refresh.appId,
                         dto = dto,
-                        globalPercent = refresh.globalPercentByName[dto.apiName],
+                        globalPercent = freshGlobalPercentByName[dto.apiName] ?: prior?.globalPercent,
                         schema = refresh.schemaByName[dto.apiName],
                         prior = prior,
                         now = refresh.fetchedAt,
@@ -1123,9 +1199,9 @@ class AchievementRepository @Inject constructor(
             GameAchievementSync(
                 appId = refresh.appId,
                 playerStateFetchedAt = refresh.fetchedAt,
-                schemaFetchedAt = refresh.schemaFetchedAt,
+                schemaFetchedAt = refresh.schemaFetchedAt ?: metadata?.schemaFetchedAt,
                 hasAchievements = incoming.isNotEmpty(),
-                checkedAt = refresh.fetchedAt,
+                checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
             ),
         )
         return true
@@ -1147,6 +1223,12 @@ private fun isRetryableAchievementFailure(error: Exception): Boolean = when (err
     is HttpException -> error.code() == 408 || error.code() == 429 || error.code() >= 500
     is IOException -> true
     else -> error !is IllegalArgumentException
+}
+
+private fun blocksFurtherAchievementRequests(error: Exception): Boolean = when (error) {
+    is HttpException -> error.code() == 429 ||
+        (error.code() == 503 && error.response()?.headers()?.get("Retry-After") != null)
+    else -> false
 }
 
 private fun AchievementCounts.toDomain() = AchievementCountSummary(

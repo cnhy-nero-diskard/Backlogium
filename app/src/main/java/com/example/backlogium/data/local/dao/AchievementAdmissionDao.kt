@@ -35,31 +35,26 @@ interface AchievementAdmissionDao {
     suspend fun get(steamId: String, generation: Long, appId: Long): AchievementAdmissionWork?
 
     @Query(
-        "UPDATE achievement_admission_work SET attempts = attempts + 1 " +
+        "UPDATE achievement_admission_work SET attempts = attempts + 1, nextEligibleAt = :recoveryAt " +
             "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId " +
             "AND nextEligibleAt <= :now",
     )
-    suspend fun beginAttempt(steamId: String, generation: Long, appId: Long, now: Long): Int
-
-    @Query(
-        "UPDATE achievement_admission_work SET nextEligibleAt = :nextEligibleAt " +
-            "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId",
-    )
-    suspend fun defer(steamId: String, generation: Long, appId: Long, nextEligibleAt: Long)
+    suspend fun beginAttempt(steamId: String, generation: Long, appId: Long, now: Long, recoveryAt: Long): Int
 
     @Query(
         "UPDATE achievement_admission_work SET cataloguePending = :cataloguePending, " +
             "personalStatePending = :personalStatePending, " +
-            "globalPercentagesPending = :globalPercentagesPending " +
+            "globalPercentagesPending = :globalPercentagesPending, nextEligibleAt = :nextEligibleAt " +
             "WHERE steamId = :steamId AND accountGeneration = :generation AND appId = :appId",
     )
-    suspend fun updatePendingComponents(
+    suspend fun recordOutcome(
         steamId: String,
         generation: Long,
         appId: Long,
         cataloguePending: Boolean,
         personalStatePending: Boolean,
         globalPercentagesPending: Boolean,
+        nextEligibleAt: Long,
     ): Int
 
     @Query(

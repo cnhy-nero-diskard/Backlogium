@@ -696,23 +696,26 @@ class FamilySharedGameRepositoryTest {
             rows.values.filter { it.steamId == steamId && it.accountGeneration == generation && it.nextEligibleAt <= now }
                 .sortedWith(compareBy<AchievementAdmissionWork> { it.admittedAt }.thenBy { it.appId }).take(limit)
         override suspend fun get(steamId: String, generation: Long, appId: Long) = rows[Triple(steamId, generation, appId)]
-        override suspend fun beginAttempt(steamId: String, generation: Long, appId: Long, now: Long): Int {
+        override suspend fun beginAttempt(
+            steamId: String,
+            generation: Long,
+            appId: Long,
+            now: Long,
+            recoveryAt: Long,
+        ): Int {
             val key = Triple(steamId, generation, appId)
             val row = rows[key]?.takeIf { it.nextEligibleAt <= now } ?: return 0
-            rows[key] = row.copy(attempts = row.attempts + 1)
+            rows[key] = row.copy(attempts = row.attempts + 1, nextEligibleAt = recoveryAt)
             return 1
         }
-        override suspend fun defer(steamId: String, generation: Long, appId: Long, nextEligibleAt: Long) {
-            val key = Triple(steamId, generation, appId)
-            rows[key]?.let { rows[key] = it.copy(nextEligibleAt = nextEligibleAt) }
-        }
-        override suspend fun updatePendingComponents(
+        override suspend fun recordOutcome(
             steamId: String,
             generation: Long,
             appId: Long,
             cataloguePending: Boolean,
             personalStatePending: Boolean,
             globalPercentagesPending: Boolean,
+            nextEligibleAt: Long,
         ): Int {
             val key = Triple(steamId, generation, appId)
             val row = rows[key] ?: return 0
@@ -720,6 +723,7 @@ class FamilySharedGameRepositoryTest {
                 cataloguePending = cataloguePending,
                 personalStatePending = personalStatePending,
                 globalPercentagesPending = globalPercentagesPending,
+                nextEligibleAt = nextEligibleAt,
             )
             return 1
         }

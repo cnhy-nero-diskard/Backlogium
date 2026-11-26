@@ -34,6 +34,7 @@ class WorkManagerAchievementAdmissionScheduler @Inject constructor(
         if (delayMillis > 0L) {
             val wake = OneTimeWorkRequestBuilder<AchievementAdmissionWakeWorker>()
                 .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .setInputData(workDataOf(
                     AchievementAdmissionWorker.KEY_STEAM_ID to steamId,
                     AchievementAdmissionWorker.KEY_GENERATION to generation,
