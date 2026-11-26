@@ -255,6 +255,46 @@ class AchievementAdmissionWorkerTest {
     }
 
     @Test
+    fun laterPlayerRetryReopensRarityWorkAfterEarlierGlobalsSuccess() = runTest {
+        val generation = prepare()
+        seedAdmissions(1, generation)
+        baseSettings.setRuleConfig(com.example.backlogium.gamification.RuleConfig(levelBase = 1))
+        api.failOnceFor[1L] = unavailable503()
+
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val afterPlayerFailure = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+        assertTrue(afterPlayerFailure.personalStatePending)
+        assertFalse(afterPlayerFailure.globalPercentagesPending)
+        assertEquals(now + 60_000L, afterPlayerFailure.nextEligibleAt)
+        assertEquals(now, database.gameAchievementSyncDao().get(1L)?.globalPercentagesFetchedAt)
+
+        now = afterPlayerFailure.nextEligibleAt
+        api.failGlobalsOnceFor[1L] = tooManyRequests("120")
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        val afterGlobalFailure = database.achievementAdmissionDao().get(ACCOUNT, generation, 1L)!!
+        assertFalse(afterGlobalFailure.personalStatePending)
+        assertTrue(afterGlobalFailure.globalPercentagesPending)
+        assertEquals(now + 120_000L, afterGlobalFailure.nextEligibleAt)
+        assertTrue(database.achievementDao().getForGame(1L).single().unlocked)
+        assertNull(database.achievementDao().getForGame(1L).single().snapshotPercent)
+        assertEquals(0L, database.playerProfileDao().get()!!.totalXp)
+
+        now = afterGlobalFailure.nextEligibleAt
+        api.noStatsFor += 1L
+        assertTrue(worker(generation).doWork() is ListenableWorker.Result.Success)
+
+        assertEquals(0, database.achievementAdmissionDao().state(ACCOUNT, generation).pendingCount)
+        assertEquals(12.5, database.achievementDao().getForGame(1L).single().snapshotPercent!!, 0.0)
+        assertEquals(40L, database.playerProfileDao().get()!!.totalXp)
+        assertEquals(listOf(1L, 1L, 1L), api.playerCalls)
+        assertEquals(listOf(1L, 1L, 1L), api.globalCalls)
+        assertTrue(database.achievementWatchDao().getAll(ACCOUNT).all { it.payload == null })
+        assertTrue(database.achievementWatchDao().needingRecompute().isEmpty())
+    }
+
+    @Test
     fun cachedLockedDisplayPercentageIsNotFrozenIntoXpDuringAdmissionRetry() = runTest {
         val generation = prepare()
         seedAdmissions(1, generation)

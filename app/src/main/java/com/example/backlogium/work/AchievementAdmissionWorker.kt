@@ -103,9 +103,9 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                                             .filter { it.unlocked && !it.retired }
                                             .associate { it.apiName to it.snapshotPercent }
                                         merge().also { result ->
-                                            val afterXpInputs = database.achievementDao().getForGame(candidate.appId)
+                                            val afterXpRows = database.achievementDao().getForGame(candidate.appId)
                                                 .filter { it.unlocked && !it.retired }
-                                                .associate { it.apiName to it.snapshotPercent }
+                                            val afterXpInputs = afterXpRows.associate { it.apiName to it.snapshotPercent }
                                             recomputeNeeded = beforeXpInputs != afterXpInputs
                                             if (recomputeNeeded) {
                                                 database.achievementWatchDao().insert(AchievementWatchWork(
@@ -132,8 +132,12 @@ class AchievementAdmissionWorker @AssistedInject constructor(
                                                 (outcome.cataloguePending || outcome.catalogueObserved)
                                             val personalStatePending = candidate.personalStatePending && !personalStateAvailable &&
                                                 (outcome.personalStatePending || outcome.personalStateObserved)
-                                            val globalPercentagesPending = candidate.globalPercentagesPending && !globalPercentagesAvailable &&
-                                                (outcome.globalPercentagesPending || outcome.globalPercentagesObserved)
+                                            // Earlier global freshness does not resolve unlocks still missing snapshots after a retry.
+                                            val globalPercentagesPending =
+                                                (candidate.globalPercentagesPending && !globalPercentagesAvailable &&
+                                                    (outcome.globalPercentagesPending || outcome.globalPercentagesObserved)) ||
+                                                (afterXpRows.any { it.snapshotPercent == null } && outcome.retryableFailure &&
+                                                    !outcome.globalPercentagesObserved)
                                             val retryNeeded = outcome.retryableFailure ||
                                                 (cataloguePending && outcome.catalogueObserved) ||
                                                 (personalStatePending && outcome.personalStateObserved) ||
