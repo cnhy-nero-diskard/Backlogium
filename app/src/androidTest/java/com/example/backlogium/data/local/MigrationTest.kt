@@ -103,6 +103,9 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_45_46,
         BacklogiumDatabase.MIGRATION_46_47,
         BacklogiumDatabase.MIGRATION_47_48,
+        BacklogiumDatabase.MIGRATION_48_49,
+        BacklogiumDatabase.MIGRATION_49_50,
+        BacklogiumDatabase.MIGRATION_50_51,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -139,6 +142,59 @@ class MigrationTest {
             db.query("SELECT recomputeSource FROM achievement_watch_work").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("SYNC", cursor.getString(0))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun admissionComponentMigrationPreservesQueuedWorkAsOutstanding() {
+        val name = "migration-admission-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 49).apply {
+            execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)")
+            execSQL("INSERT INTO achievement_admission_work (steamId, accountGeneration, appId, admittedAt, attempts, nextEligibleAt) VALUES ('fixture', 1, 1, 10, 2, 20)")
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(name, 50, true, BacklogiumDatabase.MIGRATION_49_50).use { db ->
+            db.query("SELECT cataloguePending, personalStatePending, globalPercentagesPending FROM achievement_admission_work").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+                assertEquals(1, cursor.getInt(1))
+                assertEquals(1, cursor.getInt(2))
+            }
+        }
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun globalPercentageFreshnessMigrationPreservesExistingAchievementSyncState() {
+        val name = "migration-global-freshness-${System.nanoTime()}"
+        migrationTestHelper.createDatabase(name, 50).apply {
+            execSQL(
+                "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                    "lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+                    "VALUES (1, 'Fixture', '', 0, 0, 0, 0, 0, 0, 'STEAM_OWNED', 0)",
+            )
+            execSQL(
+                "INSERT INTO game_achievement_sync " +
+                    "(appId, playerStateFetchedAt, schemaFetchedAt, hasAchievements, checkedAt) " +
+                    "VALUES (1, 10, 20, 1, 30)",
+            )
+            close()
+        }
+        migrationTestHelper.runMigrationsAndValidate(
+            name, 51, true, BacklogiumDatabase.MIGRATION_50_51,
+        ).use { db ->
+            db.query(
+                "SELECT playerStateFetchedAt, schemaFetchedAt, hasAchievements, checkedAt, " +
+                    "globalPercentagesFetchedAt FROM game_achievement_sync WHERE appId = 1",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(10L, cursor.getLong(0))
+                assertEquals(20L, cursor.getLong(1))
+                assertEquals(1, cursor.getInt(2))
+                assertEquals(30L, cursor.getLong(3))
+                assertTrue(cursor.isNull(4))
             }
         }
         context.deleteDatabase(name)
@@ -1911,6 +1967,34 @@ class MigrationTest {
                     assertEquals("{}", it.getString(0))
                 }
                 db.query("SELECT * FROM library_poll_commits").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun v48ToV49StartsWithNoAdmissionBacklogAndKeepsTheLibrary() {
+        val databaseName = "migration-v48-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(databaseName, 48).use { db ->
+                db.execSQL(
+                    "INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, " +
+                        "lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) " +
+                        "VALUES (10, 'Existing', '', 0, 0, 0, 0, 1, 0, 'STEAM_OWNED', 0)",
+                )
+            }
+            migrationTestHelper.runMigrationsAndValidate(
+                databaseName, currentDatabaseVersion, true,
+                BacklogiumDatabase.MIGRATION_48_49,
+                BacklogiumDatabase.MIGRATION_49_50,
+                BacklogiumDatabase.MIGRATION_50_51,
+            ).use { db ->
+                db.query("SELECT name FROM games WHERE appId = 10").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals("Existing", it.getString(0))
+                }
+                db.query("SELECT * FROM achievement_admission_work").use { assertFalse(it.moveToFirst()) }
             }
         } finally {
             context.deleteDatabase(databaseName)

@@ -2,6 +2,7 @@ package com.example.backlogium.data.repo
 
 import androidx.room.Room
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.entity.CloudHistoricalBoundary
 import com.example.backlogium.data.local.entity.CloudHistoricalInterval
 import com.example.backlogium.data.local.entity.CloudHistoricalJournal
@@ -9,8 +10,10 @@ import com.example.backlogium.data.local.entity.CloudHistoricalOperation
 import com.example.backlogium.data.local.entity.CloudHistoricalStates
 import com.example.backlogium.data.local.entity.PendingCloudBoundary
 import com.example.backlogium.data.local.entity.PendingCloudInterval
+import com.example.backlogium.data.local.entity.Game
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -114,5 +117,18 @@ class AccountRoomResetCloudEvidenceTest {
         assertTrue(historicalDao.intervals(operation.operationId).isEmpty())
         assertNull(historicalDao.boundary(operation.operationId, CloudHistoricalStates.BOUNDARY_LAST_TRANSITION))
         assertNull(historicalDao.journal(operation.operationId))
+    }
+
+    @Test
+    fun accountResetDeletesPendingAchievementAdmissions() = runTest {
+        database.gameDao().upsert(Game(440L, "Game", "", 0, 0, 0))
+        database.achievementAdmissionDao().insert(
+            AchievementAdmissionWork("old", 1L, 440L, admittedAt = 100L),
+        )
+
+        AccountRoomReset(database).resetForAccountChange("new")
+
+        assertEquals(0, database.achievementAdmissionDao().state("old", 1L).pendingCount)
+        assertTrue(database.achievementAdmissionDao().pendingIdentities().isEmpty())
     }
 }

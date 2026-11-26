@@ -299,11 +299,12 @@ internal class FakeGameDao(games: List<Game>) : GameDao {
         store[appId]?.let { store[appId] = it.copy(firstSeenAt = firstSeenAt ?: it.firstSeenAt, lastPlayedAt = lastPlayedAt ?: it.lastPlayedAt, returnedToPlayAt = returnedToPlayAt ?: it.returnedToPlayAt) }
     }
 
-    override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) {
-        store.putIfAbsent(
+    override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long): Long {
+        val prior = store.putIfAbsent(
             appId,
             Game(appId, name, iconUrl, 0, 0, 0, lastSyncedAt = admittedAt, source = GameSource.FAMILY_SHARED),
         )
+        return if (prior == null) 1L else -1L
     }
 
     override suspend fun ownedGamesForDiffing(): List<Game> =

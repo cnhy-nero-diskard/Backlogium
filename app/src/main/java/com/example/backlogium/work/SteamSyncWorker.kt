@@ -13,12 +13,14 @@ import com.example.backlogium.data.diagnostics.SyncRunRecorder
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.RecoveryReadStatusStore
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.entity.LibraryPollCommit
 import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.repo.AchievementLibraryFetch
 import com.example.backlogium.data.repo.CloudPresencePlacementReader
 import com.example.backlogium.data.repo.readOrNull
@@ -200,6 +202,8 @@ class SteamSyncWorker @AssistedInject constructor(
     private val recoveryDerivedFinalizer: RecoveryDerivedFinalizer,
     private val recoveryPlacementReconciler: RecoveryPlacementReconcileUseCase,
     private val recoveryReadStatus: RecoveryReadStatusStore,
+    private val achievementAdmissionScheduler: AchievementAdmissionWorkScheduler,
+    private val achievementAdmissionDao: AchievementAdmissionDao,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
@@ -210,6 +214,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
     private data class RawCommitResult(
         val arrivedAppIds: Set<Long>,
+        val admittedAppIds: Set<Long>,
         val finalizationOperationId: String?,
         val creditedIncreaseAppIds: Set<Long>,
         val baselineEstablishedAppIds: Set<Long>,
@@ -286,11 +291,26 @@ class SteamSyncWorker @AssistedInject constructor(
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
             committed?.let { receipt ->
+                if (achievementAdmissionDao.hasPendingForCommit(
+                        steamId,
+                        checkNotNull(accountGeneration),
+                        receipt.committedAt,
+                    )
+                ) {
+                    // Retry the durable receipt with an unconditional append; recovery alone can
+                    // mistake a finishing drain for one that will observe the new admission.
+                    achievementAdmissionScheduler.enqueue(steamId, checkNotNull(accountGeneration))
+                }
+                achievementAdmissionScheduler.recoverPending()
                 examined = receipt.gameCount
                 updated = receipt.gameCount
                 outcome = SyncOutcome.SUCCESS
                 return committedResult(receipt.operationId)
             }
+
+            // This durable worker is the independent retry path for admission rows whose producer
+            // could not hand them to WorkManager.
+            achievementAdmissionScheduler.recoverPending()
 
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
@@ -538,6 +558,12 @@ class SteamSyncWorker @AssistedInject constructor(
                 if (rawCommit.arrivedAppIds.isNotEmpty()) {
                     runCatching { settings.setAcquiredGames(rawCommit.arrivedAppIds, now) }
                 }
+                // Append for admissions committed by this poll even if an older drain is just
+                // finishing its empty-queue check. Recovery remains the fallback for missed wakes.
+                if (rawCommit.admittedAppIds.isNotEmpty()) {
+                    achievementAdmissionScheduler.enqueue(steamId, checkNotNull(accountGeneration))
+                }
+                achievementAdmissionScheduler.recoverPending()
                 runCatching {
                     recoveryReadStatus.successfulRead(
                         account = steamId,
@@ -643,6 +669,7 @@ class SteamSyncWorker @AssistedInject constructor(
             personaName = admittedIdentity.personaName, avatarUrl = admittedIdentity.avatarUrl,
             storeRegion = admittedIdentity.storeRegion,
         )
+        val gameIdsBeforeCommit = gameDao.allAppIds().toSet()
         // A shared game the player has since bought converts before the diff reads its baseline,
         // so the poll that first reports it as owned already sees the fresh baseline and produces
         // no session from a lifetime total that was earned while borrowing.
@@ -699,6 +726,7 @@ class SteamSyncWorker @AssistedInject constructor(
         committed.clockRollbacks.forEach { scope.recordClockRollback() }
 
         val arrivedAppIds = mutableSetOf<Long>()
+        val admissionAppIds = mutableSetOf<Long>()
         // Recency is only stamped for games whose cumulative reading was trusted above: a game
         // Steam reported nothing usable for was never committed, so stamping an arrival or recency
         // on it would announce a row that does not exist and could never be diffed.
@@ -717,7 +745,10 @@ class SteamSyncWorker @AssistedInject constructor(
                 observedPlayAt = reportedPlayAt,
                 now = now,
             )
-            if (recency.firstSeenAt != null) arrivedAppIds += dto.appid
+            if (recency.firstSeenAt != null) {
+                arrivedAppIds += dto.appid
+                if (!isLibraryBaseline && dto.appid !in gameIdsBeforeCommit) admissionAppIds += dto.appid
+            }
             gameDao.updateRecencyFields(
                 appId = dto.appid,
                 firstSeenAt = recency.firstSeenAt,
@@ -748,6 +779,17 @@ class SteamSyncWorker @AssistedInject constructor(
         )
         profileDao.updateSyncStatus(lastSyncAt = now, lastSyncError = null)
 
+        if (admissionAppIds.isNotEmpty()) {
+            database.achievementAdmissionDao().insertAll(admissionAppIds.map { appId ->
+                AchievementAdmissionWork(
+                    steamId = steamId,
+                    accountGeneration = checkNotNull(accountGeneration),
+                    appId = appId,
+                    admittedAt = now,
+                )
+            })
+        }
+
         // This is the only achievement write path for an inline poll, and it is deliberately
         // called while the same transaction still owns the raw commit.
         achievementRepository.applyRefreshes(achievementFetch.refreshes)
@@ -757,6 +799,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
         return RawCommitResult(
             arrivedAppIds = arrivedAppIds,
+            admittedAppIds = admissionAppIds,
             finalizationOperationId = committed.finalizationOperationId,
             creditedIncreaseAppIds = committed.playedDeltaByAppId
                 .filterValues { it > 0 }

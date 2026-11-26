@@ -33,6 +33,9 @@ import com.example.backlogium.domain.SmartCollectionAchievementSignals
 import com.example.backlogium.domain.SmartCollectionGame
 import com.example.backlogium.domain.SmartCollections
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.gamification.AchievementInput
+import com.example.backlogium.gamification.Gamification
+import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -543,6 +546,108 @@ class AchievementRepositoryTest {
         assertEquals(20L, stored.fetchedAt)
     }
 
+    @Test
+    fun `cached display percentage does not become the first unlock snapshot`() = runTest {
+        val achievementDao = FakeAchievementDao(listOf(
+            Achievement(appId = 1L, apiName = "ACH", unlocked = false, globalPercent = 1.0, fetchedAt = 5L),
+        ))
+        val repo = repository(FakeSteamApi(), achievementDao = achievementDao)
+
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 10L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 1, unlocktime = 2L)),
+            globalPercentByName = emptyMap(),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+        )))
+
+        val awaitingFreshGlobal = achievementDao.row(1L, "ACH")!!
+        assertTrue(awaitingFreshGlobal.unlocked)
+        assertEquals(1.0, awaitingFreshGlobal.globalPercent!!, 0.0)
+        assertNull(awaitingFreshGlobal.snapshotPercent)
+
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 20L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 1, unlocktime = 2L)),
+            globalPercentByName = mapOf("ACH" to 12.5),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+            globalPercentagesLoaded = true,
+        )))
+
+        val stored = achievementDao.row(1L, "ACH")!!
+        assertEquals(12.5, stored.globalPercent!!, 0.0)
+        assertEquals(12.5, stored.snapshotPercent!!, 0.0)
+        assertEquals(40L, Gamification.achievementXp(
+            listOf(AchievementInput("ACH", unlocked = true, globalUnlockPercent = stored.snapshotPercent)),
+            RuleConfig(),
+        ))
+    }
+
+    @Test
+    fun `older global evidence survives newer player state but cannot overwrite newer globals`() = runTest {
+        val achievementDao = FakeAchievementDao(listOf(
+            Achievement(appId = 1L, apiName = "ACH", unlocked = false, fetchedAt = 0L),
+        ))
+        val syncDao = FakeGameAchievementSyncDao()
+        syncDao.upsert(syncRow(appId = 1L, playerStateFetchedAt = 0L))
+        val repo = repository(FakeSteamApi(), achievementDao = achievementDao, syncDao = syncDao)
+
+        // Newer player-only observation commits first and observes the first unlock.
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 20L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 1, unlocktime = 2L)),
+            globalPercentByName = emptyMap(),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+        )))
+        // The older response's personal portion is stale, but its independent global evidence is not.
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 10L,
+            achievements = listOf(PlayerAchievementDto("ACH", achieved = 1, unlocktime = 2L)),
+            globalPercentByName = mapOf("ACH" to 5.0),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+            globalPercentagesLoaded = true,
+        )))
+
+        val afterOlderGlobals = achievementDao.row(1L, "ACH")!!
+        assertTrue(afterOlderGlobals.unlocked)
+        assertEquals(20L, afterOlderGlobals.fetchedAt)
+        assertEquals(5.0, afterOlderGlobals.globalPercent!!, 0.0)
+        assertEquals(5.0, afterOlderGlobals.snapshotPercent!!, 0.0)
+        assertEquals(10L, syncDao.get(1L)?.globalPercentagesFetchedAt)
+
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 30L,
+            achievements = null,
+            globalPercentByName = mapOf("ACH" to 3.0),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+            globalPercentagesLoaded = true,
+        )))
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1L,
+            fetchedAt = 25L,
+            achievements = null,
+            globalPercentByName = mapOf("ACH" to 2.0),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+            globalPercentagesLoaded = true,
+        )))
+
+        val afterOutOfOrderGlobals = achievementDao.row(1L, "ACH")!!
+        assertEquals(3.0, afterOutOfOrderGlobals.globalPercent!!, 0.0)
+        assertEquals(5.0, afterOutOfOrderGlobals.snapshotPercent!!, 0.0)
+        assertEquals(30L, syncDao.get(1L)?.globalPercentagesFetchedAt)
+        assertEquals(20L, syncDao.get(1L)?.playerStateFetchedAt)
+    }
+
     /**
      * fix-shared-game-achievement-visibility: [AchievementRepository.refreshOne] exists precisely
      * because tier selection would otherwise exclude a family-shared game with zero locally
@@ -905,7 +1010,7 @@ class AchievementRepositoryTest {
         override suspend fun decrementImportedBalanceIfEnough(appId: Long, minutes: Int): Int = error("not used")
         override suspend fun restoreImportedBalanceDelta(appId: Long, minutes: Int): Int = error("not used")
         override suspend fun setRecencyFromBackup(appId: Long, firstSeenAt: Long?, lastPlayedAt: Long?, returnedToPlayAt: Long?) = error("not used")
-        override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long) = error("not used")
+        override suspend fun insertSharedGameIfMissing(appId: Long, name: String, iconUrl: String, admittedAt: Long): Long = error("not used")
         override suspend fun ownedGamesForDiffing(): List<Game> = games.filter { it.source == GameSource.STEAM_OWNED }
         override suspend fun sharedGames(): List<Game> = games.filter { it.source == GameSource.FAMILY_SHARED }
         override suspend fun convertSharedToOwned(appId: Long, playtimeForever: Int, playtime2Weeks: Int, convertedAt: Long) = error("not used")

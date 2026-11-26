@@ -126,7 +126,7 @@ interface GameDao {
         name: String,
         iconUrl: String,
         admittedAt: Long,
-    )
+    ): Long
 
     /**
      * The playtime-diffing scope: only games for which Steam reports playtime. Feeding

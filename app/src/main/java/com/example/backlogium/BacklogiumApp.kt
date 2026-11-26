@@ -87,6 +87,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
     lateinit var syncScheduler: SyncScheduler
 
     @Inject
+    lateinit var achievementAdmissionScheduler: com.example.backlogium.work.AchievementAdmissionWorkScheduler
+
+    @Inject
     lateinit var steamAssetInterceptor: SteamAssetInterceptor
 
     @Inject
@@ -203,6 +206,9 @@ class BacklogiumApp : Application(), Configuration.Provider, ImageLoaderFactory 
             }.onFailure { Timber.e(it, "Playtime recovery startup resume failed; sync remains unscheduled") }
                 .isSuccess
             if (!recoveryReady) return@launch
+
+            runCatching { achievementAdmissionScheduler.recoverPending() }
+                .onFailure { Timber.e(it, "Achievement admission recovery remains pending") }
 
             // Routine work must not be exposed until promotion/removal recovery has
             // succeeded: a job admitted against the pre-promotion generation before recovery

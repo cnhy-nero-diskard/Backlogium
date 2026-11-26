@@ -4,11 +4,14 @@ import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.AchievementAdmissionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.SessionDao
 import com.example.backlogium.data.local.dao.PlayerProfileDao
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.AchievementAdmissionWork
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.data.remote.SteamApi
 import com.example.backlogium.domain.AdmissionDecision
@@ -21,6 +24,7 @@ import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.RecomputeSource
+import com.example.backlogium.work.AchievementAdmissionWorkScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -87,6 +91,9 @@ class FamilySharedGameRepository @Inject constructor(
     private val gamificationUpdater: GamificationUpdater,
     private val derivedStateWrites: DerivedStateWriteCoordinator,
     private val achievementRepository: AchievementRepository,
+    private val admissionDao: AchievementAdmissionDao,
+    private val admissionScheduler: AchievementAdmissionWorkScheduler,
+    private val accountChangeMarker: AccountChangeMarkerStore,
 ) {
 
     /** Removed games, newest first. Empty when nothing has been removed, so Settings can hide. */
@@ -314,18 +321,32 @@ class FamilySharedGameRepository @Inject constructor(
         observedAt: Long,
         notificationAccount: String? = null,
     ): AdmissionDecision {
+        var generation: Long? = null
         val decision = transaction.run {
             // Store verification may return after an account reset, a sync, or a removal.
             if (notificationAccount != null) {
+                if (accountChangeMarker.pendingSteamId() != null) return@run AdmissionDecision.AwaitingSync
                 if (profileDao.get()?.steamId != notificationAccount) return@run AdmissionDecision.AwaitingSync
                 if (gameDao.getById(appId) != null) return@run AdmissionDecision.AlreadyTracked
                 if (excludedDao.isExcluded(appId)) return@run AdmissionDecision.Excluded
+                generation = accountChangeMarker.generation()
             }
             // Steam only reports icon hashes for owned games. Shared games use derived artwork.
-            gameDao.insertSharedGameIfMissing(appId, info.name, "", observedAt)
+            if (gameDao.insertSharedGameIfMissing(appId, info.name, "", observedAt) == -1L) {
+                return@run AdmissionDecision.AlreadyTracked
+            }
+            if (notificationAccount != null) {
+                val admittedGeneration = checkNotNull(generation)
+                admissionDao.insert(
+                    AchievementAdmissionWork(notificationAccount, admittedGeneration, appId, observedAt),
+                )
+            }
             AdmissionDecision.Admit
         }
         if (decision != AdmissionDecision.Admit) return decision
+        if (notificationAccount != null) {
+            runCatching { admissionScheduler.enqueue(notificationAccount, checkNotNull(generation)) }
+        }
         // Best-effort: a genre-cache write failure must not undo an otherwise-valid admission,
         // and background enrichment would resolve them later anyway.
         runCatching { genres.storeGenres(appId, info.genres, info.categories) }

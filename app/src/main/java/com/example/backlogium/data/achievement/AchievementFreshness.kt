@@ -12,8 +12,8 @@ import com.example.backlogium.domain.GameSource
  * - COLD: played at some point, but not hot or warm
  * - NEVER: no recorded playtime (`playtimeForever == 0`)
  *
- * Inline sync refreshes hot + warm games, plus a bounded number of cold/never games that have no
- * stored achievement data at all. COLD games are otherwise deferred to the reconciliation pass.
+ * Inline sync refreshes hot + warm games, plus a bounded number of cold games whose personal
+ * achievement state has not been fetched. Other COLD games are deferred to the reconciliation pass.
  * NEVER games are never fetched.
  *
  * That NEVER rule assumes `playtimeForever` is Steam's own figure, which is true for an owned
@@ -61,7 +61,8 @@ object AchievementFreshness {
      *        freshness gating (tiering uses play evidence, not wall-clock staleness)
      * @param ownedGames every owned game with its playtime signals
      * @param playtimeDeltaByAppId games whose `playtimeForever` increased since the last sync
-     * @param metadataByAppId stored per-game achievement sync metadata; absence means no data
+     * @param metadataByAppId stored per-game achievement sync metadata; a missing player-state
+     *        timestamp means personal achievement data has not been fetched
      * @return tier classifications and the inline selection
      */
     fun selectByTier(
@@ -86,8 +87,9 @@ object AchievementFreshness {
                 }
                 game.playtimeForever > 0 || game.source == GameSource.FAMILY_SHARED -> {
                     cold.add(game.appId)
-                    if (metadataByAppId[game.appId] == null) {
-                        missingDataEligible.add(MissingDataCandidate(game.appId, null))
+                    val playerStateFetchedAt = metadataByAppId[game.appId]?.playerStateFetchedAt
+                    if (playerStateFetchedAt == null) {
+                        missingDataEligible.add(MissingDataCandidate(game.appId, playerStateFetchedAt))
                     }
                 }
                 else -> {
