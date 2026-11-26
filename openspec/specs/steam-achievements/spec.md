@@ -34,7 +34,7 @@ has played them, rather than refreshing the entire library on a single wall-cloc
 The system SHALL refresh a game's per-player achievement state when that game shows a playtime
 increase in the current sync, SHALL refresh games the player has played recently on every sync, and
 SHALL refresh the remainder automatically only during an infrequent reconciliation pass. Targeted detail hydration and confirmed active-game watching SHALL operate independently of this automatic tier selection. The system SHALL NOT
-automatically fetch achievements for an owned game with no recorded playtime during routine sync or reconciliation. Opening that game's detail or watching confirmed active play SHALL permit a targeted fetch regardless of recorded playtime. For a family-shared game, whose
+automatically fetch achievements for an owned game with no recorded playtime during routine sync or reconciliation solely because it is present in the library. Committed new admissions SHALL use the targeted admission policy. Opening that game's detail or watching confirmed active play SHALL permit a targeted fetch regardless of recorded playtime. For a family-shared game, whose
 locally tracked playtime reflects only what the app itself observed and structurally undercounts
 real play, the absence of locally tracked playtime SHALL NOT by itself exclude it from achievement
 fetching: a family-shared game becomes eligible for a one-time fetch immediately upon admission,
@@ -52,7 +52,7 @@ data.
   after the playtime increase is not missed
 
 #### Scenario: Game not played recently
-- **WHEN** an owned game shows neither a playtime increase nor recent play activity
+- **WHEN** an owned game shows neither a playtime increase nor recent play activity and is outside the targeted admission policy
 - **THEN** it is not refreshed during that sync and is left to the reconciliation pass
 
 #### Scenario: Never-played game
@@ -396,3 +396,66 @@ A refresh SHALL capture the configured account and selected game before fetching
 #### Scenario: Game is hidden during fetch
 - **WHEN** the refreshed game becomes hidden or is explicitly removed before commit
 - **THEN** the action does not restore its visibility or write a stale detail outcome
+
+### Requirement: New admissions receive bounded achievement hydration
+A committed new owned-game admission after initial library confirmation SHALL become eligible for one targeted achievement hydration cycle regardless of recorded playtime. Automatic shared-game admissions SHALL receive the same bounded scheduling guarantee. Manual shared admission SHALL continue to use its existing targeted fetch.
+
+#### Scenario: New owned game with zero playtime
+- **WHEN** a confirmed library poll commits a genuinely new game after the initial baseline
+- **THEN** the game becomes eligible promptly after the library commit without requiring a detail visit or future play
+
+#### Scenario: Non-admission writes
+- **WHEN** initial setup, restore, historical correction, reappearance of an already-known game, or shared-to-owned conversion populates or changes a library row
+- **THEN** the operation does not create a new admission hydration cycle
+
+#### Scenario: Large set of new games
+- **WHEN** more admissions are eligible than one drain can process
+- **THEN** a bounded subset is processed in admission order and the remaining valid admissions stay eligible for automatic continuation
+
+### Requirement: Admission hydration drains eligible backlog durably
+The system SHALL process admission hydration in serial executions that each respect the configured per-run cap. When eligible admissions remain after a run exhausts its cap, it SHALL durably schedule a network-constrained follow-on execution under one unique work chain for the current account/reset identity. The chain SHALL continue automatically until no admission is currently eligible, without requiring another app start, library sync, or admission.
+
+#### Scenario: Admission tail progresses without another trigger
+- **WHEN** one commit adds more than three times the configured per-run cap and the first bounded execution completes, with no later app start, library sync, or admission
+- **THEN** durable follow-on executions process every still-eligible admission in FIFO order, each within the per-run cap
+
+#### Scenario: Process dies between bounded executions
+- **WHEN** the process dies after one chunk completes but before the backlog is empty
+- **THEN** pending admissions and their continuation remain durable and resume without a new app start, sync, or admission
+
+### Requirement: Admission continuation is serialized and account-scoped
+Concurrent admission wakes SHALL NOT run parallel drains or cancel the only pending continuation. A wake racing with the final empty-queue check SHALL NOT be lost. Each execution SHALL validate its captured account/reset identity before dispatch and merge; account replacement SHALL prevent old-identity work from continuing against the new account.
+
+#### Scenario: Concurrent wakes share one serialized drain
+- **WHEN** multiple admission wakes arrive while a drain is running or a continuation is pending
+- **THEN** they are coalesced or serialized on the unique chain, with no parallel drains and no lost continuation
+
+#### Scenario: Account replacement invalidates old continuation
+- **WHEN** the configured account or reset identity changes while an admission continuation is pending
+- **THEN** old-identity work does not fetch or merge for the replacement account, and any new-account work remains separately scoped
+
+### Requirement: Admission retries honor the next eligible time
+Retryable admissions SHALL remain durable and have follow-on work scheduled for their next eligible time, including any provider Retry-After deadline. No request SHALL be made before that time; deferred rows remain part of the admission cycle.
+
+#### Scenario: Offline or Retry-After defers continuation
+- **WHEN** the device is offline or Steam supplies a Retry-After deadline for a pending admission
+- **THEN** the constrained continuation waits until connectivity and the next eligible time, while preserving the admission and last-good data
+
+### Requirement: Admission hydration preserves account and achievement evidence
+Admission work SHALL survive restart, share per-game coordination with other achievement refresh paths, and respect request limits and bounded backoff. It SHALL preserve last-good data and distinguish confirmed empty, unavailable, and failed observations.
+
+#### Scenario: Concurrent fetch succeeds
+- **WHEN** an in-flight detail, watch, or sync fetch satisfies the admission hydration for the same account and app
+- **THEN** one authoritative result is merged and redundant admission work is retired without duplicating XP or events
+
+#### Scenario: Transient failure or throttling
+- **WHEN** Steam temporarily fails or asks the client to retry later
+- **THEN** the previous data remains visible and retry follows the bounded schedule and provider wait
+
+#### Scenario: Obsolete target
+- **WHEN** the game is hidden, removed, or no longer belongs to the initiating account before completion
+- **THEN** no stale result is committed and no new admission requests are made for that obsolete work
+
+#### Scenario: First observation
+- **WHEN** the admission fetch returns personal progress already earned before Backlogium observed the game
+- **THEN** achievement data is persisted according to existing rarity rules and the observation does not replay old unlock notifications
