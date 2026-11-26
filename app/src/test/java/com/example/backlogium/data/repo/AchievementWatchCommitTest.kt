@@ -96,6 +96,44 @@ class AchievementWatchCommitTest {
         assertEquals(0.0, db.achievementDao().getOne(1, "first")!!.snapshotPercent!!, 0.0)
     }
 
+    @Test fun staleWatchRarityDefersAfterANewerGlobalOnlyHydration() = runBlocking {
+        var baseline: Set<String>? = null
+        suspend fun observe(refresh: AchievementRefresh): AchievementRepository.WatchCommit {
+            val result = commit(refresh, baseline)
+            if (result is AchievementRepository.WatchCommit.Committed) baseline = result.unlocked
+            return result
+        }
+
+        assertTrue(observe(reading(1, false)) is AchievementRepository.WatchCommit.Committed)
+        assertEquals(emptySet<String>(), baseline)
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 1,
+            fetchedAt = 3,
+            achievements = null,
+            globalPercentByName = mapOf("first" to 7.0),
+            schemaByName = emptyMap(),
+            schemaFetchedAt = null,
+            globalPercentagesLoaded = true,
+        )))
+
+        val deferred = observe(reading(2, true, 5.0))
+
+        assertEquals(AchievementRepository.WatchCommit.DeferredRarity, deferred)
+        assertEquals(emptySet<String>(), baseline)
+        assertFalse(db.achievementDao().getOne(1, "first")!!.unlocked)
+        assertEquals(7.0, db.achievementDao().getOne(1, "first")!!.globalPercent!!, 0.0)
+        assertNull(db.achievementDao().getOne(1, "first")!!.snapshotPercent)
+        assertEquals(1L, db.gameAchievementSyncDao().get(1)!!.playerStateFetchedAt)
+        assertEquals(3L, db.gameAchievementSyncDao().get(1)!!.globalPercentagesFetchedAt)
+        assertTrue(db.achievementWatchDao().getAll(account).isEmpty())
+
+        val recovered = observe(reading(4, true, 6.0)) as AchievementRepository.WatchCommit.Committed
+        assertEquals(setOf("first"), baseline)
+        assertNotNull(recovered.eventId)
+        assertEquals(6.0, db.achievementDao().getOne(1, "first")!!.snapshotPercent!!, 0.0)
+        assertEquals(1, db.achievementWatchDao().getAll(account).size)
+    }
+
     @Test fun firstReadAndNullRepairProduceOnlyRecoverableWork() = runBlocking {
         db.achievementDao().upsertAll(listOf(Achievement(1, "first", unlocked = true, fetchedAt = 0)))
         assertEquals(AchievementRepository.WatchCommit.DeferredRarity, commit(reading(1, true), null))

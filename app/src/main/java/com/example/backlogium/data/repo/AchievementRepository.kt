@@ -741,9 +741,12 @@ class AchievementRepository @Inject constructor(
                 ) return@withLock WatchCommit.Stale
                 // An empty response contradicting real rows is not a usable baseline.
                 if (incoming.isEmpty() && previous.isNotEmpty()) return@withLock WatchCommit.Stale
+                val globalPercentagesFresh = hasFreshGlobalPercentages(refresh, metadata)
+                val acceptedGlobalPercentByName =
+                    refresh.globalPercentByName.takeIf { globalPercentagesFresh }.orEmpty()
                 val byName = previous.associateBy { it.apiName }
                 if (incoming.any { it.achieved != 0 && byName[it.apiName]?.snapshotPercent == null &&
-                        refresh.globalPercentByName[it.apiName]?.let { percent -> percent.isFinite() && percent in 0.0..100.0 } != true
+                        acceptedGlobalPercentByName[it.apiName]?.let { percent -> percent.isFinite() && percent in 0.0..100.0 } != true
                     }
                 ) return@withLock WatchCommit.DeferredRarity
                 val unlocked = incoming.filter { it.achieved != 0 }.mapTo(sortedSetOf()) { it.apiName }
@@ -1118,9 +1121,7 @@ class AchievementRepository @Inject constructor(
         val catalogue = db?.achievementCatalogueDao()
         val previousRows = achievementDao.getForGame(refresh.appId)
         val metadata = gameAchievementSyncDao.get(refresh.appId)
-        val globalObservationAvailable = refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty()
-        val globalPercentagesFresh = globalObservationAvailable &&
-            (metadata?.globalPercentagesFetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
+        val globalPercentagesFresh = hasFreshGlobalPercentages(refresh, metadata)
         val freshGlobalPercentByName = refresh.globalPercentByName.takeIf { globalPercentagesFresh }.orEmpty()
         val previousCatalogue = catalogue?.entries(refresh.appId).orEmpty().associateBy { it.apiName }
         if (catalogue != null && refresh.schemaLoaded &&
@@ -1213,6 +1214,12 @@ class AchievementRepository @Inject constructor(
         )
         return true
     }
+
+    private fun hasFreshGlobalPercentages(
+        refresh: AchievementRefresh,
+        metadata: GameAchievementSync?,
+    ): Boolean = (refresh.globalPercentagesLoaded || refresh.globalPercentByName.isNotEmpty()) &&
+        (metadata?.globalPercentagesFetchedAt ?: Long.MIN_VALUE) <= refresh.fetchedAt
 
     companion object {
         /** How long a fetched achievement schema remains valid; schema changes only when patched by the developer. */

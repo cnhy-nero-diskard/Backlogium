@@ -166,6 +166,32 @@ class AchievementFreshnessTest {
         assertEquals(emptyList<Long>(), result.missingDataOverride)
     }
 
+    @Test
+    fun `metadata without personal state stays missing while confirmed empty state is complete`() {
+        val games = listOf(
+            sharedGame(1, forever = 0),
+            ownedGame(2, forever = 100, weeks = 0),
+            sharedGame(3, forever = 0),
+            ownedGame(4, forever = 0, weeks = 0),
+        )
+        val metadata = mapOf(
+            // A global-only sync row still has no playerStateFetchedAt.
+            1L to AchievementFreshness.SyncMetadata(1, playerStateFetchedAt = null),
+            // A catalogue-only sync row is also missing personal state.
+            2L to AchievementFreshness.SyncMetadata(2, playerStateFetchedAt = null, schemaFetchedAt = 123),
+            // A timestamp records a successful, possibly empty, personal response.
+            3L to metadata(3, playerStateFetchedAt = 500),
+            // Metadata must not make a never-played owned game eligible.
+            4L to AchievementFreshness.SyncMetadata(4, playerStateFetchedAt = null),
+        )
+
+        val result = AchievementFreshness.selectByTier(0L, games, emptyMap(), metadata)
+
+        assertEquals(listOf(1L, 2L, 3L), result.cold)
+        assertEquals(listOf(4L), result.never)
+        assertEquals(listOf(1L, 2L), result.missingDataOverride)
+    }
+
     private fun ownedGame(
         appId: Long,
         forever: Long,
