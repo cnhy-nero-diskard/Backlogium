@@ -1129,6 +1129,7 @@ data class CollectionFormActions(
     val onAddGame: (Long) -> Unit = {},
     val onSave: () -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onRetryDelete: () -> Unit = {},
 )
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
@@ -1154,6 +1155,7 @@ private fun CollectionForm(
             onAddGame = viewModel::addGame,
             onSave = viewModel::save,
             onRefresh = viewModel::refreshEditor,
+            onRetryDelete = viewModel::delete,
         ),
     )
 }
@@ -1203,8 +1205,14 @@ fun CollectionFormContent(
                 item(key = "save-error") {
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                         Text(stringResource(error), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
-                            Text("Refresh editor")
+                        if (error == R.string.collection_delete_failed) {
+                            TextButton(onClick = actions.onRetryDelete, enabled = !state.saving) {
+                                Text(stringResource(R.string.collection_retry_delete))
+                            }
+                        } else {
+                            TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
+                                Text("Refresh editor")
+                            }
                         }
                     }
                 }

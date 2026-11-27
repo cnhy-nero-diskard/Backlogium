@@ -123,7 +123,7 @@ class SetupViewModel @Inject constructor(
         if (!run.loaded || run.running) return
         selection.value = source.stages.filter {
             it.isAvailable && when (run.outcomes[it.id]) {
-                is SetupOutcome.Failed, SetupOutcome.Cancelled, SetupOutcome.RecoveryRequired -> true
+                is SetupOutcome.Failed, SetupOutcome.Partial, SetupOutcome.Cancelled, SetupOutcome.RecoveryRequired -> true
                 else -> false
             }
         }.map { it.id }.toSet()

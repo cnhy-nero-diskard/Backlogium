@@ -126,6 +126,7 @@ private fun StageRow(
 
             val reason = when (val outcome = stage.outcome) {
                 is SetupOutcome.Failed -> outcome.reason
+                SetupOutcome.Partial -> "The library was saved, but some achievement updates did not finish."
                 SetupOutcome.Cancelled -> "Cancelled before it finished."
                 SetupOutcome.RecoveryRequired -> "The previous request could not be found. Retry this step."
                 else -> null
@@ -183,6 +184,13 @@ private fun OutcomeBadge(stage: SetupStageUi) {
             TablerIcons.CircleCheck,
             contentDescription = "Done",
             tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+
+        SetupOutcome.Partial -> Icon(
+            TablerIcons.AlertCircle,
+            contentDescription = "Partially complete",
+            tint = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.size(20.dp),
         )
 

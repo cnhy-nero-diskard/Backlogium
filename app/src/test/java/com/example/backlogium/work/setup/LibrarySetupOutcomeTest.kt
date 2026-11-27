@@ -3,6 +3,7 @@ package com.example.backlogium.work.setup
 import androidx.work.Data
 import androidx.work.workDataOf
 import com.example.backlogium.work.SteamSyncWorker
+import com.example.backlogium.work.OP_PARTIAL
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -23,6 +24,14 @@ class LibrarySetupOutcomeTest {
     @Test
     fun successfulSnapshotIncludingConfirmedEmptyLibraryHasNoSetupError() {
         assertEquals(SetupOutcome.Succeeded, librarySetupOutcome(committed))
+    }
+
+    @Test
+    fun committedPartialRefreshIsDistinctFromFailureAndFullSuccess() {
+        assertEquals(
+            SetupOutcome.Partial,
+            librarySetupOutcome(Data.Builder().putAll(committed).putBoolean(OP_PARTIAL, true).build()),
+        )
     }
 
     @Test

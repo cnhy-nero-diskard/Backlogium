@@ -12,6 +12,7 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import androidx.work.WorkManager
 import androidx.work.WorkInfo
+import androidx.work.workDataOf
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.CoroutineWorker
@@ -201,6 +202,23 @@ class WorkStageRunnerTest {
     }
 
     @Test
+    fun recoveryPreservesACommittedPartialLibraryResult() = runTest {
+        val request = OneTimeWorkRequestBuilder<PartialLibrarySetupWorker>().build()
+        workManager.enqueueUniqueWork("partial-library", ExistingWorkPolicy.KEEP, request).await()
+        workManager.getWorkInfoByIdFlow(request.id).first { it?.state?.isFinished == true }
+        val runner = WorkStageRunner(
+            workManager = workManager,
+            uniqueWorkName = "partial-library",
+            trigger = {},
+            progressOf = { null },
+            failureReason = REASON,
+            successOutcome = ::librarySetupOutcome,
+        )
+
+        assertEquals(SetupOutcome.Partial, runner.recover(request.id.toString()) {})
+    }
+
+    @Test
     fun queuedRetryCanCompleteWithoutBecomingAFailedSetupStage() = runTest {
         val request = OneTimeWorkRequestBuilder<RetryOnceSetupWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build())
@@ -274,4 +292,13 @@ class RetryOnceSetupWorker(context: Context, params: WorkerParameters) : Worker(
 
 class UnreadableSetupWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result = Result.success(androidx.work.workDataOf("reason" to "Library is private"))
+}
+
+class PartialLibrarySetupWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
+    override fun doWork(): Result = Result.success(workDataOf(
+        com.example.backlogium.work.SteamSyncWorker.KEY_POLL_RESULT to
+            com.example.backlogium.work.SteamSyncWorker.POLL_COMMITTED,
+        com.example.backlogium.work.SteamSyncWorker.KEY_POLL_OPERATION to "committed-poll",
+        com.example.backlogium.work.OP_PARTIAL to true,
+    ))
 }

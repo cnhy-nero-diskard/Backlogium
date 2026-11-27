@@ -84,9 +84,10 @@ abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
                                 darkTheme = dark))
                         }
                     } else if (scene.startsWith("setup")) {
-                        val operation = OperationProgress("library", OperationStatus.RUNNING,
+                        val operation = OperationProgress("library-execution", OperationStatus.RUNNING,
                             if (scene == "setup-fetching") OperationPhase.FETCHING_LIBRARY else OperationPhase.ACHIEVEMENTS,
-                            if (scene == "setup-fetching") null else OperationCounts(3, 8, 0, 1))
+                            if (scene == "setup-fetching") null else OperationCounts(3, 8, 0, 1),
+                            workId = "library")
                         val stage = fakeStage(SetupStageRegistry.STAGE_LIBRARY_SYNC).copy(
                             title = "Sync your Steam library", detail = "Fetches your games and playtime.")
                         val run = SetupRunState(loaded = true, running = true, pending = setOf(stage.id),

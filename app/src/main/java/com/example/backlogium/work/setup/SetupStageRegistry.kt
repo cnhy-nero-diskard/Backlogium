@@ -121,7 +121,11 @@ internal fun librarySetupOutcome(data: androidx.work.Data): SetupOutcome =
         ?: if (data.getString(SteamSyncWorker.KEY_POLL_RESULT) == SteamSyncWorker.POLL_COMMITTED &&
             data.getString(SteamSyncWorker.KEY_POLL_OPERATION) != null
         ) {
-            SetupOutcome.Succeeded
+            if (data.getBoolean(com.example.backlogium.work.OP_PARTIAL, false)) {
+                SetupOutcome.Partial
+            } else {
+                SetupOutcome.Succeeded
+            }
         } else {
             SetupOutcome.Failed("Library sync did not confirm a snapshot. Retry this step.")
         }

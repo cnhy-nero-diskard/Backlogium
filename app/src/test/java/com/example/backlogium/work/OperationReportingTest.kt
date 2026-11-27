@@ -41,6 +41,17 @@ class OperationReportingTest {
         assertNull(operationProgress(info(WorkInfo.State.RUNNING, mismatchedTag), 3))
     }
 
+    @Test fun `execution identity retains its WorkManager request identity`() {
+        val executionId = "3:execution"
+        val progress = operationProgress(info(
+            WorkInfo.State.RUNNING,
+            operationData(id.toString(), 3, OperationPhase.ACHIEVEMENTS, executionId = executionId),
+        ), 3)!!
+
+        assertEquals(executionId, progress.id)
+        assertEquals(id.toString(), progress.workId)
+    }
+
     @Test fun `pending work from an older build keeps coarse progress only for its original account`() {
         val legacy = WorkInfo(id, WorkInfo.State.ENQUEUED, emptySet())
         assertEquals(OperationStatus.QUEUED, operationProgress(legacy, 0)?.status)
@@ -103,6 +114,18 @@ class OperationReportingTest {
         assertEquals(2, selected?.updated)
         assertNull("a schedule that has never run is not itself an operation",
             periodicOperation(WorkInfo(UUID.randomUUID(), WorkInfo.State.ENQUEUED, emptySet()), 3, null))
+    }
+
+    @Test fun `a replacement periodic request does not inherit the prior request report`() {
+        val priorId = UUID.randomUUID()
+        val report = StoredOperationReport(
+            workId = priorId.toString(), generation = 3, startedAt = 200,
+            progress = OperationProgress("3:prior-cycle", OperationStatus.PARTIAL),
+        )
+        val replacement = WorkInfo(UUID.randomUUID(), WorkInfo.State.ENQUEUED, emptySet())
+
+        assertNull(periodicOperation(replacement, 3, report))
+        assertEquals("3:prior-cycle", periodicOperation(null, 3, report)?.progress?.id)
     }
 
     @Test fun `periodic backoff retains the attempted cycle identity and reports retrying`() {

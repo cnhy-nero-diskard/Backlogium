@@ -1,12 +1,27 @@
 package com.example.backlogium.work
 
+import android.content.Context
 import androidx.work.Configuration
+import androidx.work.CoroutineWorker
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.await
 import androidx.work.impl.WorkManagerImpl
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
+import com.example.backlogium.domain.OperationCounts
+import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationStatus
+import com.example.backlogium.ui.setup.setupStagesUi
+import com.example.backlogium.work.setup.SetupRunState
+import com.example.backlogium.work.setup.SetupStageRegistry
+import com.example.backlogium.work.setup.fakeStage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -304,10 +319,68 @@ class SyncSchedulerTest {
         assertEquals(achievements.id, recreated.achievementOperation.first { it != null }?.id)
     }
 
+    @Test
+    fun `setup correlates execution progress to its exact WorkManager request`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val generation = AccountChangeMarkerStore(context).activeGeneration.first()!!
+        HeldOperationProgressWorker.gate = CompletableDeferred()
+        val request = OneTimeWorkRequestBuilder<HeldOperationProgressWorker>()
+            .addTag("setup-account:$generation")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                HeldOperationProgressWorker.EXECUTION_ID to "$generation:execution",
+            ))
+            .build()
+        workManager.enqueue(request).await()
+
+        try {
+            val operation = scheduler.operationForWork(request.id.toString())
+                .first { it?.status == OperationStatus.RUNNING }!!
+            val stageId = SetupStageRegistry.STAGE_LIBRARY_SYNC
+            val row = setupStagesUi(
+                stages = listOf(fakeStage(stageId)),
+                selection = setOf(stageId),
+                run = SetupRunState(
+                    loaded = true,
+                    running = true,
+                    pending = setOf(stageId),
+                    workIds = mapOf(stageId to request.id.toString()),
+                ),
+                libraryOperation = operation,
+            ).single()
+
+            assertEquals("$generation:execution", row.operation?.id)
+            assertEquals(request.id.toString(), row.operation?.workId)
+        } finally {
+            HeldOperationProgressWorker.gate.complete(Unit)
+            workManager.getWorkInfoByIdFlow(request.id).first { it?.state?.isFinished == true }
+        }
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 
     private fun inputFor(name: String) = WorkManagerImpl.getInstance()!!
         .workDatabase.workSpecDao()
         .getWorkSpec(workInfosFor(name).single().id.toString())!!
         .input
+}
+
+class HeldOperationProgressWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        setProgress(operationData(
+            id = id.toString(),
+            generation = inputData.getLong(OP_ACCOUNT, 0L),
+            phase = OperationPhase.ACHIEVEMENTS,
+            counts = OperationCounts(2, 4),
+            executionId = inputData.getString(EXECUTION_ID),
+            startedAt = 1234L,
+        ))
+        gate.await()
+        return Result.success()
+    }
+
+    companion object {
+        const val EXECUTION_ID = "execution_id"
+        var gate = CompletableDeferred<Unit>()
+    }
 }

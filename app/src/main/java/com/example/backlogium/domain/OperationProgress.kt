@@ -17,6 +17,8 @@ data class OperationProgress(
     val phase: OperationPhase? = null,
     val counts: OperationCounts? = null,
     val updated: Int? = null,
+    /** WorkManager request associated with this execution; differs for recurring cycles. */
+    val workId: String? = null,
 ) {
     val active: Boolean get() = status in setOf(OperationStatus.QUEUED, OperationStatus.WAITING, OperationStatus.RUNNING, OperationStatus.RETRYING)
 }

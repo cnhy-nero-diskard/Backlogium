@@ -86,9 +86,14 @@ internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgr
             else -> OperationStatus.SUCCEEDED
         }
     }
-    return OperationProgress(data.getString(OP_EXECUTION_ID) ?: info.id.toString(), status,
-        data.getString(OP_PHASE)?.let { name -> OperationPhase.entries.firstOrNull { it.name == name } },
-        counts, data.getInt(OP_UPDATED, -1).takeIf { it >= 0 })
+    return OperationProgress(
+        id = data.getString(OP_EXECUTION_ID) ?: info.id.toString(),
+        status = status,
+        phase = data.getString(OP_PHASE)?.let { name -> OperationPhase.entries.firstOrNull { it.name == name } },
+        counts = counts,
+        updated = data.getInt(OP_UPDATED, -1).takeIf { it >= 0 },
+        workId = info.id.toString(),
+    )
 }
 
 internal data class TimedOperation(val progress: OperationProgress, val startedAt: Long)
@@ -101,7 +106,9 @@ internal fun periodicOperation(
     generation: Long,
     stored: StoredOperationReport?,
 ): TimedOperation? {
-    val report = stored?.takeIf { it.generation == generation }
+    val report = stored?.takeIf {
+        it.generation == generation && (info == null || it.workId == info.id.toString())
+    }
     val live = info?.let { operationProgress(it, generation)?.let { progress ->
         TimedOperation(progress, operationStartedAt(it) ?: operationRequestedAt(it) ?: 0L)
     } }
@@ -124,7 +131,7 @@ internal fun operationRequestedAt(info: WorkInfo): Long? = info.tags.firstOrNull
     it.startsWith("operation-requested:")
 }?.substringAfter(":")?.toLongOrNull()
 
-private fun StoredOperationReport.timed() = TimedOperation(progress, startedAt)
+private fun StoredOperationReport.timed() = TimedOperation(progress.copy(workId = workId), startedAt)
 
 /** Publish phase changes immediately and bound writes during a large batch; always flush its end. */
 internal class OperationReporter(private val clock: () -> Long = android.os.SystemClock::elapsedRealtime) {

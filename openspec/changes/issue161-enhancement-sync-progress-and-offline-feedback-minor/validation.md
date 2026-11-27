@@ -40,6 +40,25 @@ with fixture state; the existing concurrency checks exercise real WorkManager an
 interrupted history recovery. Unit checks cover Android connectivity callbacks,
 initial snapshots, reconnection, subscription cleanup and legacy progress payloads.
 
+## PR review follow-up
+
+- `ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest :gamification:test --no-daemon`
+  passed, including the operation-reporting, Setup partial-outcome, migration, and
+  collection deletion retry regressions.
+- Targeted instrumentation passed all 41 `MigrationTest` tests and all 5
+  `CollectionFormBehaviorTest` tests. Both runs explicitly targeted
+  `emulator-5554` through `ANDROID_SERIAL` and the Gradle instrumentation serial
+  argument.
+- `ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:verifyRoborazziDebug --no-daemon`
+  passed locally. Tracked screenshot baselines were not changed.
+- CI runs #850 (`46019962806`) and #851 (`46026529793`) each report the same nine
+  Library screenshot mismatches: populated Library in both themes and viewports,
+  dark Library selection, and offline Library in both themes and viewports. Visual
+  comparison shows matching layout and labels, with differences concentrated in
+  card gradients and progress fills. All nine CI `*_actual.png` files are
+  byte-identical across the two runs. This remains an unresolved remote CI gate;
+  no further run was triggered because publishing is out of scope.
+
 ## Existing baseline drift
 
 Full verification initially found five Library gradient mismatches: populated

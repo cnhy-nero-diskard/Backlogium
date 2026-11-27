@@ -49,14 +49,16 @@ class SetupUiDerivationTest {
     @Test
     fun libraryResultsReattachOnlyToTheRecordedStageOperation() {
         val stage = fakeStage(com.example.backlogium.work.setup.SetupStageRegistry.STAGE_LIBRARY_SYNC)
-        val operation = com.example.backlogium.domain.OperationProgress("current",
+        val operation = com.example.backlogium.domain.OperationProgress("execution-1",
             com.example.backlogium.domain.OperationStatus.PARTIAL,
-            counts = com.example.backlogium.domain.OperationCounts(4, 4, 0, 1))
+            counts = com.example.backlogium.domain.OperationCounts(4, 4, 0, 1), workId = "work-1")
         val run = SetupRunState(loaded = true, finished = true,
-            workIds = mapOf(stage.id to "current"), outcomes = mapOf(stage.id to SetupOutcome.Succeeded))
+            workIds = mapOf(stage.id to "work-1"), outcomes = mapOf(stage.id to SetupOutcome.Partial))
         assertEquals(operation, setupStagesUi(listOf(stage), emptySet(), run, libraryOperation = operation).single().operation)
         assertNull(setupStagesUi(listOf(stage), emptySet(), run,
-            libraryOperation = operation.copy(id = "later-manual-sync")).single().operation)
+            libraryOperation = operation.copy(workId = "later-work")).single().operation)
+        assertEquals("Stage ${stage.id} — partially complete",
+            setupSummaryLines(setupStagesUi(listOf(stage), emptySet(), run)).single())
     }
 
     private val registered = listOf(

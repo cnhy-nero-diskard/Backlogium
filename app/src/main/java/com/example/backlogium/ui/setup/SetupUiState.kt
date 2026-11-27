@@ -87,7 +87,7 @@ internal fun setupStagesUi(
         progress = progress?.takeIf { it.isDeterminate && it.activity == SetupStageActivity.RUNNING },
         activity = progress?.activity,
         operation = libraryOperation?.takeIf { stage.id == com.example.backlogium.work.setup.SetupStageRegistry.STAGE_LIBRARY_SYNC &&
-            run.workIds[stage.id] == it.id },
+            run.workIds[stage.id] == it.workId },
     )
 }
 
@@ -100,6 +100,7 @@ fun setupSummaryLines(stages: List<SetupStageUi>): List<String> = stages.map { s
     if (stage.running) return@map "${stage.title} — ${stage.activityLabel()}"
     when (val outcome = stage.outcome) {
         SetupOutcome.Succeeded -> "${stage.title} — done"
+        SetupOutcome.Partial -> "${stage.title} — partially complete"
         SetupOutcome.Skipped -> "${stage.title} — skipped"
         SetupOutcome.Cancelled -> "${stage.title} — cancelled"
         SetupOutcome.RecoveryRequired -> "${stage.title} — retry required"

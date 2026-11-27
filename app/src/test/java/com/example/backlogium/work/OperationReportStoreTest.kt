@@ -52,4 +52,19 @@ class OperationReportStoreTest {
         assertEquals(5L, reattached?.generation)
         assertEquals(nextAccount.progress.id, reattached?.progress?.id)
     }
+
+    @Test fun `a late report from overlapping work cannot replace the newer execution`() = runTest {
+        store.clearForTest()
+        val older = store.begin(OperationChannel.STEAM, UUID.randomUUID().toString(), 4, retry = false)
+        val newer = store.begin(OperationChannel.STEAM, UUID.randomUUID().toString(), 4, retry = false)
+
+        store.save(OperationChannel.STEAM, older.copy(
+            progress = older.progress.copy(status = OperationStatus.FAILED),
+        ))
+
+        val current = store.observe(OperationChannel.STEAM).first()
+        assertEquals(newer.workId, current?.workId)
+        assertEquals(newer.progress.id, current?.progress?.id)
+        assertEquals(OperationStatus.RUNNING, current?.progress?.status)
+    }
 }

@@ -13,3 +13,11 @@
 ## 3. Integration
 
 - [x] 3.1 Verify representative setup and Settings progress and shell states on a targeted device or emulator, then re-record and verify changed screen baselines together with the UI.
+
+## 4. PR review follow-up
+
+- [x] 4.1 Keep execution IDs distinct from WorkManager request IDs; correlate Setup and periodic reports to the correct request, with overlap regressions.
+- [x] 4.2 Preserve committed partial Setup outcomes through recovery and expose retry; cover persistence and recovery behavior.
+- [x] 4.3 Add a delete-specific retry action for failed collection deletion in editor mode and cover it with a UI regression.
+- [x] 4.4 Extend migration chains through v54 and cover the v53-to-v54 nullable-evidence migration.
+- [x] 4.5 Re-run affected JVM, instrumentation, and screenshot checks; inspect repeated Library gradient diffs without re-recording baselines.
