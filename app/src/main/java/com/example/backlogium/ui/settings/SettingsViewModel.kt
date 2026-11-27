@@ -246,6 +246,8 @@ data class SettingsUiState(
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
+    val steamOperation: com.example.backlogium.domain.OperationProgress? = null,
+    val achievementOperation: com.example.backlogium.domain.OperationProgress? = null,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
     val steamAssetStatus: SteamAssetDownloadStatus = SteamAssetDownloadStatus.IDLE,
     val steamAssetProgress: SteamAssetDownloadProgress? = null,
@@ -493,6 +495,10 @@ class SettingsViewModel @Inject constructor(
         },
     ) { state, transferApplied ->
         state.copy(cloudPresenceTransferApplied = transferApplied)
+    }.combine(syncScheduler.steamOperation) { state, operation ->
+        state.copy(steamOperation = operation)
+    }.combine(syncScheduler.achievementOperation) { state, operation ->
+        state.copy(achievementOperation = operation)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.historyImportReadiness) { state, readiness ->

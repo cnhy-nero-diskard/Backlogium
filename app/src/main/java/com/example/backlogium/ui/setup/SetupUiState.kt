@@ -21,6 +21,7 @@ data class SetupStageUi(
     /** Non-null only while [running] and only once the work has published a usable total. */
     val progress: SetupStageProgress?,
     val activity: SetupStageActivity? = null,
+    val operation: com.example.backlogium.domain.OperationProgress? = null,
 ) {
     val available: Boolean get() = unavailableReason == null
 
@@ -67,6 +68,7 @@ internal fun setupStagesUi(
     selection: Set<String>,
     run: SetupRunState,
     editing: Boolean = false,
+    libraryOperation: com.example.backlogium.domain.OperationProgress? = null,
 ): List<SetupStageUi> = stages.map { stage ->
     val inForeground = run.running && run.currentStageId == stage.id
     val running = stage.id in run.pending || inForeground
@@ -84,6 +86,8 @@ internal fun setupStagesUi(
         running = running,
         progress = progress?.takeIf { it.isDeterminate && it.activity == SetupStageActivity.RUNNING },
         activity = progress?.activity,
+        operation = libraryOperation?.takeIf { stage.id == com.example.backlogium.work.setup.SetupStageRegistry.STAGE_LIBRARY_SYNC &&
+            run.workIds[stage.id] == it.id },
     )
 }
 

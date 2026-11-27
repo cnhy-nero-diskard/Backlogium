@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -28,6 +31,7 @@ class SetupViewModel @Inject constructor(
     private val source: SetupStageSource,
     private val coordinator: SetupCoordinator,
     credentials: CredentialsRepository,
+    scheduler: com.example.backlogium.work.SyncScheduler,
 ) : ViewModel() {
 
     /** The user's pending checklist selection, before a run makes it the coordinator's business. */
@@ -42,15 +46,22 @@ class SetupViewModel @Inject constructor(
      */
     private var isFirstRunFlow = false
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val libraryOperation = coordinator.state
+        .map { it.workIds[com.example.backlogium.work.setup.SetupStageRegistry.STAGE_LIBRARY_SYNC] }
+        .distinctUntilChanged()
+        .flatMapLatest(scheduler::operationForWork)
+
     val uiState: StateFlow<SetupUiState> = combine(
         coordinator.state,
         selection,
         credentials.credentialsStateFlow.map { it is CredentialsState.Configured },
         editing,
-    ) { run, pending, configured, isEditing ->
+        libraryOperation,
+    ) { run, pending, configured, isEditing, operation ->
         SetupUiState(
             loading = !run.loaded,
-            stages = setupStagesUi(source.stages, pending, run, isEditing || !isFirstRunFlow),
+            stages = setupStagesUi(source.stages, pending, run, isEditing || !isFirstRunFlow, operation),
             running = run.running,
             finished = run.finished,
             inScreenSettled = run.inScreenSettled,

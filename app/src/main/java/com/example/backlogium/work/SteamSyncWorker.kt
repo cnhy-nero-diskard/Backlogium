@@ -509,7 +509,7 @@ class SteamSyncWorker @AssistedInject constructor(
             ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
-            onAttempts = { report(OperationPhase.ACHIEVEMENTS, it) },
+            onAttempts = { if (it.total > 0) report(OperationPhase.ACHIEVEMENTS, it) },
         )
         val achievementCounts = operationCounts
         report(OperationPhase.SAVING, achievementCounts)

@@ -46,6 +46,19 @@ class SetupUiDerivationTest {
         }
     }
 
+    @Test
+    fun libraryResultsReattachOnlyToTheRecordedStageOperation() {
+        val stage = fakeStage(com.example.backlogium.work.setup.SetupStageRegistry.STAGE_LIBRARY_SYNC)
+        val operation = com.example.backlogium.domain.OperationProgress("current",
+            com.example.backlogium.domain.OperationStatus.PARTIAL,
+            counts = com.example.backlogium.domain.OperationCounts(4, 4, 0, 1))
+        val run = SetupRunState(loaded = true, finished = true,
+            workIds = mapOf(stage.id to "current"), outcomes = mapOf(stage.id to SetupOutcome.Succeeded))
+        assertEquals(operation, setupStagesUi(listOf(stage), emptySet(), run, libraryOperation = operation).single().operation)
+        assertNull(setupStagesUi(listOf(stage), emptySet(), run,
+            libraryOperation = operation.copy(id = "later-manual-sync")).single().operation)
+    }
+
     private val registered = listOf(
         fakeStage("sync", defaultOptIn = true, execution = SetupStageExecution.IN_SCREEN),
         fakeStage("assets", execution = SetupStageExecution.DETACHED),

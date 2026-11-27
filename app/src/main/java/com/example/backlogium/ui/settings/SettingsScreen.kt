@@ -393,6 +393,8 @@ internal fun AccountSyncSettingsContent(
         lastSyncAt = state.lastSyncAt,
         syncing = state.isSyncing,
         reconciling = state.isReconciling,
+        steamOperation = state.steamOperation,
+        achievementOperation = state.achievementOperation,
         genreStatus = state.genreEnrichmentStatus,
         onSyncNow = actions.onSyncNow,
         onReconcileNow = actions.onReconcileNow,
@@ -771,10 +773,12 @@ private fun SteamAccountCard(
  * is already enqueued or running, so a second tap can't cancel and restart an in-progress one.
  */
 @Composable
-private fun SyncCard(
+internal fun SyncCard(
     lastSyncAt: Long,
     syncing: Boolean,
     reconciling: Boolean,
+    steamOperation: com.example.backlogium.domain.OperationProgress?,
+    achievementOperation: com.example.backlogium.domain.OperationProgress?,
     genreStatus: GenreEnrichmentStatus,
     onSyncNow: () -> Unit,
     onReconcileNow: () -> Unit,
@@ -820,6 +824,14 @@ private fun SyncCard(
                     )
                 }
             }
+        }
+        steamOperation?.let {
+            com.example.backlogium.ui.components.OperationStatusRow(
+                stringResource(R.string.operation_steam), it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        }
+        achievementOperation?.let {
+            com.example.backlogium.ui.components.OperationStatusRow(
+                stringResource(R.string.operation_achievements), it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
         Text("Full achievement refresh covers eligible played and family-shared games. Unplayed owned games load their achievement lists when opened.",
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), style = MaterialTheme.typography.bodySmall,

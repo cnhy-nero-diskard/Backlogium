@@ -43,8 +43,7 @@ class SetupStageRegistry @Inject constructor(
                 workManager = workManager,
                 uniqueWorkName = SteamSyncWorker.ONE_TIME_NAME,
                 admit = scheduler::admitLibrarySync,
-                // The sync worker publishes no per-item progress, so this stage is deliberately
-                // indeterminate rather than showing a total it does not have.
+                // Setup observes the exact admitted operation separately, including its result.
                 progressOf = { null },
                 failureReason = "Couldn't reach Steam. It will try again on its own; " +
                     "you can also re-run this from Settings.",

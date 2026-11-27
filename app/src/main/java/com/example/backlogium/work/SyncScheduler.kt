@@ -113,6 +113,14 @@ class SyncScheduler @Inject constructor(
         }
     }.distinctUntilChanged()
 
+    fun operationForWork(workId: String?): Flow<com.example.backlogium.domain.OperationProgress?> {
+        val id = workId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+            ?: return kotlinx.coroutines.flow.flowOf(null)
+        return combine(workManager.getWorkInfoByIdFlow(id), accountMarker.activeGeneration) { info, generation ->
+            if (info != null && generation != null) operationProgress(info, generation) else null
+        }.distinctUntilChanged()
+    }
+
     val steamOperation = operation(SteamSyncWorker.ONE_TIME_NAME, SteamSyncWorker.UNIQUE_PERIODIC_NAME)
     val achievementOperation = operation(ReconciliationWorker.ONE_TIME_NAME, ReconciliationWorker.PERIODIC_NAME)
 

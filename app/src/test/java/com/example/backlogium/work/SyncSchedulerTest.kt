@@ -275,6 +275,20 @@ class SyncSchedulerTest {
         assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)
     }
 
+    @Test
+    fun `operation views independently reattach to overlapping queued jobs`() = runTest {
+        scheduler.syncNow()
+        scheduler.reconcileNow(force = true)
+        val steam = scheduler.steamOperation.first { it != null }!!
+        val achievements = scheduler.achievementOperation.first { it != null }!!
+        assertNotEquals(steam.id, achievements.id)
+        assertEquals(com.example.backlogium.domain.OperationStatus.QUEUED, steam.status)
+        assertEquals(com.example.backlogium.domain.OperationStatus.QUEUED, achievements.status)
+        val recreated = SyncScheduler(RuntimeEnvironment.getApplication(), schedulerScope)
+        assertEquals(steam.id, recreated.steamOperation.first { it != null }?.id)
+        assertEquals(achievements.id, recreated.achievementOperation.first { it != null }?.id)
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 
     private fun inputFor(name: String) = WorkManagerImpl.getInstance()!!

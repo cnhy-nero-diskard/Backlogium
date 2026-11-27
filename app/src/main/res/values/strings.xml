@@ -996,4 +996,19 @@
     <string name="analytics_record_return_missing">No return supported by positive dates separated by at least 30 full quiet dates.</string>
     <string name="analytics_record_rarest">Rarest dated unlock: %1$s · %2$s · %3$s%% retained rarity · %4$s</string>
     <string name="analytics_record_rarest_missing">Rarest dated unlock unavailable: no dated unlock with retained rarity.</string>
+    <string name="operation_steam">Steam sync</string>
+    <string name="operation_achievements">Achievement refresh</string>
+    <string name="operation_status">%1$s — %2$s</string>
+    <string name="operation_preparing">Preparing</string>
+    <string name="operation_fetching_library">Fetching library</string>
+    <string name="operation_fetching_achievements">Refreshing achievements</string>
+    <string name="operation_saving">Saving library and progress</string>
+    <string name="operation_queued">Queued; waiting for background work</string>
+    <string name="operation_retrying">Waiting to retry automatically</string>
+    <string name="operation_cancelled">Cancelled; you can try again</string>
+    <string name="operation_succeeded">Completed</string>
+    <string name="operation_partial">Completed with some failures; you can try again</string>
+    <string name="operation_failed">Could not complete; try again or check your Steam account</string>
+    <string name="operation_counts">%1$d / %2$d processed · %3$d skipped · %4$d failed</string>
+    <string name="operation_updated">%1$d games changed</string>
 </resources>
