@@ -51,4 +51,21 @@ class AnalyticsPlayInsightsTest {
         assertEquals(listOf(1, 2, 2, 1), insight.durationBuckets)
         assertNull(deriveSessionInsights(emptyList()).medianMinutes)
     }
+    @Test fun historicalFocusUsesCurrentMembershipWithoutChangingVisibleDenominator() {
+        val totals = listOf(total(1L to 20L, 2L to 60L))
+        assertEquals(AnalyticsFocusShare(20, 80), deriveFocusShare(totals, setOf(1)))
+        assertEquals(AnalyticsFocusShare(60, 80), deriveFocusShare(totals, setOf(2)))
+        assertNull(deriveFocusShare(emptyList(), setOf(1)).percent)
+        assertEquals(0.0, deriveFocusShare(totals, emptySet()).percent!!, 0.0)
+    }
+
+    @Test fun questConsistencyDoesNotInventOutcomesForActiveOrInactiveDates() {
+        val summary = deriveActiveQuestConsistency(listOf(
+            AnalyticsDay(date, 20, questMet = true),
+            AnalyticsDay(date.minusDays(1), 20, questMet = false),
+            AnalyticsDay(date.minusDays(2), 20),
+            AnalyticsDay(date.minusDays(3), 0, questMet = true),
+            AnalyticsDay(date.minusDays(4), 0)))
+        assertEquals(AnalyticsQuestOutcomeSummary(1, 2, 1), summary)
+    }
 }

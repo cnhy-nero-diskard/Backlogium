@@ -83,3 +83,18 @@ internal fun deriveSessionInsights(sessions: List<com.example.backlogium.data.re
         ),
     )
 }
+
+/** Membership deliberately reflects today's tags even for historical windows. */
+data class AnalyticsFocusShare(val minutes: Long = 0, val visibleMinutes: Long = 0) {
+    val percent: Double? get() = visibleMinutes.takeIf { it > 0 }?.let { minutes.toDouble() * 100 / it }
+}
+
+internal fun deriveFocusShare(totals: List<DatedCreditedTotal>, currentFocusIds: Set<Long>): AnalyticsFocusShare =
+    AnalyticsFocusShare(
+        minutes = totals.sumOf { day -> day.minutesByGame.filterKeys { it in currentFocusIds }.values.sum() },
+        visibleMinutes = totals.sumOf { it.minutes },
+    )
+
+/** Missing outcomes on evidenced active dates remain unknown rather than becoming failures. */
+internal fun deriveActiveQuestConsistency(days: List<AnalyticsDay>): AnalyticsQuestOutcomeSummary =
+    deriveAnalyticsQuestOutcomeSummary(days.filter { it.minutes > 0 })

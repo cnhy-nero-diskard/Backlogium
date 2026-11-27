@@ -272,6 +272,8 @@ data class AnalyticsUiState(
     val comparison: AnalyticsComparison? = null,
     val playMix: List<AnalyticsPlayShare> = emptyList(),
     val variety: AnalyticsVariety = AnalyticsVariety(),
+    val focusShare: AnalyticsFocusShare = AnalyticsFocusShare(),
+    val activeQuestConsistency: AnalyticsQuestOutcomeSummary = AnalyticsQuestOutcomeSummary(0, 0, 0),
     /** All-time rarity tier breakdown of unlocked achievements. */
     val rarityBreakdown: RarityBreakdown = RarityBreakdown(),
     /** Up to twenty all-time rarest unlocked achievements, ordered by frozen rarity percent. */
@@ -744,6 +746,8 @@ class AnalyticsViewModel @Inject constructor(
             },
             playMix = derivePlayMix(inputs.datedTotals),
             variety = deriveVariety(inputs.datedTotals, inputs.history),
+            focusShare = deriveFocusShare(inputs.datedTotals, inputs.library.filter { it.isGoal }.map { it.appId }.toSet()),
+            activeQuestConsistency = deriveActiveQuestConsistency(dailyMinutes),
             rarityBreakdown = rarityBreakdown,
             rarestAchievements = rarestAchievements,
             sessionInsights = sessionInsights,
