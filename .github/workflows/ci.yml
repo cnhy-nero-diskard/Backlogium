@@ -78,6 +78,8 @@ jobs:
           --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest
           --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest
           --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest
+          --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotNarrowTest
+          --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotStandardTest
           --tests com.example.backlogium.ui.analytics.CorePlayInsightsUiTest
 
       - name: Upload Roborazzi failure artifacts

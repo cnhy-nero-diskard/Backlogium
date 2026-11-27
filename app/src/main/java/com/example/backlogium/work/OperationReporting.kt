@@ -45,13 +45,20 @@ internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgr
     val counts = data.operationCounts()
     val status = when (info.state) {
         WorkInfo.State.RUNNING -> OperationStatus.RUNNING
-        WorkInfo.State.ENQUEUED -> if (info.runAttemptCount > 0) OperationStatus.RETRYING else OperationStatus.QUEUED
+        WorkInfo.State.ENQUEUED -> when {
+            info.stopReason in setOf(WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+                WorkInfo.STOP_REASON_CONSTRAINT_CHARGING, WorkInfo.STOP_REASON_CONSTRAINT_BATTERY_NOT_LOW,
+                WorkInfo.STOP_REASON_CONSTRAINT_DEVICE_IDLE, WorkInfo.STOP_REASON_CONSTRAINT_STORAGE_NOT_LOW) -> OperationStatus.WAITING
+            info.runAttemptCount > 0 && info.stopReason == WorkInfo.STOP_REASON_NOT_STOPPED -> OperationStatus.RETRYING
+            else -> OperationStatus.QUEUED
+        }
         WorkInfo.State.BLOCKED -> OperationStatus.QUEUED
         WorkInfo.State.CANCELLED -> OperationStatus.CANCELLED
         WorkInfo.State.FAILED -> OperationStatus.FAILED
         WorkInfo.State.SUCCEEDED -> when {
             data.getBoolean(OP_FAILURE, false) || data.getString(SteamSyncWorker.KEY_SETUP_FAILURE) != null -> OperationStatus.FAILED
-            (counts?.failed ?: 0) > 0 -> if (counts!!.failed < counts.processed - counts.skipped) OperationStatus.PARTIAL else OperationStatus.FAILED
+            (counts?.failed ?: 0) > 0 -> if (data.getString(SteamSyncWorker.KEY_POLL_RESULT) == SteamSyncWorker.POLL_COMMITTED ||
+                counts!!.failed < counts.processed - counts.skipped) OperationStatus.PARTIAL else OperationStatus.FAILED
             else -> OperationStatus.SUCCEEDED
         }
     }

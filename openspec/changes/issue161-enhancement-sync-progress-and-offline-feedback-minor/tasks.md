@@ -12,4 +12,4 @@
 
 ## 3. Integration
 
-- [ ] 3.1 Verify representative setup and Settings progress and shell states on a targeted device or emulator, then re-record and verify changed screen baselines together with the UI.
+- [x] 3.1 Verify representative setup and Settings progress and shell states on a targeted device or emulator, then re-record and verify changed screen baselines together with the UI.

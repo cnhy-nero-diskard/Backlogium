@@ -23,6 +23,7 @@ internal fun OperationStatusRow(title: String, operation: OperationProgress, mod
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val status = stringResource(when (operation.status) {
             OperationStatus.QUEUED -> R.string.operation_queued
+            OperationStatus.WAITING -> R.string.operation_waiting
             OperationStatus.RUNNING -> when (operation.phase) {
                 OperationPhase.FETCHING_LIBRARY -> R.string.operation_fetching_library
                 OperationPhase.ACHIEVEMENTS -> R.string.operation_fetching_achievements

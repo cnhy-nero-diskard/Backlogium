@@ -37,6 +37,8 @@ alter the goldens:
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotStandardTest `
   --tests com.example.backlogium.ui.analytics.CorePlayInsightsUiTest `
   --no-daemon
 ```
@@ -51,6 +53,8 @@ screen, state, theme, and viewport:
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
 - `detail/<state>/<theme>/<viewport>.png` covers owned, shared-overlay, missing-data, and achievement states.
 - `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.
+
+- `sync-feedback/<state>/<theme>/<viewport>.png` covers measured Setup phases, independent Settings operations and partial outcomes, constraint wait, history errors, and the shell offline status above Library/detail.
 
 Generated actual, compare/diff, JSON, and HTML report files live below `app/build/` and are
 ignored. They must not be committed as baselines.
@@ -70,6 +74,8 @@ classes used by CI:
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
+  --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotNarrowTest `
+  --tests com.example.backlogium.ui.screenshot.SyncFeedbackScreenshotStandardTest `
   --tests com.example.backlogium.ui.analytics.CorePlayInsightsUiTest `
   --offline --no-daemon
 ```

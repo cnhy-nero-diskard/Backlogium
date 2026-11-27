@@ -970,7 +970,7 @@ class AchievementRepository @Inject constructor(
                 if (refresh.achievements != null) refreshedSoFar++
                 onGameDone?.invoke(refreshedSoFar)
             }
-            val failed = refresh == null || refresh.playerUnavailable || refresh.retryableFailure
+            val failed = refresh == null || refresh.playerUnavailable || refresh.retryableFailure || refresh.retryAt != null
             counts = counts.copy(processed = counts.processed + 1,
                 failed = counts.failed + if (failed) 1 else 0,
                 skipped = counts.skipped + if (!failed && refresh?.achievements == null) 1 else 0)

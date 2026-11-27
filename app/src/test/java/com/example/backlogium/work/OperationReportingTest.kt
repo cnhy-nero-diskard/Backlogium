@@ -38,6 +38,28 @@ class OperationReportingTest {
         assertNull(operationProgress(info(WorkInfo.State.RUNNING, stale), 3))
     }
 
+    @Test fun `pending work from an older build keeps coarse progress only for its original account`() {
+        val legacy = WorkInfo(id, WorkInfo.State.ENQUEUED, emptySet())
+        assertEquals(OperationStatus.QUEUED, operationProgress(legacy, 0)?.status)
+        assertNull(operationProgress(legacy, 0)?.counts)
+        assertNull(operationProgress(legacy, 1))
+    }
+
+    @Test fun `known constraint stops wait while unknown scheduling stays queued`() {
+        val waiting = WorkInfo(id, WorkInfo.State.ENQUEUED, setOf("setup-account:3"),
+            runAttemptCount = 1, stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY)
+        assertEquals(OperationStatus.WAITING, operationProgress(waiting, 3)?.status)
+        val unknown = WorkInfo(id, WorkInfo.State.ENQUEUED, setOf("setup-account:3"),
+            runAttemptCount = 1, stopReason = WorkInfo.STOP_REASON_UNKNOWN)
+        assertEquals(OperationStatus.QUEUED, operationProgress(unknown, 3)?.status)
+    }
+
+    @Test fun `committed library with all inline achievements failing is still partially successful`() {
+        val data = Data.Builder().putAll(operationData(id.toString(), 3, OperationPhase.SAVING,
+            OperationCounts(2, 2, 0, 2))).putString(SteamSyncWorker.KEY_POLL_RESULT, SteamSyncWorker.POLL_COMMITTED).build()
+        assertEquals(OperationStatus.PARTIAL, operationProgress(info(WorkInfo.State.SUCCEEDED, data), 3)?.status)
+    }
+
     @Test fun `phase without counts is indeterminate and completed batches flush throttled writes`() = runTest {
         var now = 0L
         var writes = 0

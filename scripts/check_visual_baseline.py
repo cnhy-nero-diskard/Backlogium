@@ -65,6 +65,7 @@ FIXTURE_SOURCES: tuple[str, ...] = (
     "app/src/test/java/com/example/backlogium/ui/screenshot/MainScreenshotFixtures.kt",
     "app/src/test/java/com/example/backlogium/ui/screenshot/ScreenshotTestSupport.kt",
     "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
+    "app/src/test/java/com/example/backlogium/ui/screenshot/SyncFeedbackScreenshotTest.kt",
 )
 
 # The single label that acknowledges a covered change which provably cannot move a pixel.

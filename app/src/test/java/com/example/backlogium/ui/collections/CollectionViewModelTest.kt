@@ -327,12 +327,14 @@ class CollectionViewModelTest {
 
     @Test
     fun failedDeleteKeepsTheCollectionAndOffersOneRetryWithoutDoubleWrites() {
+        store.seedCollection()
         store.failDelete = true
         withViewModel(collectionId = 1L) { viewModel ->
             viewModel.delete()
             viewModel.delete()
             runCurrent()
             assertEquals(1, store.deleteCalls)
+            assertEquals(1, store.collections.size)
             assertFalse(viewModel.uiState.value.saving)
             assertFalse(viewModel.uiState.value.done)
             assertEquals(com.example.backlogium.R.string.collection_delete_failed, viewModel.uiState.value.saveError)
@@ -340,6 +342,7 @@ class CollectionViewModelTest {
             viewModel.delete()
             runCurrent()
             assertEquals(2, store.deleteCalls)
+            assertTrue(store.collections.isEmpty())
             assertTrue(viewModel.uiState.value.done)
             assertEquals(null, viewModel.uiState.value.saveError)
         }
@@ -480,6 +483,12 @@ class CollectionViewModelTest {
         private val collectionFlow = MutableStateFlow<List<Collection>>(emptyList())
         private val memberFlow = MutableStateFlow<List<CollectionMember>>(emptyList())
         private var nextId = 1L
+
+        fun seedCollection() {
+            collectionRows += Collection(1L, "Existing collection", CollectionMode.BASIC,
+                com.example.backlogium.domain.CollectionSort.NAME, createdAt = 1L)
+            publish()
+        }
 
         val collections: List<Collection> get() = collectionRows.toList()
         val members: List<CollectionMember> get() = memberRows.toList()

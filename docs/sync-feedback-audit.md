@@ -23,7 +23,8 @@ network capability; it neither gates local writes nor interprets a Steam error.
   the existing one-time manual failure haptic; the shell adds no result delivery.
 - Setup results are filtered by the stage's durable work ID and the active account
   generation. Settings operations are independent; sleeping periodic jobs stay idle.
-- Unknown constraint reasons remain queued. Counts cover completed attempts against
+- WorkManager constraint stop reasons show a device-condition wait. Unknown scheduling
+  reasons remain queued. Counts cover completed attempts against
   a fixed selected set, including failed or skipped games. Changed-content counts
   exclude fetch timestamps. Unknown-duration phases show no synthetic percentage.
 - Existing undo/reset actions remain unchanged. No undo is invented for collection

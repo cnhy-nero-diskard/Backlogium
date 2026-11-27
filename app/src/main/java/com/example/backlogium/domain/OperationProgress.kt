@@ -9,7 +9,7 @@ data class OperationCounts(
 )
 
 enum class OperationPhase { PREPARING, FETCHING_LIBRARY, ACHIEVEMENTS, SAVING }
-enum class OperationStatus { QUEUED, RUNNING, RETRYING, CANCELLED, SUCCEEDED, PARTIAL, FAILED }
+enum class OperationStatus { QUEUED, WAITING, RUNNING, RETRYING, CANCELLED, SUCCEEDED, PARTIAL, FAILED }
 
 data class OperationProgress(
     val id: String,
@@ -18,5 +18,5 @@ data class OperationProgress(
     val counts: OperationCounts? = null,
     val updated: Int? = null,
 ) {
-    val active: Boolean get() = status in setOf(OperationStatus.QUEUED, OperationStatus.RUNNING, OperationStatus.RETRYING)
+    val active: Boolean get() = status in setOf(OperationStatus.QUEUED, OperationStatus.WAITING, OperationStatus.RUNNING, OperationStatus.RETRYING)
 }

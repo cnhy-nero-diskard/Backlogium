@@ -1018,4 +1018,5 @@
     <string name="collection_delete_failed">Could not delete the collection. Your collection is still available.</string>
     <string name="collection_retry_delete">Retry deletion</string>
     <string name="hltb_broader_search_failed">HowLongToBeat search did not finish. Try again or enter a game link.</string>
+    <string name="operation_waiting">Waiting for required device conditions</string>
 </resources>

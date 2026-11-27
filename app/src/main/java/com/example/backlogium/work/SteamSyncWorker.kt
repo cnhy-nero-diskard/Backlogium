@@ -321,6 +321,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 }
                 achievementAdmissionScheduler.recoverPending()
                 examined = receipt.gameCount
+                operationCounts = OperationCounts(receipt.gameCount, receipt.gameCount)
                 updated = receipt.gameCount
                 outcome = SyncOutcome.SUCCESS
                 return committedResult(receipt.operationId)
@@ -402,6 +403,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
             examined = games.size
+            if (operationCounts == null) operationCounts = OperationCounts(games.size, games.size)
             updated = games.size
             outcome = SyncOutcome.SUCCESS
             committedResult(operationId)

@@ -111,7 +111,9 @@ class ReconciliationWorker @AssistedInject constructor(
                 onAttempts = { current ->
                     counts = current
                     reporter.report(OperationPhase.ACHIEVEMENTS, current) {
-                        setProgress(operationData(id.toString(), generation, OperationPhase.ACHIEVEMENTS, current, updated))
+                        setProgress(androidx.work.Data.Builder()
+                            .putAll(operationData(id.toString(), generation, OperationPhase.ACHIEVEMENTS, current, updated))
+                            .putBoolean(KEY_RUNNING, true).build())
                     }
                 },
             )

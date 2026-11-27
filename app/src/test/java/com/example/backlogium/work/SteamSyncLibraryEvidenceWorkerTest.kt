@@ -151,7 +151,9 @@ class SteamSyncLibraryEvidenceWorkerTest {
 
         ownedGames = { OwnedGamesResponse(OwnedGamesResult(0)) }
         val empty = worker()
-        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(empty).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val emptyOutput = output(empty)
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, emptyOutput.getString(SteamSyncWorker.KEY_POLL_RESULT))
+        assertEquals(com.example.backlogium.domain.OperationCounts(0, 0), emptyOutput.operationCounts())
         assertEquals(0, commits.get(empty.id.toString(), ACCOUNT)?.gameCount)
         assertTrue(db.gameDao().getAll().isEmpty())
 
