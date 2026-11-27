@@ -6,6 +6,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GamePreferenceDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
@@ -18,6 +19,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Session
@@ -39,6 +41,7 @@ private data class ExportSnapshot(
     val games: List<Game>,
     val excludedSharedGames: List<ExcludedSharedGame>,
     val achievements: List<Achievement>,
+    val achievementCompletions: List<GameAchievementSync>,
     val sessions: List<Session>,
     val days: List<DailyProgress>,
     val hltb: List<com.example.backlogium.data.local.entity.HltbData>,
@@ -65,6 +68,7 @@ private data class ExportSnapshot(
 @Singleton
 class BackupExportMapper @Inject constructor(
     private val gameDao: GameDao,
+    private val gameAchievementSyncDao: GameAchievementSyncDao,
     private val achievementDao: AchievementDao,
     private val sessionDao: SessionDao,
     private val dailyProgressDao: DailyProgressDao,
@@ -97,10 +101,13 @@ class BackupExportMapper @Inject constructor(
         val snapshot = transaction.run {
             val profile = playerProfileDao.get() ?: PlayerProfile()
             val account = steamId64FromCredentials ?: profile.steamId
+            val games = gameDao.getAll()
             ExportSnapshot(
-                games = gameDao.getAll(),
+                games = games,
                 excludedSharedGames = excludedSharedGameDao.getAll(),
                 achievements = achievementDao.getAllUnlocked(),
+                achievementCompletions = gameAchievementSyncDao.getAll()
+                    .filter { it.completedAt != null },
                 sessions = sessionDao.getAll(),
                 days = dailyProgressDao.getAllOrdered(),
                 hltb = hltbDataDao.getAll(),
@@ -112,7 +119,7 @@ class BackupExportMapper @Inject constructor(
                 recovery = recoveryStore.read(account),
             )
         }
-        val (games, excludedSharedGames, achievements, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
+        val (games, excludedSharedGames, achievements, achievementCompletions, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
 
         val steamId64 = steamId64FromCredentials ?: profile.steamId
 
@@ -124,6 +131,9 @@ class BackupExportMapper @Inject constructor(
             games = games.map { it.toBackup() },
             excludedSharedGames = excludedSharedGames.map { it.toBackup() },
             achievements = achievements.map { it.toBackup() },
+            achievementCompletions = if (steamId64.isBlank()) emptyList() else achievementCompletions
+                .sortedBy { it.appId }
+                .map { BackupAchievementCompletion(steamId64, it.appId, requireNotNull(it.completedAt).toIso8601()) },
             sessions = sessions.map { it.toBackup() },
             dailyProgress = days.map { it.toBackup() },
             hltbData = hltb.map { data ->

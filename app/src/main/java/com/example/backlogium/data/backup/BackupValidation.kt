@@ -232,6 +232,42 @@ object BackupValidator {
             }
         }
 
+        val completionAppIds = mutableSetOf<Long>()
+        file.achievementCompletions.forEachIndexed { index, completion ->
+            if (completion.account.isBlank() || completion.account != file.identity.steamId64) {
+                problems += BackupValidationProblem(
+                    "achievementCompletion", index,
+                    "account ${completion.account} does not match backup identity ${file.identity.steamId64}",
+                )
+            }
+            when {
+                completion.appId <= 0L -> problems += BackupValidationProblem(
+                    "achievementCompletion", index, "malformed appId ${completion.appId}",
+                )
+                completion.appId !in gameAppIds -> problems += BackupValidationProblem(
+                    "achievementCompletion", index, "references absent game ${completion.appId}",
+                )
+            }
+            if (!completionAppIds.add(completion.appId)) {
+                problems += BackupValidationProblem(
+                    "achievementCompletion", index, "duplicate appId ${completion.appId}",
+                )
+            }
+            val completedAt = completion.completedAt.toEpochMilliOrNull()
+            when {
+                completedAt == null -> problems += BackupValidationProblem(
+                    "achievementCompletion", index,
+                    "unparseable completedAt '${completion.completedAt}'",
+                )
+                completedAt !in EARLIEST_PLAUSIBLE_MILLIS..LATEST_PLAUSIBLE_MILLIS ->
+                    problems += BackupValidationProblem(
+                        "achievementCompletion", index,
+                        "completedAt '${completion.completedAt}' outside the supported range " +
+                            "$EARLIEST_PLAUSIBLE_DATE..$LATEST_PLAUSIBLE_DATE",
+                    )
+            }
+        }
+
         file.excludedSharedGames.forEachIndexed { index, excluded ->
             if (excluded.appId <= 0L) {
                 problems += BackupValidationProblem(

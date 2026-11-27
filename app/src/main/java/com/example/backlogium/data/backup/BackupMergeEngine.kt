@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.data.local.dao.GamePreferenceDao
 import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.dao.HiddenGameDao
@@ -17,6 +18,7 @@ import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
@@ -67,6 +69,7 @@ class BackupMergeEngine @Inject constructor(
     private val dailyProgressDao: DailyProgressDao,
     private val hltbDataDao: HltbDataDao,
     private val achievementDao: AchievementDao,
+    private val gameAchievementSyncDao: GameAchievementSyncDao,
     private val playerProfileDao: PlayerProfileDao,
     private val collectionDao: CollectionDao,
     private val excludedSharedGameDao: ExcludedSharedGameDao,
@@ -175,6 +178,11 @@ class BackupMergeEngine @Inject constructor(
             file.dailyProgress.forEach { mergeDailyProgress(it) }
             file.hltbData.forEach { mergeHltbData(it) }
             file.achievements.forEach { mergeAchievement(it) }
+            // These observations belong to the source account; a warned cross-account merge must
+            // not relabel them as evidence about the configured player.
+            if (activeAccount != null && file.identity.steamId64 == activeAccount) {
+                file.achievementCompletions.forEach { mergeAchievementCompletion(it.appId, it.completedAt) }
+            }
             file.collections.forEach { mergeCollection(it) }
             file.collectionMembers.forEach { mergeCollectionMember(it) }
             // Applied before the recompute below, so the restored XP already excludes the games the
@@ -565,6 +573,24 @@ class BackupMergeEngine @Inject constructor(
             fetchedAt = time.nowMillis(),
         )
         achievementDao.upsertAll(listOf(merged))
+    }
+
+    /** Retain the earliest supported first-observation date; absent evidence never clears it. */
+    private suspend fun mergeAchievementCompletion(appId: Long, completedAt: String) {
+        val importedAt = completedAt.iso8601ToEpochMilli()
+        val existing = gameAchievementSyncDao.get(appId)
+        val retainedAt = existing?.completedAt?.let { minOf(it, importedAt) } ?: importedAt
+        if (existing?.completedAt == retainedAt) return
+        gameAchievementSyncDao.upsert(
+            existing?.copy(completedAt = retainedAt) ?: GameAchievementSync(
+                appId = appId,
+                playerStateFetchedAt = null,
+                schemaFetchedAt = null,
+                hasAchievements = null,
+                checkedAt = 0L,
+                completedAt = retainedAt,
+            ),
+        )
     }
 
     /**

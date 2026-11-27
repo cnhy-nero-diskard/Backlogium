@@ -44,6 +44,9 @@ class BackupFileRoundTripTest {
                     snapshotPercent = 13.75, unlockedAt = "2026-06-01T12:00:00Z",
                 ),
             ),
+            achievementCompletions = listOf(
+                BackupAchievementCompletion("76561198000000000", 440L, "2026-06-02T12:00:00Z"),
+            ),
             sessions = listOf(
                 BackupSession(appId = 440L, startAt = "2026-06-01T10:00:00Z", endAt = "2026-06-01T11:30:00Z", minutes = 90),
             ),

@@ -11,15 +11,20 @@ import com.example.backlogium.data.local.entity.GamePreference
 import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.Session
+import com.example.backlogium.data.local.entity.Achievement
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.repo.CredentialsProvider
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.AchievementInsightsRepository
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.gamification.RuleConfig
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -181,12 +186,62 @@ class HiddenGamesBackupRoundTripTest {
         assertEquals(300, restored.playerProfileDao().get()!!.totalXp)
     }
 
+    @Test
+    fun datedUnlockWithoutSyncMetadataAndObservedCompletionSurviveRestoreAndRefresh() = runBlocking {
+        val completionAt = UNLOCK_AT + 60_000L
+        source.gameDao().upsertAll(listOf(game(KEPT, "Observed complete"), game(TOOL, "Dated unlock")))
+        source.achievementDao().upsertAll(listOf(
+            Achievement(KEPT, "complete", "Complete", unlocked = true, unlockedAt = UNLOCK_AT,
+                snapshotPercent = 2.0, fetchedAt = UNLOCK_AT),
+            Achievement(TOOL, "dated", "Dated", unlocked = true, unlockedAt = UNLOCK_AT,
+                snapshotPercent = 4.0, fetchedAt = UNLOCK_AT),
+        ))
+        source.gameAchievementSyncDao().upsert(
+            GameAchievementSync(KEPT, UNLOCK_AT, UNLOCK_AT, true, UNLOCK_AT, completedAt = completionAt),
+        )
+
+        val file = exportMapper(source).buildExport()
+        assertEquals(
+            listOf(BackupAchievementCompletion(ACCOUNT, KEPT, completionAt.toIso8601())),
+            file.achievementCompletions,
+        )
+        assertTrue(BackupValidator.validate(file) is BackupValidationResult.Valid)
+
+        mergeEngine(restored).merge(file, RuleConfig())
+
+        assertEquals(completionAt, restored.gameAchievementSyncDao().get(KEPT)?.completedAt)
+        assertNull("dated achievement import must not fabricate fetch metadata", restored.gameAchievementSyncDao().get(TOOL))
+        val repository = AchievementInsightsRepository(restored)
+        val first = repository.between(ACCOUNT, UNLOCK_AT - 1, UNLOCK_AT + 180_000L).first()
+        assertEquals(setOf(KEPT, TOOL), first.unlocks.map { it.appId }.toSet())
+        assertEquals(completionAt, first.completions.single().observedAt)
+        assertEquals(0, first.unsupportedUnlocks)
+
+        // The first complete refresh is still only a baseline, but carries the earlier observed
+        // completion forward rather than replacing it with the refresh date.
+        val completionSync = requireNotNull(restored.gameAchievementSyncDao().get(KEPT))
+        restored.gameAchievementSyncDao().upsert(
+            completionSync.copy(
+                playerStateFetchedAt = UNLOCK_AT + 120_000L,
+                hasAchievements = true,
+                checkedAt = UNLOCK_AT + 120_000L,
+            ),
+        )
+        restored.gameAchievementSyncDao().upsert(
+            GameAchievementSync(TOOL, UNLOCK_AT + 120_000L, null, true, UNLOCK_AT + 120_000L),
+        )
+        val refreshed = repository.between(ACCOUNT, UNLOCK_AT - 1, UNLOCK_AT + 180_000L).first()
+        assertEquals(first.unlocks, refreshed.unlocks)
+        assertEquals(completionAt, restored.gameAchievementSyncDao().get(KEPT)?.completedAt)
+    }
+
     private fun newDatabase() = Room.inMemoryDatabaseBuilder(
         RuntimeEnvironment.getApplication(), BacklogiumDatabase::class.java,
     ).allowMainThreadQueries().build()
 
     private fun exportMapper(db: BacklogiumDatabase, transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(db)) = BackupExportMapper(
         gameDao = db.gameDao(),
+        gameAchievementSyncDao = db.gameAchievementSyncDao(),
         achievementDao = db.achievementDao(),
         sessionDao = db.sessionDao(),
         dailyProgressDao = db.dailyProgressDao(),
@@ -208,6 +263,7 @@ class HiddenGamesBackupRoundTripTest {
         dailyProgressDao = db.dailyProgressDao(),
         hltbDataDao = db.hltbDataDao(),
         achievementDao = db.achievementDao(),
+        gameAchievementSyncDao = db.gameAchievementSyncDao(),
         playerProfileDao = db.playerProfileDao(),
         collectionDao = db.collectionDao(),
         hiddenGameDao = db.hiddenGameDao(),
@@ -225,6 +281,7 @@ class HiddenGamesBackupRoundTripTest {
         time = FixedTime,
         transaction = RoomDatabaseTransactionScope(db),
         derivedStateWrites = DerivedStateWriteCoordinator(),
+        credentials = ConfiguredCredentials,
     )
 
     private fun game(appId: Long, name: String) = Game(
@@ -259,5 +316,7 @@ class HiddenGamesBackupRoundTripTest {
         const val KEPT = 1L
         const val TOOL = 2L
         const val HIDDEN_AT = 1_700_000_500_000L
+        const val ACCOUNT = "76561198000000000"
+        const val UNLOCK_AT = 1_700_000_000_000L
     }
 }

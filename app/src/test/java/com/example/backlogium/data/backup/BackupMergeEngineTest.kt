@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.dao.CollectionDao
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
+import com.example.backlogium.data.local.dao.GameAchievementSyncDao
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.local.dao.GameSessionCounts
 import com.example.backlogium.domain.GameRecencyState
@@ -23,6 +24,7 @@ import com.example.backlogium.data.local.entity.CollectionMember
 import com.example.backlogium.data.local.entity.DailyProgress
 import com.example.backlogium.data.local.entity.ExcludedSharedGame
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDataOrigin
 import com.example.backlogium.data.local.entity.HltbMatchStatus
@@ -61,6 +63,7 @@ class BackupMergeEngineTest {
         val profileDao: FakePlayerProfileDao,
         val collectionDao: FakeCollectionDao,
         val achievementDao: FakeAchievementDao,
+        val gameAchievementSyncDao: FakeGameAchievementSyncDao,
         val excludedDao: FakeExcludedSharedGameDao,
         val hiddenGameDao: FakeHiddenGameDao,
     )
@@ -71,6 +74,7 @@ class BackupMergeEngineTest {
         days: MutableMap<String, DailyProgress> = mutableMapOf(),
         hltb: MutableMap<Long, HltbData> = mutableMapOf(),
         achievements: MutableList<Achievement> = mutableListOf(),
+        achievementSync: MutableMap<Long, GameAchievementSync> = mutableMapOf(),
         profile: PlayerProfile? = null,
         collections: MutableMap<Long, Collection> = mutableMapOf(),
         today: LocalDate = LocalDate.parse("2026-07-17"),
@@ -81,6 +85,7 @@ class BackupMergeEngineTest {
         val dailyProgressDao = FakeDailyProgressDao(days)
         val hltbDataDao = FakeHltbDataDao(hltb)
         val achievementDao = FakeAchievementDao(achievements)
+        val gameAchievementSyncDao = FakeGameAchievementSyncDao(achievementSync)
         val profileDao = FakePlayerProfileDao(profile)
         val collectionDao = FakeCollectionDao(collections)
         val excludedDao = FakeExcludedSharedGameDao()
@@ -91,16 +96,17 @@ class BackupMergeEngineTest {
             hiddenGameDao,
         )
         val engine = BackupMergeEngine(
-            gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, profileDao,
+            gameDao, sessionDao, dailyProgressDao, hltbDataDao, achievementDao, gameAchievementSyncDao, profileDao,
             collectionDao, excludedDao, hiddenGameDao, gamificationUpdater, time,
             gamePreferenceDao = FakeGamePreferenceDao(),
         )
-        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, excludedDao, hiddenGameDao)
+        return Harness(engine, gameDao, sessionDao, profileDao, collectionDao, achievementDao, gameAchievementSyncDao, excludedDao, hiddenGameDao)
     }
 
     private fun baseFile(
         sessions: List<BackupSession> = emptyList(),
         achievements: List<BackupAchievement> = emptyList(),
+        achievementCompletions: List<BackupAchievementCompletion> = emptyList(),
         games: List<BackupGame> = emptyList(),
         longestStreak: Int = 0,
         totalXp: Long = 999_999L, // deliberately implausible, to prove it's never trusted
@@ -117,6 +123,7 @@ class BackupMergeEngineTest {
         ruleConfig = RuleConfig().toBackupForTest(),
         games = games,
         achievements = achievements,
+        achievementCompletions = achievementCompletions,
         sessions = sessions,
         dailyProgress = emptyList(),
         hltbData = hltbData,
@@ -901,6 +908,42 @@ class BackupMergeEngineTest {
     }
 
     @Test
+    fun achievementCompletion_importsKeepEarliestDateAndAbsentEvidenceIsNonDestructive() = runTest {
+        val appId = 1L
+        val game = BackupGame(appId, "Game", false, 0)
+        val harness = newEngine(
+            games = mutableMapOf(appId to testGame(appId)),
+            profile = PlayerProfile(steamId = "1"),
+        )
+        fun file(completedAt: Long? = null) = baseFile(
+            games = listOf(game),
+            achievementCompletions = completedAt?.let {
+                listOf(BackupAchievementCompletion("1", appId, it.toIso8601()))
+            }.orEmpty(),
+        )
+
+        val firstObserved = 1_700_000_000_000L
+        harness.engine.merge(file(firstObserved), RuleConfig())
+        harness.engine.merge(file(firstObserved + 1_000), RuleConfig())
+        harness.engine.merge(file(), RuleConfig())
+
+        assertEquals(firstObserved, harness.gameAchievementSyncDao.get(appId)?.completedAt)
+
+        val earlierObservation = firstObserved - 1_000
+        harness.engine.merge(file(earlierObservation), RuleConfig())
+        assertEquals(earlierObservation, harness.gameAchievementSyncDao.get(appId)?.completedAt)
+
+        val foreign = file(firstObserved - 2_000).copy(
+            identity = BackupIdentity("foreign-account"),
+            achievementCompletions = listOf(
+                BackupAchievementCompletion("foreign-account", appId, (firstObserved - 2_000).toIso8601()),
+            ),
+        )
+        harness.engine.merge(foreign, RuleConfig())
+        assertEquals(earlierObservation, harness.gameAchievementSyncDao.get(appId)?.completedAt)
+    }
+
+    @Test
     fun longestStreak_importLower_neverLowersStored() = runTest {
         val harness = newEngine(profile = PlayerProfile(longestStreak = 10))
         val file = baseFile(longestStreak = 1)
@@ -1433,6 +1476,19 @@ private class FakeHltbDataDao(private val store: MutableMap<Long, HltbData>) : H
         completionistMinutes: Int?,
         allStylesMinutes: Int?,
     ): Int = 0
+}
+
+private class FakeGameAchievementSyncDao(
+    private val store: MutableMap<Long, GameAchievementSync> = mutableMapOf(),
+) : GameAchievementSyncDao {
+    override suspend fun get(appId: Long): GameAchievementSync? = store[appId]
+    override suspend fun getAll(appIds: Set<Long>): List<GameAchievementSync> = store.values.filter { it.appId in appIds }
+    override suspend fun getAll(): List<GameAchievementSync> = store.values.toList()
+    override fun observeAll(): Flow<List<GameAchievementSync>> = flowOf(store.values.toList())
+    override suspend fun upsert(row: GameAchievementSync) { store[row.appId] = row }
+    override suspend fun upsertAll(rows: List<GameAchievementSync>) { rows.forEach { upsert(it) } }
+    override suspend fun deleteAll() { store.clear() }
+    override suspend fun delete(appId: Long) { store.remove(appId) }
 }
 
 private class FakeAchievementDao(private val store: MutableList<Achievement>) : AchievementDao {

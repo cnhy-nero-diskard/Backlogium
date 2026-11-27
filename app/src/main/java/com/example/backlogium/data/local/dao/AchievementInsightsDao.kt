@@ -12,8 +12,7 @@ interface AchievementInsightsDao {
     suspend fun lifetimeRarity(account: String): List<LifetimeRarityRow>
 
     @Query("SELECT a.appId, a.apiName, COALESCE(a.displayName, a.apiName) AS name, a.unlockedAt, a.snapshotPercent FROM achievements a " +
-        "JOIN game_achievement_sync s ON s.appId = a.appId " +
-        "WHERE a.unlocked = 1 AND a.retired = 0 AND s.playerStateFetchedAt IS NOT NULL " +
+        "WHERE a.unlocked = 1 AND a.retired = 0 " +
         "AND a.unlockedAt > 0 AND a.unlockedAt >= :start AND a.unlockedAt < :end " +
         "AND a.appId NOT IN (SELECT appId FROM hidden_games) " +
         "AND EXISTS (SELECT 1 FROM player_profile WHERE steamId = :account)")
@@ -24,8 +23,8 @@ interface AchievementInsightsDao {
         "AND EXISTS (SELECT 1 FROM player_profile WHERE steamId = :account)")
     suspend fun completions(account: String, start: Long, end: Long): List<DatedCompletionRow>
 
-    @Query("SELECT COUNT(*) FROM achievements a LEFT JOIN game_achievement_sync s ON s.appId = a.appId " +
-        "WHERE a.unlocked = 1 AND a.retired = 0 AND (a.unlockedAt IS NULL OR a.unlockedAt <= 0 OR s.playerStateFetchedAt IS NULL) " +
+    @Query("SELECT COUNT(*) FROM achievements a " +
+        "WHERE a.unlocked = 1 AND a.retired = 0 AND (a.unlockedAt IS NULL OR a.unlockedAt <= 0) " +
         "AND a.appId NOT IN (SELECT appId FROM hidden_games) " +
         "AND EXISTS (SELECT 1 FROM player_profile WHERE steamId = :account)")
     suspend fun unsupportedUnlocks(account: String): Int

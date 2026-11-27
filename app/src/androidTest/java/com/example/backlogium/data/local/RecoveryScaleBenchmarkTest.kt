@@ -579,6 +579,7 @@ class RecoveryScaleBenchmarkTest {
             dailyProgressDao = database.dailyProgressDao(),
             hltbDataDao = database.hltbDataDao(),
             achievementDao = database.achievementDao(),
+            gameAchievementSyncDao = database.gameAchievementSyncDao(),
             playerProfileDao = database.playerProfileDao(),
             collectionDao = database.collectionDao(),
             excludedSharedGameDao = database.excludedSharedGameDao(),
@@ -620,6 +621,7 @@ class RecoveryScaleBenchmarkTest {
         metrics: SqlMetrics,
     ) = BackupExportMapper(
         gameDao = database.gameDao(),
+        gameAchievementSyncDao = database.gameAchievementSyncDao(),
         gamePreferenceDao = database.gamePreferenceDao(),
         achievementDao = database.achievementDao(),
         sessionDao = database.sessionDao(),

@@ -1372,6 +1372,7 @@ class BackupRecoveryRoundTripTest {
 
     private fun exportMapper(db: BacklogiumDatabase) = BackupExportMapper(
         gameDao = db.gameDao(),
+        gameAchievementSyncDao = db.gameAchievementSyncDao(),
         gamePreferenceDao = db.gamePreferenceDao(),
         achievementDao = db.achievementDao(),
         sessionDao = db.sessionDao(),
@@ -1394,6 +1395,7 @@ class BackupRecoveryRoundTripTest {
         dailyProgressDao = db.dailyProgressDao(),
         hltbDataDao = db.hltbDataDao(),
         achievementDao = db.achievementDao(),
+        gameAchievementSyncDao = db.gameAchievementSyncDao(),
         playerProfileDao = db.playerProfileDao(),
         collectionDao = db.collectionDao(),
         hiddenGameDao = db.hiddenGameDao(),
