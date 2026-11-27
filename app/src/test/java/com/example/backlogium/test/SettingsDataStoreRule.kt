@@ -20,6 +20,7 @@ class SettingsDataStoreRule : ExternalResource() {
     )
 
     fun create() = SettingsDataStore(store)
+    fun backingStore() = store
 
     override fun after() {
         runBlocking { job.cancelAndJoin() }

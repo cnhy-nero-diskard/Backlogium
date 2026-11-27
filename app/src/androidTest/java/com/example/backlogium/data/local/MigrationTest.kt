@@ -106,6 +106,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_48_49,
         BacklogiumDatabase.MIGRATION_49_50,
         BacklogiumDatabase.MIGRATION_50_51,
+        BacklogiumDatabase.MIGRATION_51_52,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -124,6 +125,25 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_12_13,
         *allMigrationsFromV13,
     )
+
+    @Test fun v51ToV52KeepsAdmissionIdentityAndStartsWithoutHistoricalNotifications() {
+        val name = "migration-progress-alerts-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 51).use { db ->
+                db.execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (10, 'Existing', '', 0, 0, 0, 0, 1, 0, 'STEAM_OWNED', 0)")
+                db.execSQL("INSERT INTO achievement_admission_work (steamId, accountGeneration, appId, admittedAt, attempts, nextEligibleAt) VALUES ('fixture', 7, 10, 100, 0, 0)")
+            }
+            migrationTestHelper.runMigrationsAndValidate(name, 52, true, BacklogiumDatabase.MIGRATION_51_52).use { db ->
+                db.query("SELECT steamId, accountGeneration, appId FROM achievement_admission_work").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals("fixture", it.getString(0))
+                    assertEquals(7L, it.getLong(1))
+                    assertEquals(10L, it.getLong(2))
+                }
+                db.query("SELECT * FROM progress_alerts").use { assertFalse(it.moveToFirst()) }
+            }
+        } finally { context.deleteDatabase(name) }
+    }
 
     @Test
     fun catalogueUpgrade_startsWithoutBackfillAndPreservesWatchWork() {
@@ -1989,6 +2009,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_48_49,
                 BacklogiumDatabase.MIGRATION_49_50,
                 BacklogiumDatabase.MIGRATION_50_51,
+                BacklogiumDatabase.MIGRATION_51_52,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())

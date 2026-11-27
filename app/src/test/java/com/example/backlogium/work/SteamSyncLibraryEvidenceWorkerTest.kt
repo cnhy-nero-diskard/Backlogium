@@ -168,6 +168,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
         assertEquals(SteamSyncWorker.POLL_COMMITTED, output(worker()).getString(SteamSyncWorker.KEY_POLL_RESULT))
         val generation = marker.generation()
         assertTrue(db.achievementAdmissionDao().eligible(ACCOUNT, generation, Long.MAX_VALUE, 20).isEmpty())
+        assertTrue(db.progressAlertDao().pending().isEmpty())
 
         now = now.plusSeconds(30 * 60)
         db.gameDao().upsert(Game(
@@ -308,6 +309,34 @@ class SteamSyncLibraryEvidenceWorkerTest {
         assertTrue(db.sessionDao().creditedMinutesByGame().isEmpty())
     }
 
+    @Test fun ownedAlertSurvivesProducerInterruptionBeforeAnyNotificationEnqueue() = runTest {
+        val platform = com.example.backlogium.data.notifications.ProgressAlertPlatform(context)
+        platform.registerChannels()
+        org.robolectric.Shadows.shadowOf(context).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        settings.setProgressAlert(com.example.backlogium.data.notifications.ProgressCategory.OWNED, true)
+        ownedGames = { snapshot(0) }
+        output(worker())
+        assertTrue(db.progressAlertDao().pending().isEmpty())
+        now = now.plusSeconds(60)
+        ownedGames = { OwnedGamesResponse(OwnedGamesResult(2, listOf(
+            OwnedGameDto(10, "Fixture", playtimeForever = 0), OwnedGameDto(11, "New", playtimeForever = 0),
+        ))) }
+        failAdmissionWake = true
+        assertEquals(Result.retry(), worker().doWork())
+        val alert = db.progressAlertDao().pending().single()
+        assertEquals(11L, alert.appId)
+        assertEquals(11L, db.achievementAdmissionDao().get(alert.account, alert.generation, alert.sourceId.toLong())?.appId)
+        val recovered = com.example.backlogium.data.notifications.ProgressAlerts(db, settings, platform, marker, credentials, sync)
+        recovered.dispatch()
+        val notifications = context.getSystemService(android.app.NotificationManager::class.java)
+        assertEquals(1, notifications.activeNotifications.size)
+        notifications.cancelAll()
+        failAdmissionWake = false
+        output(worker())
+        recovered.dispatch()
+        assertTrue(notifications.activeNotifications.isEmpty())
+    }
+
     private suspend fun output(worker: SteamSyncWorker) = (worker.doWork() as Result.Success).outputData
 
     private fun snapshot(minutes: Int) =
@@ -352,6 +381,8 @@ class SteamSyncLibraryEvidenceWorkerTest {
                     RecoveryReadStatusStore(context),
                     admissionScheduler,
                     db.achievementAdmissionDao(),
+                    com.example.backlogium.data.notifications.ProgressAlerts(db, settings,
+                        com.example.backlogium.data.notifications.ProgressAlertPlatform(context), marker, credentials, sync),
                 )
         }).build()
     }

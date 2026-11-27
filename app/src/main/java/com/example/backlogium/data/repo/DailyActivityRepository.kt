@@ -37,32 +37,39 @@ class DailyActivityRepository @Inject constructor(
         zone: ZoneId = time.zone(),
     ): Flow<DailyActivity> =
         observeSnapshot(markUpdating = { it.copy(updating = true) }) {
-            val activities = sessions.readCanonicalDatedActivity(zone, date, date.plusDays(1))
-            val games = readGames(activities.map { it.appId }).associateBy { it.appId }
-            val progress = database.dailyProgressDao().getByDate(date.toString())
-            val evidence = buildList {
-                for (activity in activities) {
-                    val minutes = when (activity) {
-                        is PlaytimeActivity.TimestampedSession -> {
-                            val unlinked = activity.unlinkedMinutes.takeIf {
-                                sessionDate(activity.startAt, zone) == date
-                            } ?: 0L
-                            unlinked + activity.fundedShares.filter { it.creditedDate == date }.sumOf { it.minutes }
-                        }
-                        is PlaytimeActivity.DatedAllocation -> activity.minutes
-                        is PlaytimeActivity.PendingDateUnknown -> continue
-                    }
-                    val game = games[activity.appId]
-                    add(DailyActivityEvidence(activity.appId, game?.name, minutes, game != null))
-                }
-            }
-            dailyActivity(
-                date, accountId, evidence, progress?.minutesPlayed?.toLong(), progress?.questMet,
-                storedFocusMinutes = progress?.goalMinutesPlayed?.toLong(),
-                allocations = activities.filterIsInstance<PlaytimeActivity.DatedAllocation>()
-                    .map { it.toCreditedAllocation() },
-            )
+            readDaySnapshot(date, accountId, zone)
         }
+
+    suspend fun readDay(date: LocalDate, accountId: String, zone: ZoneId = time.zone()): DailyActivity =
+        database.withTransaction { readDaySnapshot(date, accountId, zone) }
+
+    private suspend fun readDaySnapshot(date: LocalDate, accountId: String, zone: ZoneId): DailyActivity {
+        val activities = sessions.readCanonicalDatedActivity(zone, date, date.plusDays(1))
+        val games = readGames(activities.map { it.appId }).associateBy { it.appId }
+        val progress = database.dailyProgressDao().getByDate(date.toString())
+        val evidence = buildList {
+            for (activity in activities) {
+                val minutes = when (activity) {
+                    is PlaytimeActivity.TimestampedSession -> {
+                        val unlinked = activity.unlinkedMinutes.takeIf {
+                            sessionDate(activity.startAt, zone) == date
+                        } ?: 0L
+                        unlinked + activity.fundedShares.filter { it.creditedDate == date }.sumOf { it.minutes }
+                    }
+                    is PlaytimeActivity.DatedAllocation -> activity.minutes
+                    is PlaytimeActivity.PendingDateUnknown -> continue
+                }
+                val game = games[activity.appId]
+                add(DailyActivityEvidence(activity.appId, game?.name, minutes, game != null))
+            }
+        }
+        return dailyActivity(
+            date, accountId, evidence, progress?.minutesPlayed?.toLong(), progress?.questMet,
+            storedFocusMinutes = progress?.goalMinutesPlayed?.toLong(),
+            allocations = activities.filterIsInstance<PlaytimeActivity.DatedAllocation>()
+                .map { it.toCreditedAllocation() },
+        )
+    }
 
     suspend fun detailAvailable(appId: Long): Boolean = dao.detailAvailable(appId)
 

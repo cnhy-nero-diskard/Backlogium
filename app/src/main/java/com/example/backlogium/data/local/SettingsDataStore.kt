@@ -39,6 +39,7 @@ import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.notifications.ProgressCategory
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -80,6 +81,12 @@ private val Context.dataStore: DataStore<Preferences>
     get() = SettingsDataStoreInstance.get(this)
 
 private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
+
+private fun progressAlertPreferenceKey(category: ProgressCategory) =
+    booleanPreferencesKey("progress_alert_${category.name}")
+
+private fun progressAlertEnabled(prefs: Preferences, category: ProgressCategory) =
+    prefs[progressAlertPreferenceKey(category)] ?: category.defaultEnabled
 
 /**
  * App settings backed by Preferences DataStore: the tunable gamification [RuleConfig], plus the
@@ -135,6 +142,8 @@ class SettingsDataStore internal constructor(
          */
         val SHARED_GAME_ANNOUNCEMENT_ENTRIES =
             stringSetPreferencesKey("shared_game_announcement_entries")
+        val PUBLISHED_SHARED_ADMISSION_IDS =
+            stringSetPreferencesKey("published_shared_admission_ids")
         val ACQUIRED_AT = longPreferencesKey("acquired_batch_at")
         val ACQUIRED_APP_IDS = stringSetPreferencesKey("acquired_batch_app_ids")
         val ACQUIRED_DISMISSED = booleanPreferencesKey("acquired_batch_dismissed")
@@ -286,6 +295,18 @@ class SettingsDataStore internal constructor(
     }
 
     /** Durable progress-event marks. Unset level/streak keys mean no baseline has been seeded yet. */
+    private val progressAlertHandoffsKey = stringSetPreferencesKey("progress_alert_handoffs")
+    val progressAlertHandoffs = store.data.map { it[progressAlertHandoffsKey].orEmpty() }
+    val progressAlertPreferences = store.data.map { prefs ->
+        ProgressCategory.entries.associateWith { progressAlertEnabled(prefs, it) }
+    }
+    suspend fun setProgressAlert(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) {
+        store.edit { it[progressAlertPreferenceKey(category)] = enabled }
+    }
+    suspend fun removeProgressAlertHandoff(raw: String) {
+        store.edit { it[progressAlertHandoffsKey] = it[progressAlertHandoffsKey].orEmpty() - raw }
+    }
+
     val progressMarksFlow: Flow<ProgressMarks> = store.data.map(::decodeProgressMarks)
 
     suspend fun readProgressMarks(): ProgressMarks = progressMarksFlow.first()
@@ -302,10 +323,19 @@ class SettingsDataStore internal constructor(
      */
     suspend fun updateProgressMarks(
         transform: (ProgressMarks) -> ProgressMarks,
+        notificationBoundary: ((ProgressMarks, ProgressMarks, Set<ProgressCategory>) -> Set<String>)? = null,
     ): ProgressMarks {
         lateinit var result: ProgressMarks
         store.edit { prefs ->
-            result = transform(decodeProgressMarks(prefs))
+            val before = decodeProgressMarks(prefs)
+            result = transform(before)
+            notificationBoundary?.let {
+                val enabledCategories = ProgressCategory.entries.filter { category ->
+                    progressAlertEnabled(prefs, category)
+                }.toSet()
+                prefs[progressAlertHandoffsKey] = prefs[progressAlertHandoffsKey].orEmpty() +
+                    it(before, result, enabledCategories)
+            }
             encodeProgressMarks(prefs, result)
         }
         return result
@@ -1112,6 +1142,25 @@ class SettingsDataStore internal constructor(
         }
     }
 
+    /** Publish an automatic-admission fallback once, atomically with its durable event marker. */
+    suspend fun publishSharedGameAnnouncement(eventId: String, appId: Long, name: String, announcedAt: Long): Boolean {
+        var published = false
+        store.edit { prefs ->
+            val publishedIds = prefs[Keys.PUBLISHED_SHARED_ADMISSION_IDS].orEmpty()
+            if (eventId !in publishedIds) {
+                val remaining = prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES].orEmpty()
+                    .mapNotNull(::decodeSharedGameAnnouncement)
+                    .filterNot { it.appId == appId }
+                prefs[Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES] =
+                    (remaining + SharedGameAnnouncement(appId, name, announcedAt))
+                        .mapTo(mutableSetOf(), ::encodeSharedGameAnnouncement)
+                prefs[Keys.PUBLISHED_SHARED_ADMISSION_IDS] = publishedIds + eventId
+                published = true
+            }
+        }
+        return published
+    }
+
     /** Dismiss only [appId]'s cue; any other queued admission's cue is untouched. */
     suspend fun clearSharedGameAnnouncement(appId: Long) {
         store.edit { prefs ->
@@ -1163,6 +1212,7 @@ class SettingsDataStore internal constructor(
      */
     suspend fun clearAccountDerivedState() {
         store.edit { prefs ->
+            prefs.remove(progressAlertHandoffsKey)
             prefs.remove(Keys.LIVE_SESSION_APP_ID)
             prefs.remove(Keys.LIVE_SESSION_STARTED_AT)
             prefs.remove(Keys.CLOUD_READ_POSITION)
@@ -1196,6 +1246,7 @@ class SettingsDataStore internal constructor(
             prefs.remove(Keys.SHARED_CANDIDATE_FIRST_OBSERVED_AT)
             prefs.remove(Keys.SHARED_GAME_NOT_A_GAME_APP_IDS)
             prefs.remove(Keys.SHARED_GAME_ANNOUNCEMENT_ENTRIES)
+            prefs.remove(Keys.PUBLISHED_SHARED_ADMISSION_IDS)
             prefs.remove(Keys.LAST_CELEBRATED_LEVEL)
             prefs.remove(Keys.LAST_CELEBRATED_STREAK_MILESTONE)
             prefs.remove(Keys.LAST_QUEST_CELEBRATED_DATE)

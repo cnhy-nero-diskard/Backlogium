@@ -186,6 +186,7 @@ internal fun SettingsGraphScreen(
                 onCancelSteamAssetDownload = viewModel::cancelSteamAssetDownload,
                 onLiveMonitorEnabledChanged = viewModel::onLiveMonitorEnabledChanged,
                 onAchievementWatchChanged = viewModel::onAchievementWatchChanged,
+                onProgressAlertChanged = viewModel::onProgressAlertChanged,
                 onFieldChanged = viewModel::onFieldChanged,
                 onQuestModeChanged = viewModel::onQuestModeChanged,
                 onAdvancedExpandedChanged = viewModel::setAdvancedExpanded,
@@ -276,6 +277,7 @@ data class SettingsActions(
     val onDownloadSteamAssets: (SteamAssetDownloadMode) -> Unit = {},
     val onCancelSteamAssetDownload: () -> Unit = {},
     val onLiveMonitorEnabledChanged: (Boolean) -> Unit,
+    val onProgressAlertChanged: (com.example.backlogium.data.notifications.ProgressCategory, Boolean) -> Unit = { _, _ -> },
     val onAchievementWatchChanged: (com.example.backlogium.domain.AchievementWatchPreferences) -> Unit = {},
     val onFieldChanged: (RuleField, String) -> Unit,
     val onQuestModeChanged: (QuestMode) -> Unit,
@@ -432,6 +434,7 @@ internal fun GameplaySettingsContent(
         onEnabledChanged = actions.onLiveMonitorEnabledChanged,
     )
     AchievementWatchSettings(state.achievementWatch, state.liveMonitorEnabled, actions.onAchievementWatchChanged)
+    ProgressAlertSettings(state.progressAlerts, actions.onProgressAlertChanged)
     SectionHeader(stringResource(R.string.settings_section_family_sharing))
     ManualSharedGameCard(state, actions)
     if (state.removedSharedGames.isNotEmpty()) {

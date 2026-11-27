@@ -214,6 +214,7 @@ class AchievementRepository @Inject constructor(
     private val network: AchievementNetwork? = null,
     private val diagnostics: SyncRunRecorder? = null,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
+    private val progressAlerts: com.example.backlogium.data.notifications.ProgressAlerts? = null,
 ) {
 
     /**
@@ -1201,6 +1202,17 @@ class AchievementRepository @Inject constructor(
             }.map { it.copy(retired = true) }
         } else {
             emptyList()
+        }
+        // A retained locked row proves prior incompleteness; only the incoming set must cover the accepted catalogue.
+        val expectedNames = catalogue?.entries(refresh.appId)?.map { it.apiName }?.toSet().orEmpty()
+        val previousActive = existing.filterNot { it.retired }
+        if (refresh.account != null && metadata?.playerStateFetchedAt != null &&
+            expectedNames.isNotEmpty() && incomingNames == expectedNames &&
+            previousActive.any { !it.unlocked && it.apiName in expectedNames } &&
+            rows.isNotEmpty() && rows.all { it.unlocked }
+        ) {
+            progressAlerts?.completion(refresh.account, refresh.appId,
+                gameDao.getById(refresh.appId)?.name ?: "App ${refresh.appId}")
         }
         val rowsToWrite = rows + retired
         if (rowsToWrite.isNotEmpty()) achievementDao.upsertAll(rowsToWrite)

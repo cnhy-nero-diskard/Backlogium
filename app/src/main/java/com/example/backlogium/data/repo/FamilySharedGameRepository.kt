@@ -94,6 +94,7 @@ class FamilySharedGameRepository @Inject constructor(
     private val admissionDao: AchievementAdmissionDao,
     private val admissionScheduler: AchievementAdmissionWorkScheduler,
     private val accountChangeMarker: AccountChangeMarkerStore,
+    private val progressAlerts: com.example.backlogium.data.notifications.ProgressAlerts? = null,
 ) {
 
     /** Removed games, newest first. Empty when nothing has been removed, so Settings can hide. */
@@ -340,6 +341,7 @@ class FamilySharedGameRepository @Inject constructor(
                 admissionDao.insert(
                     AchievementAdmissionWork(notificationAccount, admittedGeneration, appId, observedAt),
                 )
+                progressAlerts?.admission(notificationAccount, admittedGeneration, appId, info.name, shared = true)
             }
             AdmissionDecision.Admit
         }
@@ -351,7 +353,7 @@ class FamilySharedGameRepository @Inject constructor(
         // and background enrichment would resolve them later anyway.
         runCatching { genres.storeGenres(appId, info.genres, info.categories) }
         clearCandidateIfCurrent(appId)
-        if (notificationAccount != null && !notifier.notifyAdmitted(notificationAccount, appId, info.name)) {
+        if (notificationAccount != null && progressAlerts == null && !notifier.notifyAdmitted(notificationAccount, appId, info.name)) {
             settings.setSharedGameAnnouncement(appId, info.name, time.nowMillis())
         }
         return decision

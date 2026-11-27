@@ -255,6 +255,7 @@ data class SettingsUiState(
     val hasSteamAssetInventory: Boolean = false,
     /** Explicit opt-in to poll Steam every 30 seconds before a game is detected. */
     val liveMonitorEnabled: Boolean = false,
+    val progressAlerts: Map<com.example.backlogium.data.notifications.ProgressCategory, Boolean> = com.example.backlogium.data.notifications.ProgressCategory.entries.associateWith { it.defaultEnabled },
     val achievementWatch: com.example.backlogium.domain.AchievementWatchPreferences = com.example.backlogium.domain.AchievementWatchPreferences(),
     /** True once historical Steam playtime has been imported (one-time). */
     val historyImported: Boolean = false,
@@ -478,6 +479,8 @@ class SettingsViewModel @Inject constructor(
         )
     }.combine(settings.liveMonitorEnabled) { state, monitorEnabled ->
         state.copy(liveMonitorEnabled = monitorEnabled)
+    }.combine(settings.progressAlerts) { state, preferences ->
+        state.copy(progressAlerts = preferences)
     }.combine(settings.achievementWatch) { state, preferences ->
         state.copy(achievementWatch = preferences)
     }.combine(settings.cloudPresenceRefilingApplied) { state, applied ->
@@ -1420,6 +1423,10 @@ class SettingsViewModel @Inject constructor(
     /** Enqueue a one-time full achievement refresh, regardless of charging/wifi conditions. */
     fun reconcileNow() {
         viewModelScope.launch { profileRepository.reconcileNow() }
+    }
+
+    fun onProgressAlertChanged(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) = viewModelScope.launch {
+        settings.setProgressAlert(category, enabled)
     }
 
     fun onAchievementWatchChanged(preferences: com.example.backlogium.domain.AchievementWatchPreferences) = viewModelScope.launch {

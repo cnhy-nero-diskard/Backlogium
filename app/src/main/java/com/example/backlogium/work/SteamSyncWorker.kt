@@ -204,6 +204,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val recoveryReadStatus: RecoveryReadStatusStore,
     private val achievementAdmissionScheduler: AchievementAdmissionWorkScheduler,
     private val achievementAdmissionDao: AchievementAdmissionDao,
+    private val progressAlerts: com.example.backlogium.data.notifications.ProgressAlerts,
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
@@ -788,6 +789,11 @@ class SteamSyncWorker @AssistedInject constructor(
                     admittedAt = now,
                 )
             })
+        }
+
+        admissionAppIds.forEach { appId ->
+            progressAlerts.admission(steamId, checkNotNull(accountGeneration), appId,
+                gameDao.getById(appId)?.name ?: "App $appId", shared = false)
         }
 
         // This is the only achievement write path for an inline poll, and it is deliberately

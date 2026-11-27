@@ -20,6 +20,7 @@ class AccountRoomReset @Inject constructor(
             database.achievementDao().deleteAll()
             database.achievementWatchDao().deleteAll()
             database.achievementAdmissionDao().deleteAll()
+            database.progressAlertDao().deleteAll()
             database.achievementCatalogueDao().clearEntries()
             database.achievementCatalogueDao().clearCache()
             database.gameGenreCacheDao().deleteAll()
