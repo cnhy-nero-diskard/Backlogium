@@ -97,6 +97,26 @@ class SessionRepositoryRecoveryProjectionTest {
     fun tearDown() = db.close()
 
     @Test
+    fun insightHistoryReadsPositiveCanonicalBoundariesAndExcludesHiddenAndSelectedDates() = runTest {
+        val earlier = day.minusDays(40)
+        val host = db.sessionDao().insert(session(10L, earlier, 20))
+        db.sessionDao().insert(session(11L, earlier, 0))
+        db.sessionDao().insert(session(12L, day, 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("boundary-timed", 10L, 20))
+        recovery.insertTimedPlacements(listOf(timed("boundary-share", "boundary-timed", 10L, host, 20, day.minusDays(2))))
+        recovery.insertContributionChecked(contribution("boundary-allocation", 13L, 15))
+        recovery.insertAllocations(listOf(allocation("boundary-leaf", "boundary-allocation", 13L, earlier, 15, RecoveryAllocationMethods.SINGLE_DAY)))
+        db.sessionDao().insert(session(14L, earlier, 10))
+        hidden.hide(listOf(14L))
+
+        val bounds = sessions.activityBoundariesBefore(zone, day).first()
+        assertEquals(setOf(10L, 13L), bounds.keys)
+        assertEquals(RecordedActivityBounds(day.minusDays(2), day.minusDays(2)), bounds[10L])
+        assertEquals(RecordedActivityBounds(earlier, earlier), bounds[13L])
+    }
+
+    @Test
     fun dailyBreakdownAndHistoryUseFrozenActivityAndAnAllocationOnlyPagingFloor() = runTest {
         val old = day.minusDays(36)
         val timedDate = day.minusDays(1)

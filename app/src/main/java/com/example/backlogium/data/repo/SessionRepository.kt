@@ -504,6 +504,31 @@ class SessionRepository @Inject constructor(
         }
     }
 
+    /** Grouped history boundaries, never an unbounded list of historical activity rows. */
+    fun activityBoundariesBefore(zone: ZoneId, before: LocalDate): Flow<Map<Long, RecordedActivityBounds>> {
+        suspend fun read(dao: SessionDao): Map<Long, RecordedActivityBounds> {
+            val dates = mutableMapOf<Long, RecordedActivityBounds>()
+            fun add(appId: Long, first: LocalDate, last: LocalDate) {
+                val old = dates[appId]
+                dates[appId] = RecordedActivityBounds(
+                    minOf(first, old?.first ?: first), maxOf(last, old?.last ?: last),
+                )
+            }
+            dao.positiveSessionBoundariesBefore(before.atStartOfDay(zone).toInstant().toEpochMilli())
+                .forEach { add(it.appId, PlaytimeReadProjector.sessionDate(it.firstAt, zone), PlaytimeReadProjector.sessionDate(it.lastAt, zone)) }
+            dao.positiveFrozenBoundariesBefore(before.toString()).forEach {
+                add(it.appId, LocalDate.parse(it.firstDate), LocalDate.parse(it.lastDate))
+            }
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            dao.activeRecoveryRecipesSnapshot().filterNot { it.appId in hidden }.forEach {
+                positiveRecipeBoundsBefore(it.toCredit(), before)?.let { bounds -> add(it.appId, bounds.first, bounds.last) }
+            }
+            return dates
+        }
+        return if (database != null) coherentRecoverySnapshot { read(it) }
+        else sessionDao.observeRecoveryProjectionInvalidation().map { read(sessionDao) }
+    }
+
     /**
      * Personal Pace training totals over the inclusive [firstDateInclusive, lastDateInclusive]
      * window (tasks 9.1-9.3). Closed sessions contribute their unlinked legacy remainder on their
@@ -957,3 +982,34 @@ private fun String.toAllocationMethod(): PlaytimeAllocationMethod = when (this) 
 }
 
 private fun String.toLocalDateOrNull(): LocalDate? = runCatching { LocalDate.parse(this) }.getOrNull()
+
+/** Earliest/latest positive recorded date strictly before a selected period. */
+data class RecordedActivityBounds(val first: LocalDate, val last: LocalDate)
+
+/** Find recipe boundaries arithmetically, without expanding its historical date window. */
+internal fun positiveRecipeBoundsBefore(recipe: RecipeCredit, before: LocalDate): RecordedActivityBounds? {
+    if (recipe.pending) return null
+    val start = recipe.dateStart ?: return null
+    val end = minOf(recipe.dateEnd ?: return null, before.minusDays(1))
+    val ranges = com.example.backlogium.domain.PlaytimeAllocationRecipes.normalizeRanges(
+        recipe.fullyResolvedDateRanges + recipe.fullyResolvedDates.map { it..it },
+    )
+    val arithmetic = com.example.backlogium.domain.PlaytimeAllocationRecipes
+    fun eligibleThrough(date: LocalDate): Long =
+        (arithmetic.calendarDays(start, date) - arithmetic.excludedCount(ranges, start, date)).toLong()
+    val tailStart = maxOf(start, recipe.materializedThroughDate?.plusDays(1) ?: start)
+    if (tailStart > end) return null
+    val firstRank = eligibleThrough(tailStart.minusDays(1)) + 1
+    val lastRank = minOf(eligibleThrough(end), if (recipe.baseMinutes > 0) Long.MAX_VALUE else recipe.remainderCount)
+    if (firstRank > lastRank) return null
+    fun dateAtRank(rank: Long): LocalDate {
+        var low = tailStart.toEpochDay()
+        var high = end.toEpochDay()
+        while (low < high) {
+            val mid = low + (high - low) / 2
+            if (eligibleThrough(LocalDate.ofEpochDay(mid)) >= rank) high = mid else low = mid + 1
+        }
+        return LocalDate.ofEpochDay(low)
+    }
+    return RecordedActivityBounds(dateAtRank(firstRank), dateAtRank(lastRank))
+}

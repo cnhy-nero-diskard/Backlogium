@@ -1312,6 +1312,8 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun activeRecoveryTimedPlacementsSnapshot(): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> =
         emptyList()
     override fun observeRecoveryProjectionInvalidation(): Flow<Long> = flowOf(0L)
+    override suspend fun positiveSessionBoundariesBefore(beforeMillis: Long): List<com.example.backlogium.data.local.dao.GameActivityInstants> = emptyList()
+    override suspend fun positiveFrozenBoundariesBefore(beforeDate: String): List<com.example.backlogium.data.local.dao.GameActivityDates> = emptyList()
     override suspend fun hiddenAppIdsSnapshot(): List<Long> = emptyList()
     override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
         flowOf(emptyList())
