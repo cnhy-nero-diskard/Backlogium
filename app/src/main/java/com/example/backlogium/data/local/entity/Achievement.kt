@@ -5,11 +5,12 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 
 /**
- * A Steam achievement for a game, keyed by ([appId], [apiName]). [unlocked]/[unlockedAt]/
- * [globalPercent] are refreshed on every sync; [snapshotPercent] is the global unlock percent
- * captured the first sync that observed the achievement unlocked, and is never overwritten
- * afterward — it, not the live [globalPercent], drives the engine's rarity/XP (see the
- * add-steam-achievements design's rarity-drift policy).
+ * A Steam achievement for a game, keyed by ([appId], [apiName]). [unlocked] and [globalPercent]
+ * are refreshed on every sync. [unlockedAt] retains its prior positive value while the achievement
+ * remains unlocked and Steam omits its time, but clears on a reported relock. [snapshotPercent] is
+ * the global unlock percent captured the first sync that observed the achievement unlocked, and
+ * is never overwritten afterward — it, not the live [globalPercent], drives the engine's rarity/XP
+ * (see the add-steam-achievements design's rarity-drift policy).
  *
  * [description] and [hidden] come from the achievement schema (enhance-game-detail). [description]
  * is nullable and not backfilled: rows stored before it was retained keep null until their game's

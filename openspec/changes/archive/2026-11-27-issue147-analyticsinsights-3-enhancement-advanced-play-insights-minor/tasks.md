@@ -15,6 +15,11 @@
 - [x] 3.1 Integrate genre, time, achievement and record sections with metric-specific missing coverage and text equivalents. Verify narrow, large-text and offline states and re-record affected baselines.
 - [x] 3.2 Exercise account and period changes through the whole view. Verify historical scope remains legible and lifetime rarity retains its independent behavior.
 
+## 4. Portable completion evidence
+
+- [x] 4.1 Bind exported completion observations to the Room snapshot identity; reject mismatched credentials and cover the capture/transaction interleaving.
+- [x] 4.2 Preserve supported unlock dates through a production refresh merge when the still-unlocked response has no date, and document same-account backup merge semantics.
+
 ## Validation
 
 - Core-insights prerequisite verified in the canonical ledger and comparison path.

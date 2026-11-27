@@ -52,6 +52,7 @@ private data class ExportSnapshot(
     val gamePreferences: List<GamePreference>,
     /** The active account's recovery graph, read in the same transaction as everything else. */
     val recovery: BackupRecovery,
+    val steamId64: String,
 )
 
 /**
@@ -63,7 +64,9 @@ private data class ExportSnapshot(
  * cannot produce a file combining games from before it with sessions/aggregates from after — Room
  * gives every read the same consistent snapshot rather than serializing the export against the
  * sync. `settings`/`credentials` are read *before* opening it: they cannot join a Room transaction,
- * and they do not participate in the cross-table invariants a hybrid would violate.
+ * and they do not participate in the cross-table invariants a hybrid would violate. The captured
+ * credential identity is checked against the profile in the Room snapshot before it can label any
+ * account-scoped evidence.
  */
 @Singleton
 class BackupExportMapper @Inject constructor(
@@ -96,18 +99,27 @@ class BackupExportMapper @Inject constructor(
     suspend fun buildExport(): BackupFile {
         val config = settings.ruleConfigFlow.first()
         val sortPrefs = settings.librarySortFlow.first()
-        val steamId64FromCredentials = credentials.currentCredentials()?.steamId
+        val steamId64FromCredentials = credentials.currentCredentials()?.steamId?.takeIf(String::isNotBlank)
 
         val snapshot = transaction.run {
             val profile = playerProfileDao.get() ?: PlayerProfile()
-            val account = steamId64FromCredentials ?: profile.steamId
+            val profileSteamId = profile.steamId.takeIf(String::isNotBlank)
+            check(
+                steamId64FromCredentials == null || profileSteamId == null ||
+                    steamId64FromCredentials == profileSteamId,
+            ) { "Backup export credentials do not match the Room profile" }
+            val account = steamId64FromCredentials ?: profileSteamId.orEmpty()
             val games = gameDao.getAll()
+            val completions = gameAchievementSyncDao.getAll().filter { it.completedAt != null }
+            check(account.isNotBlank() || completions.isEmpty()) {
+                "Cannot export achievement completion evidence without a Steam identity"
+            }
             ExportSnapshot(
+                steamId64 = account,
                 games = games,
                 excludedSharedGames = excludedSharedGameDao.getAll(),
                 achievements = achievementDao.getAllUnlocked(),
-                achievementCompletions = gameAchievementSyncDao.getAll()
-                    .filter { it.completedAt != null },
+                achievementCompletions = completions,
                 sessions = sessionDao.getAll(),
                 days = dailyProgressDao.getAllOrdered(),
                 hltb = hltbDataDao.getAll(),
@@ -121,7 +133,7 @@ class BackupExportMapper @Inject constructor(
         }
         val (games, excludedSharedGames, achievements, achievementCompletions, sessions, days, hltb, profile, collections, collectionMembers) = snapshot
 
-        val steamId64 = steamId64FromCredentials ?: profile.steamId
+        val steamId64 = snapshot.steamId64
 
         return BackupFile(
             formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
@@ -131,7 +143,7 @@ class BackupExportMapper @Inject constructor(
             games = games.map { it.toBackup() },
             excludedSharedGames = excludedSharedGames.map { it.toBackup() },
             achievements = achievements.map { it.toBackup() },
-            achievementCompletions = if (steamId64.isBlank()) emptyList() else achievementCompletions
+            achievementCompletions = achievementCompletions
                 .sortedBy { it.appId }
                 .map { BackupAchievementCompletion(steamId64, it.appId, requireNotNull(it.completedAt).toIso8601()) },
             sessions = sessions.map { it.toBackup() },

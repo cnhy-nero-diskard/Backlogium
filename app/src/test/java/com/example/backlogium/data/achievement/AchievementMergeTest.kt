@@ -106,6 +106,32 @@ class AchievementMergeTest {
     }
 
     @Test
+    fun missingUnlockTimeRetainsDateForContinuouslyUnlockedAchievement() {
+        val prior = stored().copy(unlockedAt = 1_700_000_000_000L)
+
+        val row = merge(
+            dto = PlayerAchievementDto(apiName = "ACH_WIN", achieved = 1, unlocktime = 0L),
+            prior = prior,
+        )
+
+        assertEquals(prior.unlockedAt, row.unlockedAt)
+    }
+
+    @Test
+    fun relockThenUndatedUnlockDoesNotReusePreviousUnlockDate() {
+        val prior = stored().copy(unlockedAt = 1_700_000_000_000L)
+        val locked = merge(dto = locked(), prior = prior)
+
+        assertNull(locked.unlockedAt)
+        val relocked = merge(
+            dto = PlayerAchievementDto(apiName = "ACH_WIN", achieved = 1, unlocktime = 0L),
+            prior = locked,
+        )
+
+        assertNull(relocked.unlockedAt)
+    }
+
+    @Test
     fun aLockedAchievementCapturesNoSnapshot() {
         val row = merge(dto = locked(), globalPercent = 42.0, prior = null)
 

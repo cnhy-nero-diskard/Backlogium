@@ -46,7 +46,12 @@ object AchievementMerge {
             // Steam's GetPlayerAchievements reports unlocktime in epoch seconds; every consumer of
             // Achievement.unlockedAt (History, backup export/validation, rarity comparisons) expects
             // epoch millis like every other timestamp in the schema.
-            unlockedAt = dto.unlocktime.takeIf { it > 0L }?.times(1000L),
+            unlockedAt = when {
+                !unlocked -> null
+                dto.unlocktime > 0L -> dto.unlocktime * 1000L
+                prior?.unlocked == true -> prior.unlockedAt
+                else -> null
+            },
             globalPercent = globalPercent ?: prior?.globalPercent,
             snapshotPercent = snapshotPercent,
             description = schema?.description?.takeIf { it.isNotBlank() } ?: prior?.description,

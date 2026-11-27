@@ -19,6 +19,7 @@ None.
 
 - `play-insights` — Genre, timing, achievement, and personal record definitions.
 - `app-ui` — Accessible advanced Analytics sections and coverage labels.
+- `backup-restore` — Portable, account-bound completion observations.
 
 ## Impact
 
