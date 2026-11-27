@@ -8,5 +8,11 @@
 
 ## 2. Accessible insights presentation
 
-- [ ] 2.1 Add compact core sections and activity calendar with shared day selection. Verify exact dates, granularity for long windows and accessible navigation without precise chart touch.
-- [ ] 2.2 Exercise period switches and offline read behavior using sparse and representative activity fixtures. Verify no stale values are relabelled and re-record affected baselines.
+- [x] 2.1 Add compact core sections and activity calendar with shared day selection. Verify exact dates, granularity for long windows and accessible navigation without precise chart touch.
+- [x] 2.2 Exercise period switches and offline read behavior using sparse and representative activity fixtures. Verify no stale values are relabelled and re-record affected baselines.
+
+## Validation
+
+- 2,578 app unit tests and 53 gamification tests passed; debug APK build and Android lint passed with the existing lint baseline.
+- Analytics Roborazzi baselines re-recorded and verified, including narrow 1.5× text captures for core facts and calendar navigation.
+- Host Compose tests cover exact zero-minute date inspection, month navigation, weekly/monthly trends, retained snapshots and period switches. Room tests exercise local canonical reads, hidden titles and recovery-date boundaries.

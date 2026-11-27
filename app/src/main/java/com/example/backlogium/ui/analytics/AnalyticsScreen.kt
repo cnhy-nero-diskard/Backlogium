@@ -230,6 +230,7 @@ internal fun AnalyticsContent(
                     .fillMaxWidth()
                     .height(180.dp),
             )
+            CorePlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
@@ -246,7 +247,8 @@ internal fun AnalyticsContent(
             )
         } else {
             DailyPlaytimeChart(
-                days = chartDays,
+                visibleDays = chartDays,
+                windowLength = state.window.length,
                 representedDays = state.dailyMinutes,
                 questThreshold = state.questThreshold,
                 gamesByDate = state.gamesByDate,
@@ -258,6 +260,7 @@ internal fun AnalyticsContent(
                 PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
             }
 
+            CorePlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
@@ -705,7 +708,8 @@ internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
  */
 @Composable
 private fun DailyPlaytimeChart(
-    days: List<AnalyticsDay>,
+    visibleDays: List<AnalyticsDay>,
+    windowLength: AnalyticsWindowLength,
     representedDays: List<AnalyticsDay>,
     questThreshold: Int,
     gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
@@ -719,14 +723,17 @@ private fun DailyPlaytimeChart(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val chartHeight = 176.dp
 
-    val maxMinutes = niceChartMax(
-        maxOf(days.maxOfOrNull { it.minutes } ?: 0, questThreshold, 1),
-    )
-    val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
-    val totalMinutes = days.sumOf { it.minutes }
+    val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
     var selectedDate by remember {
-        mutableStateOf(initialAnalyticsDaySelection(days)?.let { days[it].date })
+        mutableStateOf(initialAnalyticsDaySelection(visibleDays)?.let { visibleDays[it].date })
     }
+    // Include an inspected zero-minute date even while the daily plot omits quiet dates.
+    val days = (visibleDays + representedDays.filter { it.date == selectedDate }).distinctBy { it.date }.sortedBy { it.date }
+    val grouped = windowLength == AnalyticsWindowLength.NINETY_DAYS || windowLength == AnalyticsWindowLength.ONE_YEAR
+    val plottedDays = analyticsTrendDays(if (grouped) representedDays else days, windowLength)
+    val selectedPlotIndex = plottedDays.indexOfLast { selectedDate != null && !it.date.isAfter(selectedDate) }
+    val maxMinutes = niceChartMax(maxOf(plottedDays.maxOfOrNull { it.minutes } ?: 0, if (grouped) 0 else questThreshold, 1))
+    val totalMinutes = representedDays.sumOf { it.minutes }
     val selectedIndex = days.indexOfFirst { it.date == selectedDate }
         .takeIf { it >= 0 } ?: initialAnalyticsDaySelection(days) ?: -1
     val selectDay: (Int) -> Unit = { requestedIndex ->
@@ -736,7 +743,7 @@ private fun DailyPlaytimeChart(
     SideEffect {
         if (selectedDate != selectedDay?.date) selectedDate = selectedDay?.date
     }
-    val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
+    val omittedDateCount = if (grouped) 0 else (representedDays.size - days.size).coerceAtLeast(0)
     val dateGapDescriptions = analyticsDateGaps(representedDays, days, selectedIndex)
         .map { analyticsDateGapLabel(it, dayFormatter) }
     val previousDayLabel = stringResource(R.string.analytics_previous_day)
@@ -788,12 +795,10 @@ private fun DailyPlaytimeChart(
 
     Card(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(stringResource(R.string.analytics_daily_playtime), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(if (windowLength == AnalyticsWindowLength.ONE_YEAR) R.string.analytics_monthly_playtime else if (grouped) R.string.analytics_weekly_playtime else R.string.analytics_daily_playtime), style = MaterialTheme.typography.titleSmall)
                 Text(
                     text = stringResource(
                         R.string.analytics_chart_select_day,
@@ -827,17 +832,17 @@ private fun DailyPlaytimeChart(
                             .semantics {
                                 contentDescription = chartSummary
                             }
-                            .pointerInput(days, maxMinutes) {
+                            .pointerInput(plottedDays, maxMinutes) {
                                 detectTapGestures { offset ->
-                                    if (days.isNotEmpty()) {
-                                        selectDay((offset.x / (size.width / days.size)).toInt())
+                                    if (plottedDays.isNotEmpty()) {
+                                        selectedDate = plottedDays[(offset.x / (size.width / plottedDays.size)).toInt().coerceIn(plottedDays.indices)].date
                                     }
                                 }
                             },
                     ) {
                         val w = size.width
                         val h = size.height
-                        if (days.isEmpty()) return@Canvas
+                        if (plottedDays.isEmpty()) return@Canvas
 
                         // Quiet gridlines make the scale visible without competing with the data.
                         listOf(0f, 0.5f).forEach { fraction ->
@@ -850,13 +855,13 @@ private fun DailyPlaytimeChart(
                             )
                         }
 
-                        val barSlot = w / days.size
+                        val barSlot = w / plottedDays.size
                         val barWidth = (barSlot * 0.68f).coerceAtLeast(2f)
                         val gap = (barSlot - barWidth).coerceAtLeast(0f) / 2f
 
-                        days.forEachIndexed { index, day ->
+                        plottedDays.forEachIndexed { index, day ->
                             val left = index * barSlot + gap
-                            if (index == selectedIndex) {
+                            if (index == selectedPlotIndex) {
                                 drawRoundRect(
                                     color = barColor.copy(alpha = 0.12f),
                                     topLeft = Offset(index * barSlot + 1f, 0f),
@@ -869,7 +874,7 @@ private fun DailyPlaytimeChart(
                             val top = h - barHeight
                             if (day.minutes > 0) {
                                 drawRoundRect(
-                                    color = if (index == selectedIndex) barColor else barColor.copy(alpha = 0.72f),
+                                    color = if (index == selectedPlotIndex) barColor else barColor.copy(alpha = 0.72f),
                                     topLeft = Offset(left, top),
                                     size = Size(barWidth, barHeight),
                                     cornerRadius = CornerRadius(4f, 4f),
@@ -886,7 +891,7 @@ private fun DailyPlaytimeChart(
                         }
 
                         // Quest threshold reference line (dashed).
-                        if (questThreshold > 0) {
+                        if (questThreshold > 0 && !grouped) {
                             val y = h - (questThreshold.toFloat() / maxMinutes) * h
                             drawLine(
                                 color = thresholdColor.copy(alpha = 0.85f),
@@ -906,14 +911,13 @@ private fun DailyPlaytimeChart(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        days.firstOrNull()?.let {
+                        (if (grouped) representedDays else days).firstOrNull()?.let {
                             Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
                         }
-                        days.lastOrNull()?.let {
+                        (if (grouped) representedDays else days).lastOrNull()?.let {
                             Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
                         }
                     }
@@ -931,7 +935,7 @@ private fun DailyPlaytimeChart(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            Row(
+            if (!grouped) Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -994,6 +998,7 @@ private fun DailyPlaytimeChart(
                     )
                 }
             }
+            AnalyticsActivityCalendar(representedDays, selectedDay?.date) { selectedDate = it }
             selectedDay?.let { day ->
                 Spacer(Modifier.height(12.dp))
                 Row(

@@ -37,6 +37,7 @@ alter the goldens:
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
+  --tests com.example.backlogium.ui.analytics.CorePlayInsightsUiTest `
   --no-daemon
 ```
 
@@ -45,6 +46,7 @@ screen, state, theme, and viewport:
 
 - `main/<screen>/<state>/<theme>/<viewport>.png` contains the 20 core cells.
 - `alternatives/<screen>/<state>/dark/standard.png` contains the bounded edge-state cells.
+- `alternatives/analytics/{core-large,calendar-large}/dark/narrow.png` covers core facts and exact-date calendar navigation at 1.5× text size.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
 - `detail/<state>/<theme>/<viewport>.png` covers owned, shared-overlay, missing-data, and achievement states.
 - `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.
@@ -54,7 +56,7 @@ ignored. They must not be committed as baselines.
 
 ## Verify baselines locally
 
-Verification never records or rewrites tracked PNGs. Run it with the same five screenshot test
+Verification never records or rewrites tracked PNGs. Run it with the same screenshot test
 classes used by CI:
 
 ```powershell
@@ -67,6 +69,7 @@ classes used by CI:
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.SetupRecoveryScreenshotStandardTest `
+  --tests com.example.backlogium.ui.analytics.CorePlayInsightsUiTest `
   --offline --no-daemon
 ```
 

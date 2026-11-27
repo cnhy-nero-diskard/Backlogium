@@ -68,4 +68,14 @@ class AnalyticsPlayInsightsTest {
             AnalyticsDay(date.minusDays(4), 0)))
         assertEquals(AnalyticsQuestOutcomeSummary(1, 2, 1), summary)
     }
+    @Test fun longTrendsConserveMinutesAndUseCalendarBoundaries() {
+        val days = (0L..89L).map { AnalyticsDay(date.minusDays(89 - it), 10) }
+        val weeks = analyticsTrendDays(days, AnalyticsWindowLength.NINETY_DAYS)
+        val months = analyticsTrendDays(days, AnalyticsWindowLength.ONE_YEAR)
+        assertEquals(900, weeks.sumOf { it.minutes })
+        assertEquals(900, months.sumOf { it.minutes })
+        assertTrue(weeks.size in 13..14)
+        assertEquals(4, months.size)
+        assertEquals(days, analyticsTrendDays(days, AnalyticsWindowLength.THIRTY_DAYS))
+    }
 }

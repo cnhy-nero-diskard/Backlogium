@@ -929,4 +929,25 @@
     <string name="progress_alerts_vibration_on">Channel vibration enabled</string>
     <string name="progress_alerts_vibration_off">Channel vibration disabled</string>
     <string name="progress_alerts_channel_settings">Sound and vibration settings</string>
+    <string name="analytics_core_insights">Core play insights</string>
+    <string name="analytics_period_facts">%1$s: %2$s min · %3$d active dates · %4$d games</string>
+    <string name="analytics_minutes_change">Playtime change: %1$s%%</string>
+    <string name="analytics_distinct_games">Distinct played games: %1$d</string>
+    <string name="analytics_first_recorded">First recorded: %1$s</string>
+    <string name="analytics_returned">Returned after 30 full dates without recorded play: %1$s</string>
+    <string name="analytics_remaining_games">Remaining games</string>
+    <string name="analytics_play_share">%1$s: %2$s min · %3$s%% of visible dated play</string>
+    <string name="analytics_focus_share">Focus with today’s tags: %1$s / %2$s visible dated minutes</string>
+    <string name="analytics_active_quest_consistency">Quest met on %1$d / %2$d active dates with known outcomes; %3$d active dates unavailable</string>
+    <string name="analytics_median_duration">Finalized sessions · median %1$s min</string>
+    <string name="analytics_session_under_30">Below 30 min: %1$d sessions</string>
+    <string name="analytics_session_30_59">30–59 min: %1$d sessions</string>
+    <string name="analytics_session_60_119">60–119 min: %1$d sessions</string>
+    <string name="analytics_session_120_plus">120 min or more: %1$d sessions</string>
+    <string name="analytics_activity_calendar">Activity calendar · select an exact date</string>
+    <string name="analytics_calendar_previous">Previous month</string>
+    <string name="analytics_calendar_next">Next month</string>
+    <string name="analytics_calendar_day">%1$s: %2$s</string>
+    <string name="analytics_weekly_playtime">Weekly playtime</string>
+    <string name="analytics_monthly_playtime">Monthly playtime</string>
 </resources>
