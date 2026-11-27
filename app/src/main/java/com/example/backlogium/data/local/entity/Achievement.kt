@@ -2,6 +2,7 @@ package com.example.backlogium.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Index
 
 /**
  * A Steam achievement for a game, keyed by ([appId], [apiName]). [unlocked]/[unlockedAt]/
@@ -19,6 +20,7 @@ import androidx.room.ForeignKey
 @Entity(
     tableName = "achievements",
     primaryKeys = ["appId", "apiName"],
+    indices = [Index("unlockedAt")],
     foreignKeys = [
         ForeignKey(
             entity = Game::class,

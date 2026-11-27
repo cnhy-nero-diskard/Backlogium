@@ -1164,6 +1164,7 @@ class AchievementRepository @Inject constructor(
                     hasAchievements = metadata?.hasAchievements,
                     checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
                     globalPercentagesFetchedAt = refresh.fetchedAt,
+                    completedAt = metadata?.completedAt,
                 ),
             )
         }
@@ -1206,11 +1207,11 @@ class AchievementRepository @Inject constructor(
         // A retained locked row proves prior incompleteness; only the incoming set must cover the accepted catalogue.
         val expectedNames = catalogue?.entries(refresh.appId)?.map { it.apiName }?.toSet().orEmpty()
         val previousActive = existing.filterNot { it.retired }
-        if (refresh.account != null && metadata?.playerStateFetchedAt != null &&
+        val completedTransition = metadata?.playerStateFetchedAt != null &&
             expectedNames.isNotEmpty() && incomingNames == expectedNames &&
             previousActive.any { !it.unlocked && it.apiName in expectedNames } &&
             rows.isNotEmpty() && rows.all { it.unlocked }
-        ) {
+        if (completedTransition && refresh.account != null) {
             progressAlerts?.completion(refresh.account, refresh.appId,
                 gameDao.getById(refresh.appId)?.name ?: "App ${refresh.appId}")
         }
@@ -1225,6 +1226,7 @@ class AchievementRepository @Inject constructor(
                 checkedAt = maxOf(metadata?.checkedAt ?: Long.MIN_VALUE, refresh.fetchedAt),
                 globalPercentagesFetchedAt = if (globalPercentagesFresh) refresh.fetchedAt
                     else metadata?.globalPercentagesFetchedAt,
+                completedAt = metadata?.completedAt ?: refresh.fetchedAt.takeIf { completedTransition },
             ),
         )
         return true

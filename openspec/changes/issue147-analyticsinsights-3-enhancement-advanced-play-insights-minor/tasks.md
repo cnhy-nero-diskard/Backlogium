@@ -7,8 +7,8 @@
 
 ## 2. Achievements and records
 
-- [ ] 2.1 Add bounded dated unlock and completion evidence, including prospective transition persistence if required. Verify unavailable dates, rarity snapshots, first baseline and unsupported historical completion.
-- [ ] 2.2 Define and compute scoped records with stable ties. Verify longest session, busiest and most varied days, per-game runs, rarest dated unlock, and returns with dated evidence.
+- [x] 2.1 Add bounded dated unlock and completion evidence, including prospective transition persistence if required. Verify unavailable dates, rarity snapshots, first baseline and unsupported historical completion.
+- [x] 2.2 Define and compute scoped records with stable ties. Verify longest session, busiest and most varied days, per-game runs, rarest dated unlock, and returns with dated evidence.
 
 ## 3. Advanced presentation
 

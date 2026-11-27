@@ -107,6 +107,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_49_50,
         BacklogiumDatabase.MIGRATION_50_51,
         BacklogiumDatabase.MIGRATION_51_52,
+        BacklogiumDatabase.MIGRATION_52_53,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -125,6 +126,23 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_12_13,
         *allMigrationsFromV13,
     )
+
+    @Test fun v52ToV53DoesNotInventCompletionDates() {
+        val name = "migration-insights-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 52).use { db ->
+                db.execSQL("INSERT INTO games (appId, name, iconUrl, playtimeForever, playtime2Weeks, lastPlaytime, isGoal, lastSyncedAt, backfillMinutes, source, manualSharedMinutes) VALUES (10, 'Existing', '', 0, 0, 0, 0, 1, 0, 'STEAM_OWNED', 0)")
+                db.execSQL("INSERT INTO game_achievement_sync (appId, playerStateFetchedAt, hasAchievements, checkedAt) VALUES (10, 100, 1, 100)")
+            }
+            migrationTestHelper.runMigrationsAndValidate(name, 53, true, BacklogiumDatabase.MIGRATION_52_53).use { db ->
+                db.query("SELECT playerStateFetchedAt, completedAt FROM game_achievement_sync").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(100L, it.getLong(0))
+                    assertTrue(it.isNull(1))
+                }
+            }
+        } finally { context.deleteDatabase(name) }
+    }
 
     @Test fun v51ToV52KeepsAdmissionIdentityAndStartsWithoutHistoricalNotifications() {
         val name = "migration-progress-alerts-${System.nanoTime()}"
@@ -2010,6 +2028,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_49_50,
                 BacklogiumDatabase.MIGRATION_50_51,
                 BacklogiumDatabase.MIGRATION_51_52,
+                BacklogiumDatabase.MIGRATION_52_53,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())

@@ -128,7 +128,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 52,
+    version = 53,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -146,6 +146,7 @@ abstract class BacklogiumDatabase : RoomDatabase() {
     abstract fun achievementCatalogueDao(): AchievementCatalogueDao
     abstract fun achievementWatchDao(): AchievementWatchDao
     abstract fun achievementAdmissionDao(): AchievementAdmissionDao
+    abstract fun achievementInsightsDao(): com.example.backlogium.data.local.dao.AchievementInsightsDao
     abstract fun achievementDao(): AchievementDao
     abstract fun cloudReadDao(): CloudReadDao
     abstract fun pendingCloudEvidenceDao(): PendingCloudEvidenceDao
@@ -163,6 +164,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
 
     companion object {
         const val NAME = "backlogium.db"
+
+        val MIGRATION_52_53 = object : Migration(52, 53) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE game_achievement_sync ADD COLUMN completedAt INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_game_achievement_sync_completedAt ON game_achievement_sync(completedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_achievements_unlockedAt ON achievements(unlockedAt)")
+            }
+        }
 
         val MIGRATION_51_52 = object : Migration(51, 52) {
             override fun migrate(db: SupportSQLiteDatabase) {

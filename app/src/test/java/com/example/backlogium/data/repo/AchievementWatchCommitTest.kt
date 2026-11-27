@@ -78,6 +78,20 @@ class AchievementWatchCommitTest {
     private suspend fun commit(refresh: AchievementRefresh, baseline: Set<String>? = emptySet(), valid: () -> Boolean = { true }) =
         repo.commitWatch("fixture-account", "epoch", refresh, baseline, valid)
 
+    @Test fun completionDatesRequireAPriorLockedBaselineAndSurviveLaterReads() = runBlocking {
+        val catalogue = db.achievementCatalogueDao()
+        catalogue.upsert(listOf(com.example.backlogium.data.local.entity.AchievementCatalogueEntry(1, "first", "First", null, null, false, 5.0)))
+        commit(reading(1, true, 5.0), null)
+        assertNull(db.gameAchievementSyncDao().get(1)!!.completedAt)
+        commit(reading(2, false, 5.0), null)
+        commit(reading(3, true, 5.0), null)
+        assertEquals(3L, db.gameAchievementSyncDao().get(1)!!.completedAt)
+        commit(reading(4, true, 10.0), null)
+        assertEquals(3L, db.gameAchievementSyncDao().get(1)!!.completedAt)
+        repo.applyRefreshes(listOf(reading(5, true, 20.0).copy(achievements = null)))
+        assertEquals(3L, db.gameAchievementSyncDao().get(1)!!.completedAt)
+    }
+
     @Test fun deferredUnlockWritesNothingThenRetriesExactlyOneGroup() = runBlocking {
         val baseline = commit(reading(1, false), null) as AchievementRepository.WatchCommit.Committed
         assertTrue(baseline.unlocked.isEmpty())
