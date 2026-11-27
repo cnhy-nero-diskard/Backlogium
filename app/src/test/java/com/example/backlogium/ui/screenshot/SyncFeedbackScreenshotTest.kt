@@ -116,7 +116,13 @@ abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
         compose.waitForIdle()
         if (scene == "settings-partial") compose.onNodeWithText("2 games changed").assertExists()
         if (scene == "setup-fetching") compose.onNodeWithText("0 / 0 processed", substring = true).assertDoesNotExist()
-        compose.onRoot().captureRoboImage("sync-feedback/$scene/${if (dark) "dark" else "light"}/$viewport.png")
+        val path = "sync-feedback/$scene/${if (dark) "dark" else "light"}/$viewport.png"
+        val root = compose.onRoot()
+        if (scene == "offline-library") {
+            root.captureLibraryGradientScreenshot(path)
+        } else {
+            root.captureRoboImage(path)
+        }
     }
 }
 

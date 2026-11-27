@@ -56,8 +56,17 @@ initial snapshots, reconnection, subscription cleanup and legacy progress payloa
   dark Library selection, and offline Library in both themes and viewports. Visual
   comparison shows matching layout and labels, with differences concentrated in
   card gradients and progress fills. All nine CI `*_actual.png` files are
-  byte-identical across the two runs. This remains an unresolved remote CI gate;
-  no further run was triggered because publishing is out of scope.
+  byte-identical across the two runs. Those failures were unresolved at that
+  checkpoint; the follow-up below records the bounded comparison fix. No remote
+  run was triggered because publishing is out of scope.
+- CI run #852 (`46033414568`, commit `23179d8`) repeated those nine mismatches. Its
+  artifacts report 3–14 differing pixels per 320×720 or 412×915 image (at most
+  0.0057% of pixels), with no layout or text movement. The screenshot verifier now
+  permits at most 0.01% differing pixels only for the Library gradient captures;
+  all other captures retain the default zero-changed-pixel threshold. No baselines
+  were re-recorded. The CI-equivalent 136-screenshot command passed locally after
+  this change. A post-fix GitHub run is not claimed because the branch remains
+  uncommitted and unpublished.
 
 ## Existing baseline drift
 
