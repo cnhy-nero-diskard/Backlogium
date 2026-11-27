@@ -172,14 +172,37 @@ data class TimeOfDayPattern(
 internal fun deriveTimeOfDayPattern(
     sessions: List<PlaySession>,
     zone: ZoneId,
-): TimeOfDayPattern = sessions.fold(TimeOfDayPattern()) { acc, session ->
-    val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
-    when (hour) {
-        in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
-        in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
-        in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
-        else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
+): TimeOfDayPattern = sessions.asSequence().filter { it.minutes > 0 }
+    .fold(TimeOfDayPattern()) { acc, session ->
+        val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
+        when (hour) {
+            in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
+            in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
+            in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
+            else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
+        }
     }
+
+internal data class AnalyticsTimingInsights(
+    val sessionInsights: SessionInsights,
+    val timeOfDayPattern: TimeOfDayPattern,
+    val finalizedStatisticsUnavailable: Boolean,
+    val timeOfDayUnavailable: Boolean,
+)
+
+internal fun deriveAnalyticsTimingInsights(
+    sessions: List<PlaySession>,
+    totalMinutes: Int,
+    zone: ZoneId,
+): AnalyticsTimingInsights {
+    val sessionInsights = deriveSessionInsights(sessions)
+    val timeOfDayPattern = deriveTimeOfDayPattern(sessions, zone)
+    return AnalyticsTimingInsights(
+        sessionInsights = sessionInsights,
+        timeOfDayPattern = timeOfDayPattern,
+        finalizedStatisticsUnavailable = totalMinutes > 0 && sessionInsights.sessionCount == 0,
+        timeOfDayUnavailable = totalMinutes > 0 && timeOfDayPattern.peakBucket == null,
+    )
 }
 
 /** A factual first sentence for the selected Analytics window. */
@@ -292,10 +315,12 @@ data class AnalyticsUiState(
      */
     val familySharedMinutes: Int = 0,
     /**
-     * True when this window has played minutes but no timestamped sessions: session-shape and
-     * time-of-day insights must say timing is unavailable rather than show measured zeros.
+     * True when this window has play but no finalized positive-duration sessions for session-shape
+     * statistics. Session-start attribution has an independent availability policy below.
      */
-    val timingUnavailable: Boolean = false,
+    val finalizedSessionStatsUnavailable: Boolean = false,
+    /** True when played minutes exist but no positive timestamped session can supply a start hour. */
+    val timeOfDayUnavailable: Boolean = false,
     /** Authorized recovered minutes with no valid date window yet; disclosed separately. */
     val pendingDateUnknownMinutes: Int = 0,
     /** Each represented day's estimated-window facts, for the chart day `!` explanation. */
@@ -579,19 +604,13 @@ class AnalyticsViewModel @Inject constructor(
                 previousEndDateExclusive = comparisonBounds?.endInclusive?.plusDays(1),
             )
         } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
-        val allocationsFlow: Flow<List<CreditedAllocation>> = resolved.activityBounds?.let { bounds ->
-            sessionRepository.datedAllocationsBetween(
-                startInclusiveDate = bounds.start,
-                endInclusiveDate = bounds.endInclusive,
-            )
-        } ?: flowOf(emptyList())
         combine(
-            combine(sessionsFlow, ledgerSnapshotFlow, allocationsFlow) { sessions, ledger, allocations ->
+            combine(sessionsFlow, ledgerSnapshotFlow) { sessions, ledger ->
                 AnalyticsWindowed(
                     sessions = sessions,
                     datedTotals = ledger.selected,
                     previousTotals = ledger.previous,
-                    allocations = allocations,
+                    allocations = ledger.allocations,
                     history = ledger.history,
                 )
             },
@@ -699,14 +718,7 @@ class AnalyticsViewModel @Inject constructor(
                 )
             }
 
-        val sessionInsights = deriveSessionInsights(inputs.sessions)
-
-        val timeOfDayPattern = deriveTimeOfDayPattern(inputs.sessions, time.zone())
-
-        // Session-shape and time-of-day inputs stay session-only. A period with played minutes but
-        // zero sessions is an allocations-only window: the chart and totals are honest, while the
-        // session insights must state that timing is unavailable rather than show measured zeros.
-        val timingUnavailable = totalMinutes > 0 && sessionInsights.sessionCount == 0
+        val timingInsights = deriveAnalyticsTimingInsights(inputs.sessions, totalMinutes, time.zone())
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,
@@ -750,11 +762,12 @@ class AnalyticsViewModel @Inject constructor(
             activeQuestConsistency = deriveActiveQuestConsistency(dailyMinutes),
             rarityBreakdown = rarityBreakdown,
             rarestAchievements = rarestAchievements,
-            sessionInsights = sessionInsights,
-            timeOfDayPattern = timeOfDayPattern,
+            sessionInsights = timingInsights.sessionInsights,
+            timeOfDayPattern = timingInsights.timeOfDayPattern,
             gamesByDate = gamesByDate,
             familySharedMinutes = familySharedMinutes,
-            timingUnavailable = timingUnavailable,
+            finalizedSessionStatsUnavailable = timingInsights.finalizedStatisticsUnavailable,
+            timeOfDayUnavailable = timingInsights.timeOfDayUnavailable,
             pendingDateUnknownMinutes = inputs.pendingDateUnknownMinutes,
             estimatedSharesByDate = inputs.allocations.groupBy { it.date }
                 .mapValues { (_, list) -> recoveryShares(list) },

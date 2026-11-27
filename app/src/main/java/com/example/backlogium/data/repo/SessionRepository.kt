@@ -513,6 +513,8 @@ class SessionRepository @Inject constructor(
             return coherentRecoverySnapshot { dao ->
                 val hidden = dao.hiddenAppIdsSnapshot().toSet()
                 val recipes = dao.activeRecoveryRecipesSnapshot()
+                val fromIso = startDateInclusive.toString()
+                val toExclusiveIso = endDateExclusive.toString()
                 DatedActivityLedgerSnapshot(
                     selected = dao.readDatedCreditedTotalsSnapshot(
                         zone, startDateInclusive, endDateExclusive, hidden, recipes,
@@ -527,8 +529,25 @@ class SessionRepository @Inject constructor(
                             recipes,
                         )
                     },
+                    allocations = PlaytimeReadProjector.creditedAllocationsBetween(
+                        timedShares = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso)
+                            .filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                        allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso)
+                            .filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocation::toCredit),
+                        recipes = recipes.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocationRecipe::toCredit),
+                        startDateInclusive = startDateInclusive,
+                        endDateInclusive = endDateExclusive.minusDays(1),
+                    ),
                 )
             }
+        }
+        val allocations = if (startDateInclusive < endDateExclusive) {
+            datedAllocationsBetween(startDateInclusive, endDateExclusive.minusDays(1))
+        } else {
+            flowOf(emptyList())
         }
         val previous = if (previousStartDateInclusive == null) flowOf(emptyList()) else {
             datedCreditedTotalsBetween(
@@ -539,7 +558,10 @@ class SessionRepository @Inject constructor(
             datedCreditedTotalsBetween(zone, startDateInclusive, endDateExclusive),
             activityBoundariesBefore(zone, historyBefore),
             previous,
-        ) { selected, history, prior -> DatedActivityLedgerSnapshot(selected, history, prior) }
+            allocations,
+        ) { selected, history, prior, explanationRows ->
+            DatedActivityLedgerSnapshot(selected, history, prior, explanationRows)
+        }
     }
 
     /**
@@ -1066,6 +1088,8 @@ data class DatedActivityLedgerSnapshot(
     val selected: List<DatedCreditedTotal>,
     val history: Map<Long, RecordedActivityBounds>,
     val previous: List<DatedCreditedTotal>,
+    /** Bounded estimate explanations from the same ledger generation as [selected]. */
+    val allocations: List<CreditedAllocation> = emptyList(),
 )
 
 /** Find recipe boundaries arithmetically, without expanding its historical date window. */

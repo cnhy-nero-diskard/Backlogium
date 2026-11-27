@@ -4,6 +4,7 @@ import com.example.backlogium.domain.DatedCreditedTotal
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.LocalDate
+import java.time.ZoneId
 
 class AnalyticsPlayInsightsTest {
     private val date = LocalDate.of(2026, 11, 27)
@@ -51,6 +52,28 @@ class AnalyticsPlayInsightsTest {
         assertEquals(listOf(1, 2, 2, 1), insight.durationBuckets)
         assertNull(deriveSessionInsights(emptyList()).medianMinutes)
     }
+
+    @Test fun openSessionStartAttributionAndFinalizedStatisticsHaveIndependentAvailability() {
+        val open = com.example.backlogium.data.repo.PlaySession(
+            id = 1L,
+            appId = 1L,
+            startAt = date.atTime(19, 0).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli(),
+            minutes = 45,
+            open = true,
+        )
+        val ongoing = deriveAnalyticsTimingInsights(listOf(open), totalMinutes = 45, zone = ZoneId.of("UTC"))
+
+        assertTrue(ongoing.finalizedStatisticsUnavailable)
+        assertNull(ongoing.sessionInsights.medianMinutes)
+        assertEquals(45, ongoing.timeOfDayPattern.eveningMinutes)
+        assertFalse(ongoing.timeOfDayUnavailable)
+
+        val allocationOnly = deriveAnalyticsTimingInsights(emptyList(), totalMinutes = 45, zone = ZoneId.of("UTC"))
+        assertTrue(allocationOnly.finalizedStatisticsUnavailable)
+        assertTrue(allocationOnly.timeOfDayUnavailable)
+        assertNull(allocationOnly.timeOfDayPattern.peakBucket)
+    }
+
     @Test fun historicalFocusUsesCurrentMembershipWithoutChangingVisibleDenominator() {
         val totals = listOf(total(1L to 20L, 2L to 60L))
         assertEquals(AnalyticsFocusShare(20, 80), deriveFocusShare(totals, setOf(1)))

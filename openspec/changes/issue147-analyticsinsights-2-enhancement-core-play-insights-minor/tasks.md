@@ -14,5 +14,6 @@
 ## Validation
 
 - 2,578 app unit tests and 53 gamification tests passed; debug APK build and Android lint passed with the existing lint baseline.
-- Analytics Roborazzi baselines re-recorded and verified, including narrow 1.5× text captures for core facts and calendar navigation.
+- Reviewed CI #839's 10 Analytics screenshot diffs and re-recorded only those Analytics baselines, including both narrow populated variants. The focused Analytics Roborazzi verification passes.
+- The full 101-test local screenshot run passed all Analytics cases but reported five unchanged Library screenshot mismatches on macOS; those Library baselines were left untouched (they were unchanged in CI #839).
 - Host Compose tests cover exact zero-minute date inspection, month navigation, weekly/monthly trends, retained snapshots and period switches. Room tests exercise local canonical reads, hidden titles and recovery-date boundaries.

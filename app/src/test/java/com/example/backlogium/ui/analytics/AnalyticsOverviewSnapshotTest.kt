@@ -38,12 +38,14 @@ class AnalyticsOverviewSnapshotTest {
             topGames = listOf(allocatedGame),
             sessionInsights = SessionInsights(),
             timeOfDayPattern = TimeOfDayPattern(),
-            timingUnavailable = true,
+            finalizedSessionStatsUnavailable = true,
+            timeOfDayUnavailable = true,
         )
 
         assertTrue(allocationOnly.hasData)
         assertEquals(75, analyticsOverviewSnapshot(allocationOnly).totalMinutes)
-        assertTrue(allocationOnly.timingUnavailable)
+        assertTrue(allocationOnly.finalizedSessionStatsUnavailable)
+        assertTrue(allocationOnly.timeOfDayUnavailable)
         assertEquals(0, allocationOnly.sessionInsights.sessionCount)
         assertNull(allocationOnly.timeOfDayPattern.peakBucket)
     }

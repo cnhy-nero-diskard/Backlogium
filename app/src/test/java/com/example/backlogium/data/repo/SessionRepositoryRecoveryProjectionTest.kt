@@ -24,6 +24,8 @@ import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
 import com.example.backlogium.ui.analytics.deriveVariety
 import com.example.backlogium.ui.analytics.periodFacts
+import com.example.backlogium.ui.history.recoveryShares
+import com.example.backlogium.ui.history.toHistoryAllocationUi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
@@ -123,38 +125,77 @@ class SessionRepositoryRecoveryProjectionTest {
         val earlier = day.minusDays(40)
         db.sessionDao().insert(session(10L, earlier, 15))
         db.sessionDao().insert(session(10L, day, 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("allocation-only", 13L, 15))
+        recovery.insertAllocations(
+            listOf(allocation("allocation-only-v1", "allocation-only", 13L, day, 15, RecoveryAllocationMethods.SINGLE_DAY)),
+        )
         val ledger = probe(
             sessions.datedActivityLedgerSnapshot(
                 zone = zone,
-                startDateInclusive = day,
+                startDateInclusive = day.minusDays(1),
                 endDateExclusive = day.plusDays(1),
-                historyBefore = day,
+                historyBefore = day.minusDays(1),
                 previousStartDateInclusive = earlier,
                 previousEndDateExclusive = earlier.plusDays(1),
             ),
         )
 
-        fun assertVisible(snapshot: DatedActivityLedgerSnapshot) {
-            assertEquals(30L, periodFacts(snapshot.selected).minutes)
+        fun assertAligned(snapshot: DatedActivityLedgerSnapshot, expectedAllocationByDate: Map<LocalDate, Long>) {
+            val selectedByDateAndGame = snapshot.selected.flatMap { total ->
+                total.minutesByGame.map { (appId, minutes) -> (total.date to appId) to minutes }
+            }.toMap()
+            val explanationsByDate = snapshot.allocations.groupBy { it.date }.mapValues { (_, rows) ->
+                recoveryShares(rows.map { it.toHistoryAllocationUi() }).sumOf { it.shareMinutes.toLong() }
+            }
+            val selectedAllocationByDate = selectedByDateAndGame
+                .filterKeys { it.second == 13L }
+                .mapKeys { it.key.first }
+            assertEquals(expectedAllocationByDate, selectedAllocationByDate)
+            assertEquals(expectedAllocationByDate, explanationsByDate)
+            snapshot.allocations.forEach { allocation ->
+                assertTrue(allocation.minutes > 0)
+                assertTrue((selectedByDateAndGame[allocation.date to allocation.appId] ?: 0L) >= allocation.minutes.toLong())
+            }
+        }
+
+        fun assertVisible(snapshot: DatedActivityLedgerSnapshot, allocationDate: LocalDate) {
+            assertEquals(45L, periodFacts(snapshot.selected).minutes)
             assertEquals(15L, periodFacts(snapshot.previous).minutes)
             assertEquals(RecordedActivityBounds(earlier, earlier), snapshot.history[10L])
             val variety = deriveVariety(snapshot.selected, snapshot.history)
-            assertTrue(variety.firstRecorded.isEmpty())
+            assertEquals(listOf(13L), variety.firstRecorded)
             assertEquals(listOf(10L), variety.returned)
+            assertAligned(snapshot, mapOf(allocationDate to 15L))
         }
 
         try {
-            assertVisible(ledger.next())
+            assertVisible(ledger.next(), day)
 
-            hidden.hide(listOf(10L))
+            hidden.hide(listOf(13L))
             val hiddenSnapshot = ledger.next()
-            assertTrue(hiddenSnapshot.selected.isEmpty())
-            assertTrue(hiddenSnapshot.previous.isEmpty())
-            assertTrue(hiddenSnapshot.history.isEmpty())
+            assertEquals(30L, periodFacts(hiddenSnapshot.selected).minutes)
+            assertEquals(15L, periodFacts(hiddenSnapshot.previous).minutes)
+            assertEquals(RecordedActivityBounds(earlier, earlier), hiddenSnapshot.history[10L])
             assertTrue(deriveVariety(hiddenSnapshot.selected, hiddenSnapshot.history).firstRecorded.isEmpty())
+            assertAligned(hiddenSnapshot, emptyMap())
 
-            hidden.unhide(listOf(10L))
-            assertVisible(ledger.next())
+            hidden.unhide(listOf(13L))
+            assertVisible(ledger.next(), day)
+
+            db.withTransaction {
+                recovery.supersedeAllocationsUpTo("allocation-only", keepRevision = 2L)
+                recovery.insertAllocations(
+                    listOf(
+                        allocation(
+                            "allocation-only-v2", "allocation-only", 13L, day.minusDays(1), 15,
+                            RecoveryAllocationMethods.SINGLE_DAY, revision = 2L,
+                        ),
+                    ),
+                )
+            }
+            val corrected = ledger.next()
+            assertVisible(corrected, day.minusDays(1))
         } finally {
             ledger.job.cancelAndJoin()
         }
@@ -1049,10 +1090,10 @@ class SessionRepositoryRecoveryProjectionTest {
 
     private fun allocation(
         placementId: String, contributionId: String, appId: Long, date: LocalDate, minutes: Long,
-        method: String,
+        method: String, revision: Long = 1L,
     ) = UnknownTimeAllocation(
         placementId = placementId, contributionId = contributionId, account = account, appId = appId,
-        revision = 1L, date = date.toString(), minutes = minutes, method = method, zone = "UTC",
+        revision = revision, date = date.toString(), minutes = minutes, method = method, zone = "UTC",
         pendingDate = false, createdAt = 0L,
     )
 

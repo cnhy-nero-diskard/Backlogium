@@ -272,13 +272,13 @@ internal fun AnalyticsContent(
                 sessionCount = state.sessionInsights.sessionCount,
                 averageMinutes = state.sessionInsights.averageMinutes,
                 longestMinutes = state.sessionInsights.longestMinutes,
-                timingUnavailable = state.timingUnavailable,
+                statisticsUnavailable = state.finalizedSessionStatsUnavailable,
             )
 
             TimeOfDayCard(
                 pattern = state.timeOfDayPattern,
                 periodLabel = windowPeriodLabel(state.window, state.windowBounds),
-                timingUnavailable = state.timingUnavailable,
+                timeOfDayUnavailable = state.timeOfDayUnavailable,
             )
 
             RarityBreakdownCard(
@@ -1386,7 +1386,7 @@ private fun SessionInsightsCard(
     sessionCount: Int,
     averageMinutes: Int,
     longestMinutes: Int,
-    timingUnavailable: Boolean = false,
+    statisticsUnavailable: Boolean = false,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1401,7 +1401,7 @@ private fun SessionInsightsCard(
                 Text(stringResource(R.string.analytics_session_insights), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
-            if (timingUnavailable) {
+            if (statisticsUnavailable) {
                 // Played minutes exist, but none of them came from timestamped sessions: a
                 // "0 sessions" row would suggest measurement, so the honest answer is that
                 // session timing is unavailable for this period.
@@ -1441,7 +1441,7 @@ private fun SessionInsightsCard(
 private fun TimeOfDayCard(
     pattern: TimeOfDayPattern,
     periodLabel: String,
-    timingUnavailable: Boolean = false,
+    timeOfDayUnavailable: Boolean = false,
 ) {
     val peak = pattern.peakBucket
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1462,7 +1462,7 @@ private fun TimeOfDayCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            if (timingUnavailable) {
+            if (timeOfDayUnavailable) {
                 Text(
                     text = stringResource(R.string.analytics_time_of_day_unavailable),
                     style = MaterialTheme.typography.bodySmall,

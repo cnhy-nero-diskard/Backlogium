@@ -14,6 +14,7 @@ import com.example.backlogium.ui.screenshot.ScreenshotTestActivity
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import com.github.takahirom.roborazzi.captureRoboImage
 import java.time.LocalDate
+import java.time.ZoneId
 import org.junit.Before
 import org.junit.After
 import org.junit.Rule
@@ -73,6 +74,57 @@ class CorePlayInsightsUiTest {
         rule.onRoot().captureRoboImage("alternatives/analytics/core-large/dark/narrow.png")
         rule.onNodeWithText("120 min or more: 0 sessions").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Focus with today’s tags: 60 / 60 visible dated minutes").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun openSessionKeepsStartAttributionWhileFinalizedStatisticsStayUnavailable() {
+        val openSession = com.example.backlogium.data.repo.PlaySession(
+            id = 1L,
+            appId = 1L,
+            startAt = date.atTime(19, 0).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli(),
+            minutes = 45,
+            open = true,
+        )
+        val ongoing = deriveAnalyticsTimingInsights(listOf(openSession), 45, ZoneId.of("UTC"))
+        val allocated = deriveAnalyticsTimingInsights(emptyList(), 45, ZoneId.of("UTC"))
+        val game = AnalyticsGame(1, "Fixture game", "", 45)
+        val state = mutableStateOf(
+            fixture().copy(
+                headline = AnalyticsHeadline.LeadingGame(game),
+                dailyMinutes = listOf(AnalyticsDay(date, 45)),
+                topGames = listOf(game),
+                sessionInsights = ongoing.sessionInsights,
+                timeOfDayPattern = ongoing.timeOfDayPattern,
+                finalizedSessionStatsUnavailable = ongoing.finalizedStatisticsUnavailable,
+                timeOfDayUnavailable = ongoing.timeOfDayUnavailable,
+            ),
+        )
+        rule.setContent { BacklogiumTheme { AnalyticsContent(state.value) } }
+
+        rule.onNodeWithText("Finalized-session statistics are unavailable for this period.")
+            .performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Peak time: Evening").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Time of day is unavailable for this period", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("Finalized sessions · median", substring = true).assertDoesNotExist()
+
+        val allocatedGame = game.copy(estimatedMinutes = 45)
+        rule.runOnIdle {
+            state.value = state.value.copy(
+                headline = AnalyticsHeadline.LeadingGame(allocatedGame),
+                dailyMinutes = listOf(AnalyticsDay(date, 45, estimatedMinutes = 45)),
+                topGames = listOf(allocatedGame),
+                gamesByDate = mapOf(date to listOf(allocatedGame)),
+                sessionInsights = allocated.sessionInsights,
+                timeOfDayPattern = allocated.timeOfDayPattern,
+                finalizedSessionStatsUnavailable = allocated.finalizedStatisticsUnavailable,
+                timeOfDayUnavailable = allocated.timeOfDayUnavailable,
+            )
+        }
+
+        rule.onNodeWithText("Finalized-session statistics are unavailable for this period.")
+            .performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Time of day is unavailable for this period", substring = true)
+            .performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Peak time: Evening").assertDoesNotExist()
     }
 
     @Test fun periodSwitchReplacesLongTrendAndExactDayWithoutRelabellingRetainedData() {

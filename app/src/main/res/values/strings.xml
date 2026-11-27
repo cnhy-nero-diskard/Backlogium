@@ -763,7 +763,7 @@
         <item quantity="one">%s achievement</item>
         <item quantity="other">%s achievements</item>
     </plurals>
-    <string name="analytics_session_timing_unavailable">Session timing is unavailable for this period. Played minutes were recovered without exact session times.</string>
+    <string name="analytics_session_timing_unavailable">Finalized-session statistics are unavailable for this period.</string>
     <string name="analytics_time_of_day_unavailable">Time of day is unavailable for this period. Played minutes were recovered without exact session times.</string>
     <string name="analytics_estimated_day_total">%1$s played · %2$s estimated</string>
     <string name="analytics_recorded_estimated_accessibility">%1$s, of which %2$s estimated, without exact session times</string>
