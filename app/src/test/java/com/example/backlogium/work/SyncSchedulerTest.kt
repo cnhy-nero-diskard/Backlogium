@@ -3,8 +3,11 @@ package com.example.backlogium.work
 import android.content.Context
 import androidx.work.Configuration
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.await
@@ -40,6 +43,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.concurrent.TimeUnit
 
 /**
  * Covers the enqueue path itself — work names, [androidx.work.ExistingWorkPolicy]/
@@ -320,6 +324,77 @@ class SyncSchedulerTest {
     }
 
     @Test
+    fun `overlapping scheduled retry remains primary over a completed manual sync`() = runTest {
+        OverlapOperationWorker.reset()
+        val generation = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()).activeGeneration.first()!!
+        val periodic = PeriodicWorkRequestBuilder<OverlapOperationWorker>(15, TimeUnit.MINUTES)
+            .addTag("setup-account:$generation")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                OverlapOperationWorker.ROLE to OverlapOperationWorker.PERIODIC,
+            ))
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            SteamSyncWorker.UNIQUE_PERIODIC_NAME, ExistingPeriodicWorkPolicy.KEEP, periodic,
+        ).await()
+        WorkManagerTestInitHelper.getTestDriver(RuntimeEnvironment.getApplication())!!
+            .setPeriodDelayMet(periodic.id)
+        val periodicExecutionId = OverlapOperationWorker.periodicStarted.await()
+
+        val manual = OneTimeWorkRequestBuilder<OverlapOperationWorker>()
+            .addTag("setup-account:$generation")
+            .addTag("operation-requested:200")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                OverlapOperationWorker.ROLE to OverlapOperationWorker.MANUAL,
+            ))
+            .build()
+        workManager.enqueueUniqueWork(SteamSyncWorker.ONE_TIME_NAME, ExistingWorkPolicy.KEEP, manual).await()
+        OverlapOperationWorker.manualStarted.await()
+        assertEquals(WorkInfo.State.RUNNING,
+            workManager.getWorkInfoByIdFlow(manual.id).first { it?.state == WorkInfo.State.RUNNING }?.state)
+        OverlapOperationWorker.manualGate.complete(Unit)
+        workManager.getWorkInfoByIdFlow(manual.id).first { it?.state == WorkInfo.State.SUCCEEDED }
+        assertEquals(WorkInfo.State.RUNNING,
+            workManager.getWorkInfoByIdFlow(periodic.id).first { it?.state == WorkInfo.State.RUNNING }?.state)
+
+        val inFlight = scheduler.steamOperation.first {
+            it?.id == periodicExecutionId && it.status == OperationStatus.RUNNING
+        }!!
+        assertEquals(2, inFlight.counts?.processed)
+        assertEquals(8, inFlight.counts?.total)
+        assertTrue("the still-running scheduled operation keeps the sync action disabled",
+            scheduler.syncInProgress.first())
+
+        OverlapOperationWorker.periodicFirstAttemptGate.complete(Unit)
+        val backingOff = workManager.getWorkInfoByIdFlow(periodic.id).first {
+            it?.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0
+        }!!
+        assertEquals(WorkInfo.State.ENQUEUED, backingOff.state)
+        val retry = scheduler.steamOperation.first { it?.status == OperationStatus.RETRYING }!!
+        assertEquals(periodicExecutionId, retry.id)
+        assertEquals(2, retry.counts?.processed)
+
+        WorkManagerTestInitHelper.getTestDriver(RuntimeEnvironment.getApplication())!!
+            .setInitialDelayMet(periodic.id)
+        OverlapOperationWorker.retryStarted.await()
+        val retried = scheduler.steamOperation.first {
+            it?.id == periodicExecutionId && it.status == OperationStatus.RUNNING && it.counts?.processed == 4
+        }!!
+        assertEquals(8, retried.counts?.total)
+        OverlapOperationWorker.periodicRetryGate.complete(Unit)
+        OverlapOperationWorker.periodicFinished.await()
+        workManager.getWorkInfoByIdFlow(periodic.id).first {
+            it?.state == WorkInfo.State.ENQUEUED && it.runAttemptCount == 0
+        }
+
+        val terminal = scheduler.steamOperation.first { it?.status == OperationStatus.SUCCEEDED }!!
+        assertEquals("the later-started manual result is selected only after all active work ends",
+            OverlapOperationWorker.manualExecutionId, terminal.id)
+        assertEquals(5, terminal.counts?.processed)
+    }
+
+    @Test
     fun `setup correlates execution progress to its exact WorkManager request`() = runTest {
         val context = RuntimeEnvironment.getApplication()
         val generation = AccountChangeMarkerStore(context).activeGeneration.first()!!
@@ -382,5 +457,79 @@ class HeldOperationProgressWorker(context: Context, params: WorkerParameters) : 
     companion object {
         const val EXECUTION_ID = "execution_id"
         var gate = CompletableDeferred<Unit>()
+    }
+}
+
+class OverlapOperationWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val role = inputData.getString(ROLE) ?: error("Missing operation role")
+        val source = if (role == PERIODIC) OperationSource.PERIODIC else OperationSource.MANUAL
+        val generation = inputData.getLong(OP_ACCOUNT, 0L)
+        val store = OperationReportStore(applicationContext)
+        val report = store.begin(OperationChannel.STEAM, source, id.toString(), generation, runAttemptCount > 0)
+        val counts = when {
+            role == MANUAL -> OperationCounts(5, 5)
+            runAttemptCount == 0 -> OperationCounts(2, 8)
+            else -> OperationCounts(4, 8)
+        }
+        val progress = report.progress.copy(
+            phase = OperationPhase.ACHIEVEMENTS,
+            counts = counts,
+        )
+        setProgress(operationData(
+            id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
+            executionId = progress.id, startedAt = report.startedAt,
+        ))
+
+        if (role == MANUAL) {
+            manualExecutionId = progress.id
+            manualStarted.complete(progress.id)
+            manualGate.await()
+        } else if (runAttemptCount == 0) {
+            periodicStarted.complete(progress.id)
+            periodicFirstAttemptGate.await()
+            store.save(OperationChannel.STEAM, report.copy(
+                progress = progress.copy(status = OperationStatus.RETRYING),
+            ))
+            return Result.retry()
+        } else {
+            retryStarted.complete(progress.id)
+            periodicRetryGate.await()
+        }
+
+        store.save(OperationChannel.STEAM, report.copy(
+            progress = progress.copy(status = OperationStatus.SUCCEEDED),
+        ))
+        if (role == PERIODIC) periodicFinished.complete(Unit)
+        return Result.success(operationData(
+            id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
+            executionId = progress.id, startedAt = report.startedAt,
+        ))
+    }
+
+    companion object {
+        const val ROLE = "overlap_role"
+        const val PERIODIC = "periodic"
+        const val MANUAL = "manual"
+
+        lateinit var periodicStarted: CompletableDeferred<String>
+        lateinit var manualStarted: CompletableDeferred<String>
+        lateinit var retryStarted: CompletableDeferred<String>
+        lateinit var periodicFinished: CompletableDeferred<Unit>
+        lateinit var periodicFirstAttemptGate: CompletableDeferred<Unit>
+        lateinit var manualGate: CompletableDeferred<Unit>
+        lateinit var periodicRetryGate: CompletableDeferred<Unit>
+        var manualExecutionId: String? = null
+
+        fun reset() {
+            periodicStarted = CompletableDeferred()
+            manualStarted = CompletableDeferred()
+            retryStarted = CompletableDeferred()
+            periodicFinished = CompletableDeferred()
+            periodicFirstAttemptGate = CompletableDeferred()
+            manualGate = CompletableDeferred()
+            periodicRetryGate = CompletableDeferred()
+            manualExecutionId = null
+        }
     }
 }

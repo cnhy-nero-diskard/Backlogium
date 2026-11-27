@@ -125,7 +125,7 @@ class OperationReportingTest {
         val replacement = WorkInfo(UUID.randomUUID(), WorkInfo.State.ENQUEUED, emptySet())
 
         assertNull(periodicOperation(replacement, 3, report))
-        assertEquals("3:prior-cycle", periodicOperation(null, 3, report)?.progress?.id)
+        assertNull("a removed request cannot leave a stored execution active", periodicOperation(null, 3, report))
     }
 
     @Test fun `periodic backoff retains the attempted cycle identity and reports retrying`() {
@@ -143,5 +143,72 @@ class OperationReportingTest {
         assertEquals(OperationStatus.RETRYING, selected?.status)
         assertEquals(2, selected?.counts?.processed)
         assertNull(periodicOperation(retry, 4, report))
+    }
+
+    @Test fun `live periodic work outranks a newer manual terminal summary`() {
+        val periodicId = UUID.randomUUID()
+        val executionId = "3:periodic"
+        val running = WorkInfo(
+            periodicId,
+            WorkInfo.State.RUNNING,
+            setOf("setup-account:3"),
+            progress = operationData(
+                periodicId.toString(), 3, OperationPhase.ACHIEVEMENTS,
+                OperationCounts(3, 8), executionId = executionId, startedAt = 100,
+            ),
+        )
+        val manual = TimedOperation(
+            OperationProgress("manual", OperationStatus.SUCCEEDED, counts = OperationCounts(5, 5)),
+            startedAt = 200,
+        )
+        val report = StoredOperationReport(
+            periodicId.toString(), 3, 100,
+            OperationProgress(executionId, OperationStatus.RUNNING, OperationPhase.ACHIEVEMENTS,
+                OperationCounts(2, 8)),
+            OperationSource.PERIODIC,
+        )
+
+        val selected = latestOperation(listOfNotNull(manual, periodicOperation(running, 3, report)))
+
+        assertEquals(executionId, selected?.id)
+        assertEquals(OperationStatus.RUNNING, selected?.status)
+        assertEquals(3, selected?.counts?.processed)
+    }
+
+    @Test fun `known connectivity stop stays waiting and keeps the periodic execution progress`() {
+        val periodicId = UUID.randomUUID()
+        val waiting = WorkInfo(
+            periodicId, WorkInfo.State.ENQUEUED, emptySet(), runAttemptCount = 2,
+            stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+        )
+        val report = StoredOperationReport(
+            periodicId.toString(), 3, 100,
+            OperationProgress("3:cycle", OperationStatus.RUNNING, OperationPhase.ACHIEVEMENTS,
+                OperationCounts(2, 5, failed = 1)),
+            OperationSource.PERIODIC,
+        )
+
+        val selected = periodicOperation(waiting, 3, report)?.progress
+
+        assertEquals("3:cycle", selected?.id)
+        assertEquals(OperationStatus.WAITING, selected?.status)
+        assertEquals(2, selected?.counts?.processed)
+    }
+
+    @Test fun `cancelled periodic work reconciles its stored running report`() {
+        val periodicId = UUID.randomUUID()
+        val cancelled = WorkInfo(periodicId, WorkInfo.State.CANCELLED, emptySet())
+        val report = StoredOperationReport(
+            periodicId.toString(), 3, 100,
+            OperationProgress("3:cycle", OperationStatus.RUNNING, OperationPhase.ACHIEVEMENTS,
+                OperationCounts(2, 5)),
+            OperationSource.PERIODIC,
+        )
+
+        val selected = periodicOperation(cancelled, 3, report)?.progress
+
+        assertEquals("3:cycle", selected?.id)
+        assertEquals(OperationStatus.CANCELLED, selected?.status)
+        assertEquals(2, selected?.counts?.processed)
     }
 }

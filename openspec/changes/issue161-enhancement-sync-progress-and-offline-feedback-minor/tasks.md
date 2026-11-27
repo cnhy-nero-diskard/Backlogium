@@ -3,7 +3,7 @@
 ## 1. Operation reporting
 
 - [x] 1.1 Extend Steam sync and achievement refresh progress and outcome payloads. Verify determinate and indeterminate phases, partial success, retry, cancellation and stale operation rejection.
-- [x] 1.2 Connect progress to Setup's existing library stage and the two Settings operation rows. Verify inline achievement progress, queued work, stage independence, recreation, upgrade while work is pending and independent overlapping operations.
+- [x] 1.2 Connect progress to Setup's existing library stage and the two Settings operation rows. Verify inline achievement progress, queued work, stage independence, recreation, upgrade while work is pending and independent overlapping operations, including a live periodic retry overlapping a completed manual run.
 
 ## 2. Connectivity and action feedback
 
@@ -21,3 +21,4 @@
 - [x] 4.3 Add a delete-specific retry action for failed collection deletion in editor mode and cover it with a UI regression.
 - [x] 4.4 Extend migration chains through v54 and cover the v53-to-v54 nullable-evidence migration.
 - [x] 4.5 Re-run affected JVM, instrumentation, and screenshot checks; inspect repeated Library gradient diffs without re-recording baselines.
+- [x] 4.6 Keep periodic and one-time execution reports independent through overlap; verify live-work precedence, retry identity, removed/replaced WorkInfo, cancellation, and known connectivity stops.

@@ -230,6 +230,7 @@ class SteamSyncWorker @AssistedInject constructor(
     )
 
     private val trigger = inputData.getString(KEY_TRIGGER) ?: TRIGGER_PERIODIC
+    private val operationSource = if (trigger == TRIGGER_PERIODIC) OperationSource.PERIODIC else OperationSource.MANUAL
     private val workId = id.toString()
     private val operationId = if (trigger == TRIGGER_MANUAL) workId else UUID.randomUUID().toString()
     private var accountGeneration: Long? = null
@@ -270,7 +271,7 @@ class SteamSyncWorker @AssistedInject constructor(
             if (accountChangeMarker.pendingSteamId() != null || accountChangeMarker.generation() != admission.first ||
                 credentials.currentCredentials()?.steamId != admission.second?.steamId
             ) null else operationReports.begin(
-                OperationChannel.STEAM, workId, admission.first, retry = runAttemptCount > 0,
+                OperationChannel.STEAM, operationSource, workId, admission.first, retry = runAttemptCount > 0,
             )
         } ?: return setupSkipped("The Steam account changed before the sync could start.")
         executionId = execution.progress.id
@@ -668,6 +669,7 @@ class SteamSyncWorker @AssistedInject constructor(
                         StoredOperationReport(
                             workId, generation, startedAt,
                             OperationProgress(id, status, operationPhase, operationCounts, operationUpdated),
+                            operationSource,
                         ),
                     )
                 }

@@ -2,7 +2,6 @@ package com.example.backlogium.work
 
 import androidx.work.Data
 import androidx.work.WorkInfo
-import androidx.work.workDataOf
 import com.example.backlogium.domain.OperationCounts
 import com.example.backlogium.domain.OperationPhase
 import com.example.backlogium.domain.OperationProgress
@@ -69,9 +68,7 @@ internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgr
     val status = when (info.state) {
         WorkInfo.State.RUNNING -> OperationStatus.RUNNING
         WorkInfo.State.ENQUEUED -> when {
-            info.stopReason in setOf(WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
-                WorkInfo.STOP_REASON_CONSTRAINT_CHARGING, WorkInfo.STOP_REASON_CONSTRAINT_BATTERY_NOT_LOW,
-                WorkInfo.STOP_REASON_CONSTRAINT_DEVICE_IDLE, WorkInfo.STOP_REASON_CONSTRAINT_STORAGE_NOT_LOW) -> OperationStatus.WAITING
+            info.hasKnownConstraintStop() -> OperationStatus.WAITING
             info.runAttemptCount > 0 && info.stopReason == WorkInfo.STOP_REASON_NOT_STOPPED -> OperationStatus.RETRYING
             else -> OperationStatus.QUEUED
         }
@@ -99,29 +96,95 @@ internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgr
 internal data class TimedOperation(val progress: OperationProgress, val startedAt: Long)
 
 internal fun latestOperation(candidates: List<TimedOperation>): OperationProgress? =
-    candidates.maxWithOrNull(compareBy<TimedOperation>({ it.startedAt }, { it.progress.active }))?.progress
+    candidates.maxWithOrNull(compareBy<TimedOperation>({ it.progress.active }, { it.startedAt }))?.progress
 
 internal fun periodicOperation(
     info: WorkInfo?,
     generation: Long,
     stored: StoredOperationReport?,
 ): TimedOperation? {
+    return info?.let { workOperation(it, generation, stored, periodic = true) }
+}
+
+internal fun oneTimeOperation(
+    info: WorkInfo,
+    generation: Long,
+    stored: StoredOperationReport?,
+): TimedOperation? = workOperation(info, generation, stored, periodic = false)
+
+private fun workOperation(
+    info: WorkInfo,
+    generation: Long,
+    stored: StoredOperationReport?,
+    periodic: Boolean,
+): TimedOperation? {
     val report = stored?.takeIf {
-        it.generation == generation && (info == null || it.workId == info.id.toString())
+        it.generation == generation && it.workId == info.id.toString() &&
+            (it.source == OperationSource.LEGACY || it.source == if (periodic) OperationSource.PERIODIC else OperationSource.MANUAL)
     }
-    val live = info?.let { operationProgress(it, generation)?.let { progress ->
-        TimedOperation(progress, operationStartedAt(it) ?: operationRequestedAt(it) ?: 0L)
-    } }
-    return when {
-        info?.state == WorkInfo.State.RUNNING -> live ?: report?.timed()
-        info?.state == WorkInfo.State.ENQUEUED && info.runAttemptCount > 0 ->
-            (report?.takeIf { it.progress.status in setOf(OperationStatus.RUNNING, OperationStatus.RETRYING) }
-                ?.copy(progress = report.progress.copy(status = OperationStatus.RETRYING))?.timed()) ?: live
-        live != null && info?.state?.isFinished == true -> live
-        report != null -> report.timed()
-        else -> live?.takeIf { info?.state != WorkInfo.State.ENQUEUED }
+    val live = operationProgress(info, generation)
+    val data = if (info.state.isFinished) info.outputData else info.progress
+    val payloadExecutionId = data.getString(OP_EXECUTION_ID)
+    val reportMatchesLive = report != null && (payloadExecutionId == null || payloadExecutionId == report.progress.id)
+    val requestedAt = operationStartedAt(info) ?: operationRequestedAt(info) ?: 0L
+
+    fun fromReport(status: OperationStatus) = report?.let {
+        TimedOperation(
+            it.progress.copy(status = status, workId = it.workId),
+            it.startedAt,
+        )
+    }
+
+    fun fromLive(progress: OperationProgress) = TimedOperation(
+        progress.copy(workId = info.id.toString()),
+        if (reportMatchesLive && report!!.progress.id == progress.id) report.startedAt else requestedAt,
+    )
+
+    return when (info.state) {
+        WorkInfo.State.RUNNING -> when {
+            live != null && payloadExecutionId != null -> fromLive(live)
+            reportMatchesLive && report!!.progress.active -> fromReport(OperationStatus.RUNNING)
+            live != null -> fromLive(live)
+            reportMatchesLive -> fromReport(OperationStatus.RUNNING)
+            else -> null
+        }
+        WorkInfo.State.ENQUEUED -> {
+            val status = live?.status ?: enqueuedStatus(info)
+            when {
+                reportMatchesLive && report!!.progress.active -> fromReport(status)
+                periodic && reportMatchesLive && report!!.progress.status in terminalStatuses &&
+                    info.runAttemptCount == 0 && !info.hasKnownConstraintStop() -> report.timed()
+                live != null && (!periodic || info.runAttemptCount > 0 || info.hasKnownConstraintStop()) -> fromLive(live)
+                else -> null
+            }
+        }
+        WorkInfo.State.BLOCKED -> live?.let(::fromLive)
+        WorkInfo.State.CANCELLED -> live?.let(::fromLive)
+            ?: fromReport(OperationStatus.CANCELLED)
+        WorkInfo.State.FAILED -> live?.let(::fromLive)
+            ?: fromReport(OperationStatus.FAILED)
+        WorkInfo.State.SUCCEEDED -> live?.let(::fromLive)
+            ?: report?.takeIf { reportMatchesLive }?.let {
+                if (it.progress.active) fromReport(OperationStatus.SUCCEEDED) else it.timed()
+            }
     }
 }
+
+private val terminalStatuses = setOf(OperationStatus.CANCELLED, OperationStatus.SUCCEEDED, OperationStatus.PARTIAL, OperationStatus.FAILED)
+
+private fun enqueuedStatus(info: WorkInfo): OperationStatus = when {
+    info.hasKnownConstraintStop() -> OperationStatus.WAITING
+    info.runAttemptCount > 0 && info.stopReason == WorkInfo.STOP_REASON_NOT_STOPPED -> OperationStatus.RETRYING
+    else -> OperationStatus.QUEUED
+}
+
+private fun WorkInfo.hasKnownConstraintStop() = stopReason in setOf(
+    WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+    WorkInfo.STOP_REASON_CONSTRAINT_CHARGING,
+    WorkInfo.STOP_REASON_CONSTRAINT_BATTERY_NOT_LOW,
+    WorkInfo.STOP_REASON_CONSTRAINT_DEVICE_IDLE,
+    WorkInfo.STOP_REASON_CONSTRAINT_STORAGE_NOT_LOW,
+)
 
 internal fun operationStartedAt(info: WorkInfo): Long? =
     (if (info.state.isFinished) info.outputData else info.progress)

@@ -109,11 +109,20 @@ class SyncScheduler @Inject constructor(
         operationReports.observe(channel),
     ) { oneTime, periodic, generation, stored ->
         generation?.let { activeGeneration ->
+            val periodicInfo = periodic.firstOrNull()
             val candidates = oneTime.mapNotNull { info ->
-                operationProgress(info, activeGeneration)?.let { progress ->
-                    TimedOperation(progress, operationStartedAt(info) ?: operationRequestedAt(info) ?: 0L)
+                val report = stored.firstOrNull {
+                    it.workId == info.id.toString() &&
+                        (it.source == OperationSource.MANUAL || it.source == OperationSource.LEGACY)
                 }
-            } + listOfNotNull(periodicOperation(periodic.firstOrNull(), activeGeneration, stored))
+                oneTimeOperation(info, activeGeneration, report)
+            } + listOfNotNull(periodicInfo?.let { info ->
+                val report = stored.firstOrNull {
+                    it.workId == info.id.toString() &&
+                        (it.source == OperationSource.PERIODIC || it.source == OperationSource.LEGACY)
+                }
+                periodicOperation(info, activeGeneration, report)
+            })
             latestOperation(candidates)
         }
     }.distinctUntilChanged()

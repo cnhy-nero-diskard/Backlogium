@@ -41,6 +41,11 @@ class ReconciliationWorker @AssistedInject constructor(
     private var executionId: String? = null
     private var executionStartedAt: Long? = null
     private var admittedSteamId: String? = null
+    private val operationSource = if (tags.any { it.startsWith("operation-requested:") }) {
+        OperationSource.MANUAL
+    } else {
+        OperationSource.PERIODIC
+    }
 
     override suspend fun doWork(): Result {
         val inputGeneration = inputData.getLong(OP_ACCOUNT, Long.MIN_VALUE).takeUnless { it == Long.MIN_VALUE }
@@ -59,7 +64,7 @@ class ReconciliationWorker @AssistedInject constructor(
             accountChangeMarker.withAccountState {
                 if (!isAccountActive(admitted.generation, admitted.credentials?.steamId)) return@withAccountState null
                 val report = operationReports.begin(
-                    OperationChannel.ACHIEVEMENTS, id.toString(), admitted.generation,
+                    OperationChannel.ACHIEVEMENTS, operationSource, id.toString(), admitted.generation,
                     retry = runAttemptCount > 0,
                 )
                 report to diagnostics.begin(
@@ -214,6 +219,7 @@ class ReconciliationWorker @AssistedInject constructor(
                         StoredOperationReport(
                             id.toString(), reportGeneration, startedAt,
                             OperationProgress(reportId, status, phase, counts, updated),
+                            operationSource,
                         ),
                     )
                 }

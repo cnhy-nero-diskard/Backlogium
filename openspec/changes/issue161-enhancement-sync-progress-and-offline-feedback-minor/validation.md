@@ -57,16 +57,35 @@ initial snapshots, reconnection, subscription cleanup and legacy progress payloa
   comparison shows matching layout and labels, with differences concentrated in
   card gradients and progress fills. All nine CI `*_actual.png` files are
   byte-identical across the two runs. Those failures were unresolved at that
-  checkpoint; the follow-up below records the bounded comparison fix. No remote
-  run was triggered because publishing is out of scope.
+  checkpoint; the bounded comparison update and its later remote verification are
+  recorded below.
 - CI run #852 (`46033414568`, commit `23179d8`) repeated those nine mismatches. Its
   artifacts report 3–14 differing pixels per 320×720 or 412×915 image (at most
   0.0057% of pixels), with no layout or text movement. The screenshot verifier now
   permits at most 0.01% differing pixels only for the Library gradient captures;
   all other captures retain the default zero-changed-pixel threshold. No baselines
   were re-recorded. The CI-equivalent 136-screenshot command passed locally after
-  this change. A post-fix GitHub run is not claimed because the branch remains
-  uncommitted and unpublished.
+  this change. At that checkpoint no post-fix GitHub run had completed; the next
+  remote result is recorded below.
+
+## Latest review checkpoint
+
+- Confirmed the PR branch head is `9dc139c45a7a2b23073b742c9e1368bef36ca5a4`.
+  CI run [#853](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/46036766925)
+  completed successfully on that exact head, superseding the earlier screenshot
+  failures.
+- The focused operation-reporting, report-store, and scheduler JVM suites passed
+  locally (36 tests, no failures):
+  ```sh
+  ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest \
+    --tests 'com.example.backlogium.work.OperationReportingTest' \
+    --tests 'com.example.backlogium.work.OperationReportStoreTest' \
+    --tests 'com.example.backlogium.work.SyncSchedulerTest' --no-daemon
+  ```
+  This includes periodic/manual overlap through retry and terminal projection, as
+  well as removed, replaced, cancelled, and connectivity-stopped work.
+- The local review-resolution edits are uncommitted and unpublished as required;
+  CI #853 predates them and is not claimed as remote validation for these edits.
 
 ## Existing baseline drift
 
