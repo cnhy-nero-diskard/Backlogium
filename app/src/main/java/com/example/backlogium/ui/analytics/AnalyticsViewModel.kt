@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.DatedActivityLedgerSnapshot
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
@@ -306,6 +307,12 @@ data class AnalyticsUiState(
     val hasData: Boolean
         get() = dailyMinutes.any { it.minutes > 0 } || topGames.isNotEmpty()
 
+    /** Tracked windows and stored daily outcomes remain inspectable even when play is zero. */
+    val hasRepresentedEvidence: Boolean
+        get() = hasData || dailyMinutes.isNotEmpty() && (
+            earliestTrackedDate != null || dailyMinutes.any { it.estimatedMinutes > 0 || it.questMet != null }
+        )
+
     /**
      * Days actually represented as activity: the elapsed day count through today for the current
      * calendar month/year, otherwise the full period. Falls back to the period identity when no
@@ -337,6 +344,7 @@ private data class AnalyticsWindowed(
     val datedTotals: List<DatedCreditedTotal>,
     val previousTotals: List<DatedCreditedTotal>,
     val allocations: List<CreditedAllocation>,
+    val history: Map<Long, com.example.backlogium.data.repo.RecordedActivityBounds>,
 )
 
 /** A selected window remembers whether it should continue following the current period. */
@@ -555,28 +563,22 @@ class AnalyticsViewModel @Inject constructor(
             today = resolved.today,
             earliestTrackedDate = resolved.earliestTrackedDate,
         )
-        val previousMinutesFlow: Flow<List<DatedCreditedTotal>> = if (comparisonBounds == null) {
-            flowOf(emptyList())
-        } else {
-            sessionRepository.datedCreditedTotalsBetween(
-                zone = time.zone(),
-                startDateInclusive = comparisonBounds.start,
-                endDateExclusive = comparisonBounds.endInclusive.plusDays(1),
-            )
-        }
         val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
             sessionRepository.sessionsBetween(
                 startInclusiveMillis = bounds.startInclusiveMillis,
                 endExclusiveMillis = bounds.endExclusiveMillis,
             )
         } ?: flowOf(emptyList())
-        val datedTotalsFlow: Flow<List<DatedCreditedTotal>> = resolved.activityBounds?.let { bounds ->
-            sessionRepository.datedCreditedTotalsBetween(
+        val ledgerSnapshotFlow: Flow<DatedActivityLedgerSnapshot> = resolved.activityBounds?.let { bounds ->
+            sessionRepository.datedActivityLedgerSnapshot(
                 zone = time.zone(),
                 startDateInclusive = bounds.start,
                 endDateExclusive = bounds.endInclusive.plusDays(1),
+                historyBefore = bounds.start,
+                previousStartDateInclusive = comparisonBounds?.start,
+                previousEndDateExclusive = comparisonBounds?.endInclusive?.plusDays(1),
             )
-        } ?: flowOf(emptyList())
+        } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
         val allocationsFlow: Flow<List<CreditedAllocation>> = resolved.activityBounds?.let { bounds ->
             sessionRepository.datedAllocationsBetween(
                 startInclusiveDate = bounds.start,
@@ -584,22 +586,20 @@ class AnalyticsViewModel @Inject constructor(
             )
         } ?: flowOf(emptyList())
         combine(
-            combine(
-                sessionsFlow,
-                combine(datedTotalsFlow, resolved.activityBounds?.let {
-                    sessionRepository.activityBoundariesBefore(time.zone(), it.start)
-                } ?: flowOf(emptyMap())) { totals, history -> totals to history },
-                previousMinutesFlow,
-                allocationsFlow,
-            ) { sessions, datedTotals, previousTotals, allocations ->
-                AnalyticsWindowed(sessions, datedTotals.first, previousTotals, allocations) to datedTotals.second
+            combine(sessionsFlow, ledgerSnapshotFlow, allocationsFlow) { sessions, ledger, allocations ->
+                AnalyticsWindowed(
+                    sessions = sessions,
+                    datedTotals = ledger.selected,
+                    previousTotals = ledger.previous,
+                    allocations = allocations,
+                    history = ledger.history,
+                )
             },
             gameRepository.library,
             profileRepository.dailyProgress,
             profileRepository.profile,
             sessionRepository.pendingDateUnknownQuantity,
-        ) { windowed, library, dailyProgress, profile, pending ->
-            val (current, history) = windowed
+        ) { current, library, dailyProgress, profile, pending ->
             AnalyticsInputs(
                 window = resolved.window,
                 activityBounds = resolved.activityBounds,
@@ -607,7 +607,7 @@ class AnalyticsViewModel @Inject constructor(
                 datedTotals = current.datedTotals,
                 previousTotals = current.previousTotals,
                 comparisonBounds = comparisonBounds,
-                history = history,
+                history = current.history,
                 library = library,
                 dailyProgress = dailyProgress,
                 profile = profile,

@@ -109,11 +109,34 @@ internal fun AnalyticsActivityCalendar(days: List<AnalyticsDay>, selected: Local
     }
 }
 
+/** Aggregate bars retain their exact represented-date range, separate from the day inspector. */
+internal data class AnalyticsTrendBucket(
+    val start: LocalDate,
+    val endInclusive: LocalDate,
+    val minutes: Int,
+    val estimatedMinutes: Int,
+)
+
 /** Long trends are calendar weeks/months; their daily detail remains independently selectable. */
-internal fun analyticsTrendDays(days: List<AnalyticsDay>, length: AnalyticsWindowLength): List<AnalyticsDay> {
-    if (length != AnalyticsWindowLength.NINETY_DAYS && length != AnalyticsWindowLength.ONE_YEAR) return days
-    return days.groupBy { day ->
-        if (length == AnalyticsWindowLength.ONE_YEAR) day.date.withDayOfMonth(1)
-        else day.date.minusDays((day.date.dayOfWeek.value - 1).toLong())
-    }.map { (_, group) -> AnalyticsDay(group.first().date, group.sumOf { it.minutes }, group.sumOf { it.estimatedMinutes }) }
+internal fun analyticsTrendBuckets(
+    days: List<AnalyticsDay>,
+    length: AnalyticsWindowLength,
+): List<AnalyticsTrendBucket> {
+    val grouped = length == AnalyticsWindowLength.NINETY_DAYS || length == AnalyticsWindowLength.ONE_YEAR
+    val buckets = if (!grouped) {
+        days.map { listOf(it) }
+    } else {
+        days.groupBy { day ->
+            if (length == AnalyticsWindowLength.ONE_YEAR) day.date.withDayOfMonth(1)
+            else day.date.minusDays((day.date.dayOfWeek.value - 1).toLong())
+        }.values.toList()
+    }
+    return buckets.map { group ->
+        AnalyticsTrendBucket(
+            start = group.first().date,
+            endInclusive = group.last().date,
+            minutes = group.sumOf { it.minutes },
+            estimatedMinutes = group.sumOf { it.estimatedMinutes },
+        )
+    }
 }

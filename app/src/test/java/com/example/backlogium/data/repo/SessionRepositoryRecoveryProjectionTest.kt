@@ -22,6 +22,8 @@ import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
+import com.example.backlogium.ui.analytics.deriveVariety
+import com.example.backlogium.ui.analytics.periodFacts
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
@@ -114,6 +116,48 @@ class SessionRepositoryRecoveryProjectionTest {
         assertEquals(setOf(10L, 13L), bounds.keys)
         assertEquals(RecordedActivityBounds(day.minusDays(2), day.minusDays(2)), bounds[10L])
         assertEquals(RecordedActivityBounds(earlier, earlier), bounds[13L])
+    }
+
+    @Test
+    fun analyticsLedgerSnapshotKeepsVarietyAndComparisonInOneVisibilityGeneration() = runBlocking {
+        val earlier = day.minusDays(40)
+        db.sessionDao().insert(session(10L, earlier, 15))
+        db.sessionDao().insert(session(10L, day, 30))
+        val ledger = probe(
+            sessions.datedActivityLedgerSnapshot(
+                zone = zone,
+                startDateInclusive = day,
+                endDateExclusive = day.plusDays(1),
+                historyBefore = day,
+                previousStartDateInclusive = earlier,
+                previousEndDateExclusive = earlier.plusDays(1),
+            ),
+        )
+
+        fun assertVisible(snapshot: DatedActivityLedgerSnapshot) {
+            assertEquals(30L, periodFacts(snapshot.selected).minutes)
+            assertEquals(15L, periodFacts(snapshot.previous).minutes)
+            assertEquals(RecordedActivityBounds(earlier, earlier), snapshot.history[10L])
+            val variety = deriveVariety(snapshot.selected, snapshot.history)
+            assertTrue(variety.firstRecorded.isEmpty())
+            assertEquals(listOf(10L), variety.returned)
+        }
+
+        try {
+            assertVisible(ledger.next())
+
+            hidden.hide(listOf(10L))
+            val hiddenSnapshot = ledger.next()
+            assertTrue(hiddenSnapshot.selected.isEmpty())
+            assertTrue(hiddenSnapshot.previous.isEmpty())
+            assertTrue(hiddenSnapshot.history.isEmpty())
+            assertTrue(deriveVariety(hiddenSnapshot.selected, hiddenSnapshot.history).firstRecorded.isEmpty())
+
+            hidden.unhide(listOf(10L))
+            assertVisible(ledger.next())
+        } finally {
+            ledger.job.cancelAndJoin()
+        }
     }
 
     @Test

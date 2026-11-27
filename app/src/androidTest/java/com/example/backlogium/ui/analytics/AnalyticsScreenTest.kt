@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -47,7 +48,7 @@ class AnalyticsScreenTest {
         ).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Selected period").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Show chart options").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Active days only (default)").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Active days only for daily chart (default)").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(TAG_ANALYTICS_CHART_OPTIONS).performScrollTo().performClick()
         composeRule.onNodeWithText("Active days only").performScrollTo().assertIsDisplayed()
@@ -189,6 +190,61 @@ class AnalyticsScreenTest {
             "Recorded session minutes are grouped by local start hour",
             substring = true,
         ).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun allQuietRepresentedDatesRemainInspectableAcrossMonthNavigation() {
+        val start = LocalDate.of(2026, 1, 30)
+        val quietDays = listOf(
+            AnalyticsDay(start, 0),
+            AnalyticsDay(start.plusDays(1), 0, questMet = false),
+            AnalyticsDay(start.plusDays(2), 0, questMet = true),
+            AnalyticsDay(start.plusDays(3), 0),
+        )
+        val window = AnalyticsWindow(start.plusDays(3), AnalyticsWindowLength.ONE_YEAR)
+        setContent(
+            analyticsState(window = window).copy(
+                windowBounds = window.resolve(),
+                dailyMinutes = quietDays,
+                topGames = emptyList(),
+            ),
+        )
+
+        composeRule.onNodeWithTag(TAG_ANALYTICS_CHART).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Activity calendar · select an exact date")
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_ANALYTICS_PREVIOUS_DAY).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithText("Previous month").performScrollTo().performClick()
+        composeRule.onNodeWithText("January 2026").performScrollTo().assertIsDisplayed()
+
+        val quietDate = start.plusDays(1).format(
+            java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.FULL),
+        )
+        composeRule.onNode(hasContentDescription(quietDate, substring = true))
+            .performScrollTo().performClick()
+        composeRule.onNodeWithText("Quest not met").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("No games tracked on this day").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun groupedBucketSummaryIsAccessibleAndIndependentOfExactDayInspection() {
+        val start = LocalDate.of(2026, 9, 30)
+        val days = listOf(0, 60, 60, 0).mapIndexed { index, minutes ->
+            AnalyticsDay(start.plusDays(index.toLong()), minutes)
+        }
+        val window = AnalyticsWindow(start.plusDays(3), AnalyticsWindowLength.NINETY_DAYS)
+        setContent(
+            analyticsState(window = window).copy(
+                windowBounds = window.resolve(),
+                dailyMinutes = days,
+            ),
+        )
+        val range = java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM)
+        val summary = "Week ${start.format(range)} – ${start.plusDays(3).format(range)}: 2 hrs"
+
+        composeRule.onNodeWithText(summary).performScrollTo().assertIsDisplayed().performClick().assertIsSelected()
+        composeRule.onNodeWithText("No games tracked on this day").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("Oct 2, 2026")[1].performScrollTo().assertIsDisplayed()
     }
 
     @Test

@@ -70,12 +70,33 @@ class AnalyticsPlayInsightsTest {
     }
     @Test fun longTrendsConserveMinutesAndUseCalendarBoundaries() {
         val days = (0L..89L).map { AnalyticsDay(date.minusDays(89 - it), 10) }
-        val weeks = analyticsTrendDays(days, AnalyticsWindowLength.NINETY_DAYS)
-        val months = analyticsTrendDays(days, AnalyticsWindowLength.ONE_YEAR)
+        val weeks = analyticsTrendBuckets(days, AnalyticsWindowLength.NINETY_DAYS)
+        val months = analyticsTrendBuckets(days, AnalyticsWindowLength.ONE_YEAR)
         assertEquals(900, weeks.sumOf { it.minutes })
         assertEquals(900, months.sumOf { it.minutes })
         assertTrue(weeks.size in 13..14)
         assertEquals(4, months.size)
-        assertEquals(days, analyticsTrendDays(days, AnalyticsWindowLength.THIRTY_DAYS))
+        assertEquals(days.first().date, months.first().start)
+        assertEquals(LocalDate.of(2026, 8, 31), months.first().endInclusive)
+        assertEquals(date, months.last().endInclusive)
+        assertEquals(days.map { it.date to it.date }, analyticsTrendBuckets(days, AnalyticsWindowLength.THIRTY_DAYS)
+            .map { it.start to it.endInclusive })
+    }
+
+    @Test fun weeklyBucketsKeepPartialDateRangesAndQuietFirstDayTotals() {
+        val start = LocalDate.of(2026, 9, 30)
+        val days = listOf(0, 60, 60, 0, 0, 30, 0).mapIndexed { index, minutes ->
+            AnalyticsDay(start.plusDays(index.toLong()), minutes)
+        }
+
+        val weeks = analyticsTrendBuckets(days, AnalyticsWindowLength.NINETY_DAYS)
+
+        assertEquals(2, weeks.size)
+        assertEquals(start, weeks[0].start)
+        assertEquals(start.plusDays(4), weeks[0].endInclusive)
+        assertEquals(120, weeks[0].minutes)
+        assertEquals(start.plusDays(5), weeks[1].start)
+        assertEquals(start.plusDays(6), weeks[1].endInclusive)
+        assertEquals(30, weeks[1].minutes)
     }
 }
