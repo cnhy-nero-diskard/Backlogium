@@ -315,7 +315,7 @@ private fun BroaderSearchSection(
                 }
                 state.failed -> {
                     Text(
-                        "Broader search failed (${state.failureClass?.name?.lowercase() ?: "unknown"}). You can retry.",
+                        stringResource(R.string.hltb_broader_search_failed),
                         color = MaterialTheme.colorScheme.error,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

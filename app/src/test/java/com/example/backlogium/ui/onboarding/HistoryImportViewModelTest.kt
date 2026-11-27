@@ -54,6 +54,7 @@ class HistoryImportViewModelTest {
         vm.importHistory()
         advanceUntilIdle()
         assertNotNull(vm.uiState.value.error)
+        assertEquals("History import didn't finish. Try again.", vm.uiState.value.error)
         assertFalse(vm.uiState.value.completed)
         assertFalse(vm.uiState.value.importing)
         history.fail = false
@@ -96,7 +97,7 @@ class HistoryImportViewModelTest {
         var fail = false
         override suspend fun importSteamHistory(): Boolean {
             calls++
-            if (fail) error("Fixture import failed")
+            if (fail) error("https://fixture.invalid/private-endpoint?key=fixture")
             historyImportReadiness.value = HistoryImportReadiness.IMPORTED
             return true
         }

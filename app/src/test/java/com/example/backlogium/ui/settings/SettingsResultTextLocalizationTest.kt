@@ -18,6 +18,18 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class SettingsResultTextLocalizationTest {
     @Test
+    fun operationFailuresUseReadableResourceCopyWithoutEndpointDetails() {
+        val resources = RuntimeEnvironment.getApplication().resources
+        val copy = SettingsText(R.string.settings_backup_operation_failed).resolve(resources)
+        org.junit.Assert.assertFalse(copy.contains("http"))
+        org.junit.Assert.assertTrue(copy.contains("try again"))
+        val config = Configuration(resources.configuration).apply { setLocales(LocaleList(Locale.FRANCE)) }
+        val fallback = RuntimeEnvironment.getApplication().createConfigurationContext(config).resources
+        assertEquals(resources.getString(R.string.settings_history_operation_failed),
+            fallback.getString(R.string.settings_history_operation_failed))
+    }
+
+    @Test
     fun viewModelCloudResultResolvesFromResourcesUnderNonDefaultLocale() {
         val context = RuntimeEnvironment.getApplication()
         val frenchConfiguration = Configuration(context.resources.configuration).apply {

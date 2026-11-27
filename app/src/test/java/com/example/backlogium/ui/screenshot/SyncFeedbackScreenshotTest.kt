@@ -14,6 +14,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.example.backlogium.domain.*
 import com.example.backlogium.ui.settings.SyncCard
+import com.example.backlogium.ui.settings.HistoryImportCard
+import com.example.backlogium.data.repo.HistoryImportReadiness
 import com.example.backlogium.ui.setup.*
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import com.example.backlogium.work.GenreEnrichmentStatus
@@ -28,6 +30,8 @@ import org.robolectric.annotation.GraphicsMode
 
 abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
     @get:Rule val compose = createAndroidComposeRule<ScreenshotTestActivity>()
+    @Test fun settingsHistoryErrorLight() = capture("settings-history-error", false)
+    @Test fun settingsHistoryErrorDark() = capture("settings-history-error", true)
     @Test fun offlineLibraryLight() = capture("offline-library", false)
     @Test fun offlineLibraryDark() = capture("offline-library", true)
     @Test fun offlineDetailLight() = capture("offline-detail", false)
@@ -46,7 +50,11 @@ abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
         compose.setContent { BacklogiumTheme(darkTheme = dark) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.padding(16.dp)) {
-                    if (scene.startsWith("offline")) {
+                    if (scene == "settings-history-error") {
+                        HistoryImportCard(HistoryImportReadiness.READY, importing = false, syncing = false,
+                            cloudTransferApplied = false, error = true,
+                            onImport = {}, onReset = {}, onSync = {}, onResume = {})
+                    } else if (scene.startsWith("offline")) {
                         OfflineStatus(ConnectivityStatus.OFFLINE)
                         Box(Modifier.weight(1f)) {
                             MainScreenshotFixtureHost(MainScreenshotFixture(

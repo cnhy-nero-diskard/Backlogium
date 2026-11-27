@@ -8,7 +8,7 @@
 ## 2. Connectivity and action feedback
 
 - [x] 2.1 Add validated connectivity to the shell presentation and verify cold launch, pushed screens, reconnection, offline edits and a Steam failure on a validated connection.
-- [ ] 2.2 Audit the requested surfaces and document feedback gaps and fixes. Verify action acknowledgement, retry or undo where available, localized inline messages and duplicate suppression.
+- [x] 2.2 Audit the requested surfaces and document feedback gaps and fixes. Verify action acknowledgement, retry or undo where available, localized inline messages and duplicate suppression.
 
 ## 3. Integration
 

@@ -14,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.example.backlogium.R
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,7 +53,7 @@ fun HistoryImportContent(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.error?.let { Text(stringResource(R.string.history_import_failed), color = MaterialTheme.colorScheme.error) }
         when (state.readiness) {
             HistoryImportReadiness.NEEDS_SYNC -> {
                 Text("Sync your Steam library before importing history.", style = MaterialTheme.typography.bodyMedium)

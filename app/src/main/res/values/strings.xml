@@ -250,7 +250,7 @@
     <string name="settings_history_title">Steam history</string>
     <string name="settings_history_imported">History imported</string>
     <string name="settings_history_imported_description">Past playtime already counts toward your XP.</string>
-    <string name="settings_history_operation_failed">History update did not finish: %1$s</string>
+    <string name="settings_history_operation_failed">History update did not finish. Try the history action below again.</string>
     <string name="settings_history_reset">Reset import</string>
     <string name="settings_history_unimported_description">Count your pre-install Steam playtime toward XP. One-time only.</string>
     <string name="settings_history_import">Import Steam history</string>
@@ -355,7 +355,7 @@
     <string name="settings_backup_imported_recovery_warning">Backup imported with %1$d recovery warning(s). %2$s</string>
     <string name="settings_backup_snapshot_deleted">Snapshot deleted.</string>
     <string name="settings_backup_snapshot_unavailable">That snapshot is no longer available.</string>
-    <string name="settings_backup_operation_failed">Backup operation failed: %1$s</string>
+    <string name="settings_backup_operation_failed">Backup operation did not finish. Check the selected file and available storage, then try again.</string>
     <string name="settings_backup_rejected">Backup rejected — %1$s</string>
     <string name="settings_backup_validation_problem">%1$s[%2$d]: %3$s</string>
     <string name="settings_backup_validation_separator">; </string>
@@ -1012,4 +1012,10 @@
     <string name="operation_counts">%1$d / %2$d processed · %3$d skipped · %4$d failed</string>
     <string name="operation_updated">%1$d games changed</string>
     <string name="offline_status">Offline · Your saved library and local changes are still available</string>
+    <string name="history_import_failed">History import didn\'t finish. Try again.</string>
+    <string name="collection_membership_conflict">Collection membership changed. Refresh to load the latest collection, then retry your edits.</string>
+    <string name="collection_save_failed">Could not save the collection. Retry or refresh.</string>
+    <string name="collection_delete_failed">Could not delete the collection. Your collection is still available.</string>
+    <string name="collection_retry_delete">Retry deletion</string>
+    <string name="hltb_broader_search_failed">HowLongToBeat search did not finish. Try again or enter a game link.</string>
 </resources>

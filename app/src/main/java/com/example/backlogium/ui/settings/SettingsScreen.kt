@@ -480,6 +480,7 @@ internal fun DataPrivacySettingsContent(state: SettingsUiState, actions: Setting
     SectionHeader(stringResource(R.string.settings_section_data))
     HistoryImportCard(
         readiness = state.historyReadiness,
+        error = state.historyError,
         importing = state.isImportingHistory,
         syncing = state.isSyncing,
         cloudTransferApplied = state.cloudPresenceTransferApplied,
@@ -2233,6 +2234,7 @@ internal fun HistoryImportCard(
     onReset: () -> Unit,
     onSync: () -> Unit,
     onResume: () -> Unit,
+    error: Boolean = false,
 ) {
     val imported = readiness == HistoryImportReadiness.IMPORTED
     var showConfirm by remember { mutableStateOf(false) }
@@ -2241,6 +2243,8 @@ internal fun HistoryImportCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(R.string.settings_history_title), style = MaterialTheme.typography.titleMedium)
+            if (error) Text(stringResource(R.string.settings_history_operation_failed),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(4.dp))
             if (imported) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

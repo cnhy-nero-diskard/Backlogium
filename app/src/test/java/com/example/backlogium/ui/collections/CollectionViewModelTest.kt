@@ -325,17 +325,38 @@ class CollectionViewModelTest {
         assertTrue(store.collections.isEmpty())
     }
 
+    @Test
+    fun failedDeleteKeepsTheCollectionAndOffersOneRetryWithoutDoubleWrites() {
+        store.failDelete = true
+        withViewModel(collectionId = 1L) { viewModel ->
+            viewModel.delete()
+            viewModel.delete()
+            runCurrent()
+            assertEquals(1, store.deleteCalls)
+            assertFalse(viewModel.uiState.value.saving)
+            assertFalse(viewModel.uiState.value.done)
+            assertEquals(com.example.backlogium.R.string.collection_delete_failed, viewModel.uiState.value.saveError)
+            store.failDelete = false
+            viewModel.delete()
+            runCurrent()
+            assertEquals(2, store.deleteCalls)
+            assertTrue(viewModel.uiState.value.done)
+            assertEquals(null, viewModel.uiState.value.saveError)
+        }
+    }
+
     private fun withViewModel(
         transaction: DatabaseTransactionScope = PassThroughTransactionScope,
         libraryGames: List<Game> = emptyList(),
         hltbData: List<HltbData> = emptyList(),
         hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
+        collectionId: Long = 0L,
         block: suspend TestScope.(CollectionViewModel) -> Unit,
     ) = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
         try {
-            val viewModel = createViewModel(transaction, libraryGames, hltbData, hiddenGames)
+            val viewModel = createViewModel(transaction, libraryGames, hltbData, hiddenGames, collectionId)
             val stateCollector = launch {
                 viewModel.uiState.collect()
             }
@@ -352,6 +373,7 @@ class CollectionViewModelTest {
         libraryGames: List<Game>,
         hltbData: List<HltbData>,
         hiddenGames: HiddenGamesRepository = fakeHiddenGamesRepository(),
+        collectionId: Long = 0L,
     ): CollectionViewModel {
         val time = FixedTimeProvider()
         val gameDao = emptyGameDao(libraryGames)
@@ -412,7 +434,7 @@ class CollectionViewModelTest {
         )
 
         return CollectionViewModel(
-            savedStateHandle = SavedStateHandle(),
+            savedStateHandle = SavedStateHandle(mapOf("collectionId" to collectionId)),
             collectionRepository = CollectionRepository(
                 collectionDao = store.dao,
                 hiddenGamesRepository = fakeHiddenGamesRepository(),
@@ -451,6 +473,8 @@ class CollectionViewModelTest {
     }
 
     private class RecordingCollectionStore {
+        var failDelete = false
+        var deleteCalls = 0
         private val collectionRows = mutableListOf<Collection>()
         private val memberRows = mutableListOf<CollectionMember>()
         private val collectionFlow = MutableStateFlow<List<Collection>>(emptyList())
@@ -466,6 +490,13 @@ class CollectionViewModelTest {
         ) { _, method, args ->
             val values = args ?: emptyArray()
             when (method.name) {
+                "delete" -> {
+                    deleteCalls++
+                    if (failDelete) throw IllegalStateException("fixture delete failed")
+                    collectionRows.removeAll { it.id == values[0] as Long }
+                    publish()
+                    Unit
+                }
                 "observeCollections" -> collectionFlow
                 "observeAllMembers", "observeMembers" -> memberFlow
                 "getAll" -> collectionRows.toList()
