@@ -228,8 +228,8 @@ class SessionRepository @Inject constructor(
             .visibleKeys()
 
     /**
-     * Earliest canonical dated activity in the device zone: the first session start date, first
-     * *positive* dated allocation, first frozen timed-share date or first positive recipe-
+     * Earliest canonical dated activity in the device zone: the first positive legacy session
+     * remainder date, positive dated allocation, frozen timed-share date or positive recipe-
      * derived date. Unlike [earliestSessionStart] (an exact session instant) this is a *date*, so
      * History and Analytics can anchor period availability over allocation-only days that precede
      * the first timestamped session. Excluded/zero rows never anchor history. Bounded reads: each
@@ -241,7 +241,7 @@ class SessionRepository @Inject constructor(
         }
     } else {
         combine(
-            sessionDao.observeEarliestVisibleSessionStart(),
+            sessionDao.observeEarliestPositiveSessionStart(),
             sessionDao.observeEarliestDatedAllocationDate(),
             sessionDao.observeEarliestTimedShareDate(),
             sessionDao.observeActiveRecoveryRecipes(),
@@ -445,29 +445,9 @@ class SessionRepository @Inject constructor(
         if (database != null) {
             return coherentRecoverySnapshot { dao ->
                 val hidden = dao.hiddenAppIdsSnapshot().toSet()
-                val input = ActivityInput(
-                    windowSessions = dao.sessionsBetweenSnapshot(startMillis, endMillis),
-                    hostSessions = dao.hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
-                    placements = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
-                    allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
-                    recipes = dao.activeRecoveryRecipesSnapshot(),
-                )
-                val relevantSessions = input.relevantSessions(hidden)
-                val relevantIds = relevantSessions.map(Session::id).distinct()
-                val allHostPlacements = dao.activeTimedPlacementsForSessionsSnapshotChunked(relevantIds)
-                PlaytimeReadProjector.datedCreditedTotals(
-                    sessions = relevantSessions.map(Session::toCredit),
-                    timedShares = input.placements.filterNot { it.appId in hidden }
-                        .map(TimedContributionPlacement::toCredit),
-                    allocations = input.allocations.filterNot { it.appId in hidden }
-                        .map(UnknownTimeAllocation::toCredit),
-                    recipes = input.recipes.filterNot { it.appId in hidden }
-                        .map(UnknownTimeAllocationRecipe::toCredit),
-                    zone = zone,
-                    startDateInclusive = startDateInclusive,
-                    endDateExclusive = endDateExclusive,
-                    allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
-                        .map(TimedContributionPlacement::toCredit),
+                val recipes = dao.activeRecoveryRecipesSnapshot()
+                dao.readDatedCreditedTotalsSnapshot(
+                    zone, startDateInclusive, endDateExclusive, hidden, recipes,
                 )
             }
         }
@@ -501,6 +481,98 @@ class SessionRepository @Inject constructor(
                             .map(TimedContributionPlacement::toCredit),
                     )
                 }
+        }
+    }
+
+    /** Grouped history boundaries, never an unbounded list of historical activity rows. */
+    fun activityBoundariesBefore(zone: ZoneId, before: LocalDate): Flow<Map<Long, RecordedActivityBounds>> {
+        return if (database != null) coherentRecoverySnapshot { dao ->
+            val hidden = dao.hiddenAppIdsSnapshot().toSet()
+            val recipes = dao.activeRecoveryRecipesSnapshot()
+            dao.readActivityBoundariesBefore(zone, before, hidden, recipes)
+        } else sessionDao.observeRecoveryProjectionInvalidation().map {
+            val hidden = sessionDao.hiddenAppIdsSnapshot().toSet()
+            val recipes = sessionDao.activeRecoveryRecipesSnapshot()
+            sessionDao.readActivityBoundariesBefore(zone, before, hidden, recipes)
+        }
+    }
+
+    /** Reads every ledger input used by Analytics insights from one invalidation and Room snapshot. */
+    fun datedActivityLedgerSnapshot(
+        zone: ZoneId,
+        startDateInclusive: LocalDate,
+        endDateExclusive: LocalDate,
+        historyBefore: LocalDate,
+        previousStartDateInclusive: LocalDate? = null,
+        previousEndDateExclusive: LocalDate? = null,
+    ): Flow<DatedActivityLedgerSnapshot> {
+        require((previousStartDateInclusive == null) == (previousEndDateExclusive == null)) {
+            "previous bounds must both be supplied or omitted"
+        }
+        if (database != null) {
+            return coherentRecoverySnapshot { dao ->
+                val hidden = dao.hiddenAppIdsSnapshot().toSet()
+                val recipes = dao.activeRecoveryRecipesSnapshot()
+                val earliest = dao.readEarliestCanonicalActivityDate(zone)
+                val comparisonObserved = previousStartDateInclusive?.let { previousStart ->
+                    earliest != null &&
+                        !earliest.isAfter(startDateInclusive) &&
+                        !earliest.isAfter(previousStart)
+                } == true
+                val fromIso = startDateInclusive.toString()
+                val toExclusiveIso = endDateExclusive.toString()
+                DatedActivityLedgerSnapshot(
+                    selected = dao.readDatedCreditedTotalsSnapshot(
+                        zone, startDateInclusive, endDateExclusive, hidden, recipes,
+                    ),
+                    history = dao.readActivityBoundariesBefore(zone, historyBefore, hidden, recipes),
+                    previous = if (!comparisonObserved) emptyList() else {
+                        dao.readDatedCreditedTotalsSnapshot(
+                            zone,
+                            previousStartDateInclusive,
+                            requireNotNull(previousEndDateExclusive),
+                            hidden,
+                            recipes,
+                        )
+                    },
+                    earliestCanonicalActivityDate = earliest,
+                    allocations = PlaytimeReadProjector.creditedAllocationsBetween(
+                        timedShares = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso)
+                            .filterNot { it.appId in hidden }
+                            .map(TimedContributionPlacement::toCredit),
+                        allocations = dao.datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso)
+                            .filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocation::toCredit),
+                        recipes = recipes.filterNot { it.appId in hidden }
+                            .map(UnknownTimeAllocationRecipe::toCredit),
+                        startDateInclusive = startDateInclusive,
+                        endDateInclusive = endDateExclusive.minusDays(1),
+                    ),
+                )
+            }
+        }
+        val allocations = if (startDateInclusive < endDateExclusive) {
+            datedAllocationsBetween(startDateInclusive, endDateExclusive.minusDays(1))
+        } else {
+            flowOf(emptyList())
+        }
+        val previous = if (previousStartDateInclusive == null) flowOf(emptyList()) else {
+            datedCreditedTotalsBetween(
+                zone, previousStartDateInclusive, requireNotNull(previousEndDateExclusive),
+            )
+        }
+        return combine(
+            datedCreditedTotalsBetween(zone, startDateInclusive, endDateExclusive),
+            activityBoundariesBefore(zone, historyBefore),
+            previous,
+            allocations,
+            earliestCanonicalActivityDate,
+        ) { selected, history, prior, explanationRows, earliest ->
+            DatedActivityLedgerSnapshot(
+                selected, history, prior,
+                allocations = explanationRows,
+                earliestCanonicalActivityDate = earliest,
+            )
         }
     }
 
@@ -804,7 +876,7 @@ internal suspend fun SessionDao.readCanonicalDatedActivity(
 
 /** Earliest visible date, including frozen funded shares and allocation-only activity. */
 internal suspend fun SessionDao.readEarliestCanonicalActivityDate(zone: ZoneId): LocalDate? {
-    val earliestSessionMillis = earliestVisibleSessionStartSnapshot()
+    val earliestSessionMillis = earliestPositiveSessionStartSnapshot()
     val earliestAllocationDate = earliestDatedAllocationDateSnapshot()
     val earliestTimedShareDate = earliestTimedShareDateSnapshot()
     val hidden = hiddenAppIdsSnapshot().toSet()
@@ -832,6 +904,68 @@ private class ActivityInput(
         (windowSessions + hostSessions)
             .filterNot { it.appId in hidden }
             .distinctBy(Session::id)
+}
+
+private suspend fun SessionDao.readDatedCreditedTotalsSnapshot(
+    zone: ZoneId,
+    startDateInclusive: LocalDate,
+    endDateExclusive: LocalDate,
+    hidden: Set<Long>,
+    recipes: List<UnknownTimeAllocationRecipe>,
+): List<DatedCreditedTotal> {
+    val fromIso = startDateInclusive.toString()
+    val toExclusiveIso = endDateExclusive.toString()
+    val startMillis = startDateInclusive.atStartOfDay(zone).toInstant().toEpochMilli() - DAY_MILLIS
+    val endMillis = endDateExclusive.atStartOfDay(zone).toInstant().toEpochMilli() + DAY_MILLIS
+    val input = ActivityInput(
+        windowSessions = sessionsBetweenSnapshot(startMillis, endMillis),
+        hostSessions = hostSessionsForDatesSnapshot(fromIso, toExclusiveIso),
+        placements = timedPlacementsByDateSnapshot(fromIso, toExclusiveIso),
+        allocations = datedAllocationsBetweenSnapshot(fromIso, toExclusiveIso),
+        recipes = recipes,
+    )
+    val relevantSessions = input.relevantSessions(hidden)
+    val allHostPlacements = activeTimedPlacementsForSessionsSnapshotChunked(
+        relevantSessions.map(Session::id).distinct(),
+    )
+    return PlaytimeReadProjector.datedCreditedTotals(
+        sessions = relevantSessions.map(Session::toCredit),
+        timedShares = input.placements.filterNot { it.appId in hidden }
+            .map(TimedContributionPlacement::toCredit),
+        allocations = input.allocations.filterNot { it.appId in hidden }
+            .map(UnknownTimeAllocation::toCredit),
+        recipes = input.recipes.filterNot { it.appId in hidden }
+            .map(UnknownTimeAllocationRecipe::toCredit),
+        zone = zone,
+        startDateInclusive = startDateInclusive,
+        endDateExclusive = endDateExclusive,
+        allTimedSharesForRemainder = allHostPlacements.filterNot { it.appId in hidden }
+            .map(TimedContributionPlacement::toCredit),
+    )
+}
+
+private suspend fun SessionDao.readActivityBoundariesBefore(
+    zone: ZoneId,
+    before: LocalDate,
+    hidden: Set<Long>,
+    recipes: List<UnknownTimeAllocationRecipe>,
+): Map<Long, RecordedActivityBounds> {
+    val dates = mutableMapOf<Long, RecordedActivityBounds>()
+    fun add(appId: Long, first: LocalDate, last: LocalDate) {
+        val old = dates[appId]
+        dates[appId] = RecordedActivityBounds(
+            minOf(first, old?.first ?: first), maxOf(last, old?.last ?: last),
+        )
+    }
+    positiveSessionBoundariesBefore(before.atStartOfDay(zone).toInstant().toEpochMilli())
+        .forEach { add(it.appId, PlaytimeReadProjector.sessionDate(it.firstAt, zone), PlaytimeReadProjector.sessionDate(it.lastAt, zone)) }
+    positiveFrozenBoundariesBefore(before.toString()).forEach {
+        add(it.appId, LocalDate.parse(it.firstDate), LocalDate.parse(it.lastDate))
+    }
+    recipes.filterNot { it.appId in hidden }.forEach {
+        positiveRecipeBoundsBefore(it.toCredit(), before)?.let { bounds -> add(it.appId, bounds.first, bounds.last) }
+    }
+    return dates
 }
 
 /** Window-scoped allocation-leaf inputs (no sessions are needed to render unknown-time leaves). */
@@ -957,3 +1091,45 @@ private fun String.toAllocationMethod(): PlaytimeAllocationMethod = when (this) 
 }
 
 private fun String.toLocalDateOrNull(): LocalDate? = runCatching { LocalDate.parse(this) }.getOrNull()
+
+/** Earliest/latest positive recorded date strictly before a selected period. */
+data class RecordedActivityBounds(val first: LocalDate, val last: LocalDate)
+
+/** Selected totals, prior totals and historical boundaries read from one ledger generation. */
+data class DatedActivityLedgerSnapshot(
+    val selected: List<DatedCreditedTotal>,
+    val history: Map<Long, RecordedActivityBounds>,
+    val previous: List<DatedCreditedTotal>,
+    /** Bounded estimate explanations from the same ledger generation as [selected]. */
+    val allocations: List<CreditedAllocation> = emptyList(),
+    /** Canonical coverage floor; production Room reads it with the window totals in one transaction. */
+    val earliestCanonicalActivityDate: LocalDate? = null,
+)
+
+/** Find recipe boundaries arithmetically, without expanding its historical date window. */
+internal fun positiveRecipeBoundsBefore(recipe: RecipeCredit, before: LocalDate): RecordedActivityBounds? {
+    if (recipe.pending) return null
+    val start = recipe.dateStart ?: return null
+    val end = minOf(recipe.dateEnd ?: return null, before.minusDays(1))
+    val ranges = com.example.backlogium.domain.PlaytimeAllocationRecipes.normalizeRanges(
+        recipe.fullyResolvedDateRanges + recipe.fullyResolvedDates.map { it..it },
+    )
+    val arithmetic = com.example.backlogium.domain.PlaytimeAllocationRecipes
+    fun eligibleThrough(date: LocalDate): Long =
+        (arithmetic.calendarDays(start, date) - arithmetic.excludedCount(ranges, start, date)).toLong()
+    val tailStart = maxOf(start, recipe.materializedThroughDate?.plusDays(1) ?: start)
+    if (tailStart > end) return null
+    val firstRank = eligibleThrough(tailStart.minusDays(1)) + 1
+    val lastRank = minOf(eligibleThrough(end), if (recipe.baseMinutes > 0) Long.MAX_VALUE else recipe.remainderCount)
+    if (firstRank > lastRank) return null
+    fun dateAtRank(rank: Long): LocalDate {
+        var low = tailStart.toEpochDay()
+        var high = end.toEpochDay()
+        while (low < high) {
+            val mid = low + (high - low) / 2
+            if (eligibleThrough(LocalDate.ofEpochDay(mid)) >= rank) high = mid else low = mid + 1
+        }
+        return LocalDate.ofEpochDay(low)
+    }
+    return RecordedActivityBounds(dateAtRank(firstRank), dateAtRank(lastRank))
+}

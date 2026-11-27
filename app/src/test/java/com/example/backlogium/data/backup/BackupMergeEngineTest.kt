@@ -1263,6 +1263,10 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(store.minOfOrNull { it.startAt })
     override suspend fun earliestVisibleSessionStartSnapshot(): Long? = store.minOfOrNull { it.startAt }
+    override fun observeEarliestPositiveSessionStart(): Flow<Long?> =
+        flowOf(store.filter { it.minutes > 0 }.minOfOrNull { it.startAt })
+    override suspend fun earliestPositiveSessionStartSnapshot(): Long? =
+        store.filter { it.minutes > 0 }.minOfOrNull { it.startAt }
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         store.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )
@@ -1312,6 +1316,8 @@ private class FakeSessionDao(private val store: MutableList<Session>) : SessionD
     override suspend fun activeRecoveryTimedPlacementsSnapshot(): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> =
         emptyList()
     override fun observeRecoveryProjectionInvalidation(): Flow<Long> = flowOf(0L)
+    override suspend fun positiveSessionBoundariesBefore(beforeMillis: Long): List<com.example.backlogium.data.local.dao.GameActivityInstants> = emptyList()
+    override suspend fun positiveFrozenBoundariesBefore(beforeDate: String): List<com.example.backlogium.data.local.dao.GameActivityDates> = emptyList()
     override suspend fun hiddenAppIdsSnapshot(): List<Long> = emptyList()
     override fun observeActiveRecoveryRecipes(): Flow<List<com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe>> =
         flowOf(emptyList())

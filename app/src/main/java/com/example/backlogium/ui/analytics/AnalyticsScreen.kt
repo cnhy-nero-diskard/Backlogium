@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -91,6 +92,7 @@ internal const val TAG_ANALYTICS_CURRENT = "analytics-current"
 internal const val TAG_ANALYTICS_WINDOW_OPTIONS = "analytics-window-options"
 internal const val TAG_ANALYTICS_CHART_OPTIONS = "analytics-chart-options"
 internal const val TAG_ANALYTICS_CHART = "analytics-chart"
+internal const val TAG_ANALYTICS_TREND_BUCKET = "analytics-trend-bucket"
 internal const val TAG_ANALYTICS_PREVIOUS_DAY = "analytics-previous-day"
 internal const val TAG_ANALYTICS_NEXT_DAY = "analytics-next-day"
 internal const val TAG_ANALYTICS_ESTIMATE_HELP = "analytics-estimate-help"
@@ -134,11 +136,8 @@ internal fun AnalyticsContent(
         return
     }
 
-    val chartDays = if (omitZeroDays) {
-        state.dailyMinutes.filter { it.minutes > 0 }
-    } else {
-        state.dailyMinutes
-    }
+    val activeChartDays = state.dailyMinutes.filter { it.minutes > 0 }
+    val chartDays = if (omitZeroDays && activeChartDays.isNotEmpty()) activeChartDays else state.dailyMinutes
 
     Column(
         modifier = Modifier
@@ -222,7 +221,7 @@ internal fun AnalyticsContent(
             )
         }
 
-        if (!state.hasData) {
+        if (!state.hasRepresentedEvidence) {
             EmptyState(
                 title = stringResource(R.string.analytics_empty_title),
                 message = stringResource(R.string.analytics_empty_message),
@@ -230,6 +229,7 @@ internal fun AnalyticsContent(
                     .fillMaxWidth()
                     .height(180.dp),
             )
+            CorePlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
@@ -246,7 +246,8 @@ internal fun AnalyticsContent(
             )
         } else {
             DailyPlaytimeChart(
-                days = chartDays,
+                visibleDays = chartDays,
+                windowLength = state.window.length,
                 representedDays = state.dailyMinutes,
                 questThreshold = state.questThreshold,
                 gamesByDate = state.gamesByDate,
@@ -258,6 +259,7 @@ internal fun AnalyticsContent(
                 PendingRecoveryRow(pendingMinutes = state.pendingDateUnknownMinutes)
             }
 
+            CorePlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
@@ -270,13 +272,13 @@ internal fun AnalyticsContent(
                 sessionCount = state.sessionInsights.sessionCount,
                 averageMinutes = state.sessionInsights.averageMinutes,
                 longestMinutes = state.sessionInsights.longestMinutes,
-                timingUnavailable = state.timingUnavailable,
+                statisticsUnavailable = state.finalizedSessionStatsUnavailable,
             )
 
             TimeOfDayCard(
                 pattern = state.timeOfDayPattern,
                 periodLabel = windowPeriodLabel(state.window, state.windowBounds),
-                timingUnavailable = state.timingUnavailable,
+                timeOfDayUnavailable = state.timeOfDayUnavailable,
             )
 
             RarityBreakdownCard(
@@ -705,7 +707,8 @@ internal fun AnalyticsOverviewCard(snapshot: AnalyticsOverviewSnapshot) {
  */
 @Composable
 private fun DailyPlaytimeChart(
-    days: List<AnalyticsDay>,
+    visibleDays: List<AnalyticsDay>,
+    windowLength: AnalyticsWindowLength,
     representedDays: List<AnalyticsDay>,
     questThreshold: Int,
     gamesByDate: Map<java.time.LocalDate, List<AnalyticsGame>>,
@@ -719,14 +722,25 @@ private fun DailyPlaytimeChart(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val chartHeight = 176.dp
 
-    val maxMinutes = niceChartMax(
-        maxOf(days.maxOfOrNull { it.minutes } ?: 0, questThreshold, 1),
-    )
-    val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
-    val totalMinutes = days.sumOf { it.minutes }
+    val dayFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+    val grouped = windowLength == AnalyticsWindowLength.NINETY_DAYS || windowLength == AnalyticsWindowLength.ONE_YEAR
     var selectedDate by remember {
-        mutableStateOf(initialAnalyticsDaySelection(days)?.let { days[it].date })
+        mutableStateOf(initialAnalyticsDaySelection(visibleDays)?.let { visibleDays[it].date })
     }
+    // Include an inspected zero-minute date even while the daily plot omits quiet dates.
+    val days = (visibleDays + representedDays.filter { it.date == selectedDate }).distinctBy { it.date }.sortedBy { it.date }
+    val plottedBuckets = analyticsTrendBuckets(if (grouped) representedDays else days, windowLength)
+    var selectedBucketStart by remember(plottedBuckets) {
+        mutableStateOf(plottedBuckets.lastOrNull()?.start)
+    }
+    val selectedBucket = plottedBuckets.firstOrNull { it.start == selectedBucketStart }
+    val selectedPlotIndex = if (grouped) {
+        plottedBuckets.indexOfFirst { it.start == selectedBucketStart }
+    } else {
+        plottedBuckets.indexOfLast { selectedDate != null && !it.start.isAfter(selectedDate) }
+    }
+    val maxMinutes = niceChartMax(maxOf(plottedBuckets.maxOfOrNull { it.minutes } ?: 0, if (grouped) 0 else questThreshold, 1))
+    val totalMinutes = representedDays.sumOf { it.minutes }
     val selectedIndex = days.indexOfFirst { it.date == selectedDate }
         .takeIf { it >= 0 } ?: initialAnalyticsDaySelection(days) ?: -1
     val selectDay: (Int) -> Unit = { requestedIndex ->
@@ -736,7 +750,7 @@ private fun DailyPlaytimeChart(
     SideEffect {
         if (selectedDate != selectedDay?.date) selectedDate = selectedDay?.date
     }
-    val omittedDateCount = (representedDays.size - days.size).coerceAtLeast(0)
+    val omittedDateCount = if (grouped) 0 else (representedDays.size - days.size).coerceAtLeast(0)
     val dateGapDescriptions = analyticsDateGaps(representedDays, days, selectedIndex)
         .map { analyticsDateGapLabel(it, dayFormatter) }
     val previousDayLabel = stringResource(R.string.analytics_previous_day)
@@ -781,22 +795,33 @@ private fun DailyPlaytimeChart(
             describedWithGaps,
         )
     } ?: stringResource(R.string.analytics_no_day_selected)
-    val chartSummary = stringResource(
-        R.string.analytics_chart_summary,
-        selectedDayDescription,
-    )
+    val selectedBucketDescription = selectedBucket?.let { bucket ->
+        stringResource(
+            if (windowLength == AnalyticsWindowLength.ONE_YEAR) {
+                R.string.analytics_month_bucket_summary
+            } else {
+                R.string.analytics_week_bucket_summary
+            },
+            bucket.start.format(dayFormatter),
+            bucket.endInclusive.format(dayFormatter),
+            UiFormat.localizedMinutes(bucket.minutes),
+        )
+    }.orEmpty()
+    val chartSummary = if (grouped) {
+        stringResource(R.string.analytics_group_chart_summary, selectedBucketDescription, selectedDayDescription)
+    } else {
+        stringResource(R.string.analytics_chart_summary, selectedDayDescription)
+    }
 
     Card(modifier = modifier) {
         Column(Modifier.padding(16.dp)) {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(stringResource(R.string.analytics_daily_playtime), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(if (windowLength == AnalyticsWindowLength.ONE_YEAR) R.string.analytics_monthly_playtime else if (grouped) R.string.analytics_weekly_playtime else R.string.analytics_daily_playtime), style = MaterialTheme.typography.titleSmall)
                 Text(
                     text = stringResource(
-                        R.string.analytics_chart_select_day,
+                        if (grouped) R.string.analytics_chart_select_bucket else R.string.analytics_chart_select_day,
                         UiFormat.localizedMinutes(totalMinutes),
                     ),
                     style = MaterialTheme.typography.labelSmall,
@@ -827,17 +852,19 @@ private fun DailyPlaytimeChart(
                             .semantics {
                                 contentDescription = chartSummary
                             }
-                            .pointerInput(days, maxMinutes) {
+                            .pointerInput(plottedBuckets, maxMinutes) {
                                 detectTapGestures { offset ->
-                                    if (days.isNotEmpty()) {
-                                        selectDay((offset.x / (size.width / days.size)).toInt())
+                                    if (plottedBuckets.isNotEmpty()) {
+                                        val bucket = plottedBuckets[(offset.x / (size.width / plottedBuckets.size)).toInt()
+                                            .coerceIn(plottedBuckets.indices)]
+                                        if (grouped) selectedBucketStart = bucket.start else selectedDate = bucket.start
                                     }
                                 }
                             },
                     ) {
                         val w = size.width
                         val h = size.height
-                        if (days.isEmpty()) return@Canvas
+                        if (plottedBuckets.isEmpty()) return@Canvas
 
                         // Quiet gridlines make the scale visible without competing with the data.
                         listOf(0f, 0.5f).forEach { fraction ->
@@ -850,13 +877,13 @@ private fun DailyPlaytimeChart(
                             )
                         }
 
-                        val barSlot = w / days.size
+                        val barSlot = w / plottedBuckets.size
                         val barWidth = (barSlot * 0.68f).coerceAtLeast(2f)
                         val gap = (barSlot - barWidth).coerceAtLeast(0f) / 2f
 
-                        days.forEachIndexed { index, day ->
+                        plottedBuckets.forEachIndexed { index, bucket ->
                             val left = index * barSlot + gap
-                            if (index == selectedIndex) {
+                            if (index == selectedPlotIndex) {
                                 drawRoundRect(
                                     color = barColor.copy(alpha = 0.12f),
                                     topLeft = Offset(index * barSlot + 1f, 0f),
@@ -864,12 +891,12 @@ private fun DailyPlaytimeChart(
                                     cornerRadius = CornerRadius(8f, 8f),
                                 )
                             }
-                            val barHeight = ((day.minutes.toFloat() / maxMinutes) * h)
-                                .coerceAtLeast(if (day.minutes > 0) 3f else 0f)
+                            val barHeight = ((bucket.minutes.toFloat() / maxMinutes) * h)
+                                .coerceAtLeast(if (bucket.minutes > 0) 3f else 0f)
                             val top = h - barHeight
-                            if (day.minutes > 0) {
+                            if (bucket.minutes > 0) {
                                 drawRoundRect(
-                                    color = if (index == selectedIndex) barColor else barColor.copy(alpha = 0.72f),
+                                    color = if (index == selectedPlotIndex) barColor else barColor.copy(alpha = 0.72f),
                                     topLeft = Offset(left, top),
                                     size = Size(barWidth, barHeight),
                                     cornerRadius = CornerRadius(4f, 4f),
@@ -886,7 +913,7 @@ private fun DailyPlaytimeChart(
                         }
 
                         // Quest threshold reference line (dashed).
-                        if (questThreshold > 0) {
+                        if (questThreshold > 0 && !grouped) {
                             val y = h - (questThreshold.toFloat() / maxMinutes) * h
                             drawLine(
                                 color = thresholdColor.copy(alpha = 0.85f),
@@ -906,15 +933,39 @@ private fun DailyPlaytimeChart(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        days.firstOrNull()?.let {
-                            Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    if (grouped) {
+                        Column(Modifier.fillMaxWidth()) {
+                            plottedBuckets.forEachIndexed { index, bucket ->
+                                val summary = stringResource(
+                                    if (windowLength == AnalyticsWindowLength.ONE_YEAR) {
+                                        R.string.analytics_month_bucket_summary
+                                    } else {
+                                        R.string.analytics_week_bucket_summary
+                                    },
+                                    bucket.start.format(dayFormatter),
+                                    bucket.endInclusive.format(dayFormatter),
+                                    UiFormat.localizedMinutes(bucket.minutes),
+                                )
+                                TextButton(
+                                    onClick = { selectedBucketStart = bucket.start },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .semantics { selected = index == selectedPlotIndex }
+                                        .testTag("$TAG_ANALYTICS_TREND_BUCKET-$index"),
+                                ) {
+                                    Text(summary)
+                                }
+                            }
                         }
-                        days.lastOrNull()?.let {
-                            Text(it.date.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        (if (grouped) plottedBuckets.firstOrNull()?.start else days.firstOrNull()?.date)?.let {
+                            Text(it.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
+                        }
+                        (if (grouped) plottedBuckets.lastOrNull()?.endInclusive else days.lastOrNull()?.date)?.let {
+                            Text(it.format(dayFormatter), style = MaterialTheme.typography.labelSmall, color = labelColor)
                         }
                     }
                 }
@@ -931,7 +982,7 @@ private fun DailyPlaytimeChart(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            Row(
+            if (!grouped) Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -994,6 +1045,7 @@ private fun DailyPlaytimeChart(
                     )
                 }
             }
+            AnalyticsActivityCalendar(representedDays, selectedDay?.date) { selectedDate = it }
             selectedDay?.let { day ->
                 Spacer(Modifier.height(12.dp))
                 Row(
@@ -1334,7 +1386,7 @@ private fun SessionInsightsCard(
     sessionCount: Int,
     averageMinutes: Int,
     longestMinutes: Int,
-    timingUnavailable: Boolean = false,
+    statisticsUnavailable: Boolean = false,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -1349,7 +1401,7 @@ private fun SessionInsightsCard(
                 Text(stringResource(R.string.analytics_session_insights), style = MaterialTheme.typography.titleSmall)
             }
             Spacer(Modifier.height(8.dp))
-            if (timingUnavailable) {
+            if (statisticsUnavailable) {
                 // Played minutes exist, but none of them came from timestamped sessions: a
                 // "0 sessions" row would suggest measurement, so the honest answer is that
                 // session timing is unavailable for this period.
@@ -1389,7 +1441,7 @@ private fun SessionInsightsCard(
 private fun TimeOfDayCard(
     pattern: TimeOfDayPattern,
     periodLabel: String,
-    timingUnavailable: Boolean = false,
+    timeOfDayUnavailable: Boolean = false,
 ) {
     val peak = pattern.peakBucket
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -1410,7 +1462,7 @@ private fun TimeOfDayCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            if (timingUnavailable) {
+            if (timeOfDayUnavailable) {
                 Text(
                     text = stringResource(R.string.analytics_time_of_day_unavailable),
                     style = MaterialTheme.typography.bodySmall,

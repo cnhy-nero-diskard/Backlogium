@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.backlogium.data.repo.AchievementRepository
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
+import com.example.backlogium.data.repo.DatedActivityLedgerSnapshot
 import com.example.backlogium.data.repo.DayProgress
 import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
@@ -140,6 +141,8 @@ data class SessionInsights(
     val sessionCount: Int = 0,
     val averageMinutes: Int = 0,
     val longestMinutes: Int = 0,
+    val medianMinutes: Double? = null,
+    val durationBuckets: List<Int> = listOf(0, 0, 0, 0),
 )
 
 /** When the player tends to play, bucketed by the local hour of session start. */
@@ -169,14 +172,37 @@ data class TimeOfDayPattern(
 internal fun deriveTimeOfDayPattern(
     sessions: List<PlaySession>,
     zone: ZoneId,
-): TimeOfDayPattern = sessions.fold(TimeOfDayPattern()) { acc, session ->
-    val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
-    when (hour) {
-        in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
-        in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
-        in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
-        else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
+): TimeOfDayPattern = sessions.asSequence().filter { it.minutes > 0 }
+    .fold(TimeOfDayPattern()) { acc, session ->
+        val hour = Instant.ofEpochMilli(session.startAt).atZone(zone).hour
+        when (hour) {
+            in 5..11 -> acc.copy(morningMinutes = acc.morningMinutes + session.minutes)
+            in 12..16 -> acc.copy(afternoonMinutes = acc.afternoonMinutes + session.minutes)
+            in 17..20 -> acc.copy(eveningMinutes = acc.eveningMinutes + session.minutes)
+            else -> acc.copy(nightMinutes = acc.nightMinutes + session.minutes)
+        }
     }
+
+internal data class AnalyticsTimingInsights(
+    val sessionInsights: SessionInsights,
+    val timeOfDayPattern: TimeOfDayPattern,
+    val finalizedStatisticsUnavailable: Boolean,
+    val timeOfDayUnavailable: Boolean,
+)
+
+internal fun deriveAnalyticsTimingInsights(
+    sessions: List<PlaySession>,
+    totalMinutes: Int,
+    zone: ZoneId,
+): AnalyticsTimingInsights {
+    val sessionInsights = deriveSessionInsights(sessions)
+    val timeOfDayPattern = deriveTimeOfDayPattern(sessions, zone)
+    return AnalyticsTimingInsights(
+        sessionInsights = sessionInsights,
+        timeOfDayPattern = timeOfDayPattern,
+        finalizedStatisticsUnavailable = totalMinutes > 0 && sessionInsights.sessionCount == 0,
+        timeOfDayUnavailable = totalMinutes > 0 && timeOfDayPattern.peakBucket == null,
+    )
 }
 
 /** A factual first sentence for the selected Analytics window. */
@@ -267,6 +293,11 @@ data class AnalyticsUiState(
     val questOutcomesUnavailableDayCount: Int = 0,
     /** Up to five games ranked by tracked minutes in the selected window, descending. */
     val topGames: List<AnalyticsGame> = emptyList(),
+    val comparison: AnalyticsComparison? = null,
+    val playMix: List<AnalyticsPlayShare> = emptyList(),
+    val variety: AnalyticsVariety = AnalyticsVariety(),
+    val focusShare: AnalyticsFocusShare = AnalyticsFocusShare(),
+    val activeQuestConsistency: AnalyticsQuestOutcomeSummary = AnalyticsQuestOutcomeSummary(0, 0, 0),
     /** All-time rarity tier breakdown of unlocked achievements. */
     val rarityBreakdown: RarityBreakdown = RarityBreakdown(),
     /** Up to twenty all-time rarest unlocked achievements, ordered by frozen rarity percent. */
@@ -284,10 +315,12 @@ data class AnalyticsUiState(
      */
     val familySharedMinutes: Int = 0,
     /**
-     * True when this window has played minutes but no timestamped sessions: session-shape and
-     * time-of-day insights must say timing is unavailable rather than show measured zeros.
+     * True when this window has play but no finalized positive-duration sessions for session-shape
+     * statistics. Session-start attribution has an independent availability policy below.
      */
-    val timingUnavailable: Boolean = false,
+    val finalizedSessionStatsUnavailable: Boolean = false,
+    /** True when played minutes exist but no positive timestamped session can supply a start hour. */
+    val timeOfDayUnavailable: Boolean = false,
     /** Authorized recovered minutes with no valid date window yet; disclosed separately. */
     val pendingDateUnknownMinutes: Int = 0,
     /** Each represented day's estimated-window facts, for the chart day `!` explanation. */
@@ -298,6 +331,12 @@ data class AnalyticsUiState(
     /** True when there is at least one tracked minute in the selected window. */
     val hasData: Boolean
         get() = dailyMinutes.any { it.minutes > 0 } || topGames.isNotEmpty()
+
+    /** Tracked windows and stored daily outcomes remain inspectable even when play is zero. */
+    val hasRepresentedEvidence: Boolean
+        get() = hasData || dailyMinutes.isNotEmpty() && (
+            earliestTrackedDate != null || dailyMinutes.any { it.estimatedMinutes > 0 || it.questMet != null }
+        )
 
     /**
      * Days actually represented as activity: the elapsed day count through today for the current
@@ -312,9 +351,11 @@ private data class AnalyticsInputs(
     val window: AnalyticsWindow,
     /** The exact represented-date scope queried for this retained snapshot. */
     val activityBounds: AnalyticsWindowBounds?,
+    val earliestTrackedDate: LocalDate?,
     val sessions: List<PlaySession>,
     val datedTotals: List<DatedCreditedTotal>,
-    val previousMinutesByGame: Map<Long, Int>,
+    val comparison: AnalyticsComparison?,
+    val history: Map<Long, com.example.backlogium.data.repo.RecordedActivityBounds>,
     val library: List<LibraryGame>,
     val dailyProgress: List<DayProgress>,
     val profile: PlayerStats?,
@@ -325,9 +366,7 @@ private data class AnalyticsInputs(
 /** One windowed query snapshot feeding [AnalyticsInputs]; allocations are the recovery leaves. */
 private data class AnalyticsWindowed(
     val sessions: List<PlaySession>,
-    val datedTotals: List<DatedCreditedTotal>,
-    val previousMinutesByGame: Map<Long, Int>,
-    val allocations: List<CreditedAllocation>,
+    val ledger: DatedActivityLedgerSnapshot,
 )
 
 /** A selected window remembers whether it should continue following the current period. */
@@ -370,7 +409,7 @@ private data class DatedAnalyticsWindow(
 private data class ResolvedAnalyticsWindow(
     val window: AnalyticsWindow,
     val today: LocalDate,
-    /** Dates that all windowed data sources are allowed to represent. */
+    /** Bounded query dates; the ledger snapshot applies its own canonical-history floor. */
     val activityBounds: AnalyticsWindowBounds?,
     val epochBounds: HistoryWindowBounds?,
     val earliestTrackedDate: LocalDate?,
@@ -453,7 +492,9 @@ class AnalyticsViewModel @Inject constructor(
         earliest: LocalDate?,
         today: LocalDate,
     ): ResolvedAnalyticsWindow {
-        val activityBounds = window.resolveActivityBounds(today, earliest)
+        // Query the bounded selected period in full; the coherent ledger snapshot supplies the
+        // canonical floor used to clip displayed dates and validate comparisons.
+        val activityBounds = window.resolveActivityBounds(today)
         return ResolvedAnalyticsWindow(
             window = window,
             today = today,
@@ -542,69 +583,54 @@ class AnalyticsViewModel @Inject constructor(
         // subrange in the prior period rather than a full month/year against a partial one.
         // When the elapsed day-count does not fit in the prior period, or tracking began inside
         // either range, omit the previous-period headline and fall back.
-        val comparisonBounds = resolved.window.comparablePreviousBoundsIfFullyObserved(
-            today = resolved.today,
-            earliestTrackedDate = resolved.earliestTrackedDate,
-        )
-        val previousMinutesFlow: Flow<Map<Long, Int>> = if (comparisonBounds == null) {
-            flowOf(emptyMap())
-        } else {
-            sessionRepository.datedCreditedTotalsBetween(
-                zone = time.zone(),
-                startDateInclusive = comparisonBounds.start,
-                endDateExclusive = comparisonBounds.endInclusive.plusDays(1),
-            ).map { totals ->
-                totals.flatMap { it.minutesByGame.entries }
-                    .groupBy({ it.key }, { it.value })
-                    .mapValues { (_, values) ->
-                        values.fold(0L) { sum, minutes -> Math.addExact(sum, minutes) }
-                            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                    }
-            }
-        }
+        val comparisonBounds = resolved.window.comparablePreviousBounds(resolved.today)
         val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
             sessionRepository.sessionsBetween(
                 startInclusiveMillis = bounds.startInclusiveMillis,
                 endExclusiveMillis = bounds.endExclusiveMillis,
             )
         } ?: flowOf(emptyList())
-        val datedTotalsFlow: Flow<List<DatedCreditedTotal>> = resolved.activityBounds?.let { bounds ->
-            sessionRepository.datedCreditedTotalsBetween(
+        val ledgerSnapshotFlow: Flow<DatedActivityLedgerSnapshot> = resolved.activityBounds?.let { bounds ->
+            sessionRepository.datedActivityLedgerSnapshot(
                 zone = time.zone(),
                 startDateInclusive = bounds.start,
                 endDateExclusive = bounds.endInclusive.plusDays(1),
+                historyBefore = bounds.start,
+                previousStartDateInclusive = comparisonBounds?.start,
+                previousEndDateExclusive = comparisonBounds?.endInclusive?.plusDays(1),
             )
-        } ?: flowOf(emptyList())
-        val allocationsFlow: Flow<List<CreditedAllocation>> = resolved.activityBounds?.let { bounds ->
-            sessionRepository.datedAllocationsBetween(
-                startInclusiveDate = bounds.start,
-                endInclusiveDate = bounds.endInclusive,
-            )
-        } ?: flowOf(emptyList())
+        } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
         combine(
-            combine(
-                sessionsFlow,
-                datedTotalsFlow,
-                previousMinutesFlow,
-                allocationsFlow,
-            ) { sessions, datedTotals, previousMinutesByGame, allocations ->
-                AnalyticsWindowed(sessions, datedTotals, previousMinutesByGame, allocations)
+            combine(sessionsFlow, ledgerSnapshotFlow) { sessions, ledger ->
+                AnalyticsWindowed(sessions, ledger)
             },
             gameRepository.library,
             profileRepository.dailyProgress,
             profileRepository.profile,
             sessionRepository.pendingDateUnknownQuantity,
         ) { current, library, dailyProgress, profile, pending ->
+            val ledger = current.ledger
             AnalyticsInputs(
                 window = resolved.window,
-                activityBounds = resolved.activityBounds,
+                activityBounds = resolved.window.resolveActivityBounds(
+                    resolved.today,
+                    ledger.earliestCanonicalActivityDate,
+                ),
+                earliestTrackedDate = ledger.earliestCanonicalActivityDate,
                 sessions = current.sessions,
-                datedTotals = current.datedTotals,
-                previousMinutesByGame = current.previousMinutesByGame,
+                datedTotals = ledger.selected,
+                comparison = deriveAnalyticsComparison(
+                    window = resolved.window,
+                    today = resolved.today,
+                    earliestTrackedDate = ledger.earliestCanonicalActivityDate,
+                    currentTotals = ledger.selected,
+                    previousTotals = ledger.previous,
+                ),
+                history = ledger.history,
                 library = library,
                 dailyProgress = dailyProgress,
                 profile = profile,
-                allocations = current.allocations.map(CreditedAllocation::toHistoryAllocationUi),
+                allocations = ledger.allocations.map(CreditedAllocation::toHistoryAllocationUi),
                 pendingDateUnknownMinutes = pending,
             )
         }
@@ -692,29 +718,15 @@ class AnalyticsViewModel @Inject constructor(
                 )
             }
 
-        val sessionInsights = if (inputs.sessions.isEmpty()) {
-            SessionInsights()
-        } else {
-            SessionInsights(
-                sessionCount = inputs.sessions.size,
-                averageMinutes = inputs.sessions.sumOf { it.minutes } / inputs.sessions.size,
-                longestMinutes = inputs.sessions.maxOf { it.minutes },
-            )
-        }
-
-        val timeOfDayPattern = deriveTimeOfDayPattern(inputs.sessions, time.zone())
-
-        // Session-shape and time-of-day inputs stay session-only. A period with played minutes but
-        // zero sessions is an allocations-only window: the chart and totals are honest, while the
-        // session insights must state that timing is unavailable rather than show measured zeros.
-        val timingUnavailable = totalMinutes > 0 && inputs.sessions.isEmpty()
+        val timingInsights = deriveAnalyticsTimingInsights(inputs.sessions, totalMinutes, time.zone())
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,
             activeDays = dailyMinutes.count { it.minutes > 0 },
             totalDays = dataBounds?.dayCount ?: 0,
             leadingGame = topGames.firstOrNull(),
-            previousMinutes = inputs.previousMinutesByGame.values.sum().takeIf { it > 0 },
+            previousMinutes = inputs.comparison?.previous?.minutes
+                ?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()?.takeIf { it > 0 },
         )
         // The figures below all derive from inputs.window. Keep the visible period metadata
         // on that same snapshot until the new bounded query lands, so old figures are never
@@ -729,7 +741,7 @@ class AnalyticsViewModel @Inject constructor(
             configured = credState is CredentialsState.Configured,
             window = inputs.window,
             windowBounds = periodBounds,
-            earliestTrackedDate = resolved.earliestTrackedDate,
+            earliestTrackedDate = inputs.earliestTrackedDate,
             canStepEarlier = resolved.canStepEarlier,
             canStepLater = resolved.canStepLater,
             isCurrentWindow = resolved.isCurrentWindow,
@@ -742,13 +754,19 @@ class AnalyticsViewModel @Inject constructor(
             questOutcomesAvailableDayCount = questOutcomes.availableDays,
             questOutcomesUnavailableDayCount = questOutcomes.unavailableDays,
             topGames = topGames,
+            comparison = inputs.comparison,
+            playMix = derivePlayMix(inputs.datedTotals),
+            variety = deriveVariety(inputs.datedTotals, inputs.history),
+            focusShare = deriveFocusShare(inputs.datedTotals, inputs.library.filter { it.isGoal }.map { it.appId }.toSet()),
+            activeQuestConsistency = deriveActiveQuestConsistency(dailyMinutes),
             rarityBreakdown = rarityBreakdown,
             rarestAchievements = rarestAchievements,
-            sessionInsights = sessionInsights,
-            timeOfDayPattern = timeOfDayPattern,
+            sessionInsights = timingInsights.sessionInsights,
+            timeOfDayPattern = timingInsights.timeOfDayPattern,
             gamesByDate = gamesByDate,
             familySharedMinutes = familySharedMinutes,
-            timingUnavailable = timingUnavailable,
+            finalizedSessionStatsUnavailable = timingInsights.finalizedStatisticsUnavailable,
+            timeOfDayUnavailable = timingInsights.timeOfDayUnavailable,
             pendingDateUnknownMinutes = inputs.pendingDateUnknownMinutes,
             estimatedSharesByDate = inputs.allocations.groupBy { it.date }
                 .mapValues { (_, list) -> recoveryShares(list) },
@@ -788,4 +806,4 @@ internal fun joinGameMinutes(
             isFamilyShared = game?.source == GameSource.FAMILY_SHARED,
         )
     }
-    .sortedWith(compareByDescending<AnalyticsGame> { it.minutes }.thenBy { it.name })
+    .sortedWith(compareByDescending<AnalyticsGame> { it.minutes }.thenBy { it.appId })

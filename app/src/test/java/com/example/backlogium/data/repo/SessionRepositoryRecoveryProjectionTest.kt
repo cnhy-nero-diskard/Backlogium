@@ -22,6 +22,13 @@ import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
+import com.example.backlogium.ui.analytics.AnalyticsWindow
+import com.example.backlogium.ui.analytics.AnalyticsWindowLength
+import com.example.backlogium.ui.analytics.deriveAnalyticsComparison
+import com.example.backlogium.ui.analytics.deriveVariety
+import com.example.backlogium.ui.analytics.periodFacts
+import com.example.backlogium.ui.history.recoveryShares
+import com.example.backlogium.ui.history.toHistoryAllocationUi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
@@ -95,6 +102,184 @@ class SessionRepositoryRecoveryProjectionTest {
 
     @After
     fun tearDown() = db.close()
+
+    @Test
+    fun insightHistoryReadsPositiveCanonicalBoundariesAndExcludesHiddenAndSelectedDates() = runTest {
+        val earlier = day.minusDays(40)
+        val host = db.sessionDao().insert(session(10L, earlier, 20))
+        db.sessionDao().insert(session(11L, earlier, 0))
+        db.sessionDao().insert(session(12L, day, 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("boundary-timed", 10L, 20))
+        recovery.insertTimedPlacements(listOf(timed("boundary-share", "boundary-timed", 10L, host, 20, day.minusDays(2))))
+        recovery.insertContributionChecked(contribution("boundary-allocation", 13L, 15))
+        recovery.insertAllocations(listOf(allocation("boundary-leaf", "boundary-allocation", 13L, earlier, 15, RecoveryAllocationMethods.SINGLE_DAY)))
+        db.sessionDao().insert(session(14L, earlier, 10))
+        hidden.hide(listOf(14L))
+
+        val bounds = sessions.activityBoundariesBefore(zone, day).first()
+        assertEquals(setOf(10L, 13L), bounds.keys)
+        assertEquals(RecordedActivityBounds(day.minusDays(2), day.minusDays(2)), bounds[10L])
+        assertEquals(RecordedActivityBounds(earlier, earlier), bounds[13L])
+    }
+
+    @Test
+    fun comparisonCoverageIgnoresZeroRowsAndFullyFundedHostStartDates() = runTest {
+        val window = AnalyticsWindow(day, AnalyticsWindowLength.TWO_WEEKS)
+        val previous = requireNotNull(window.comparablePreviousBounds(day))
+        val selected = window.resolve()
+        db.sessionDao().insert(session(10L, day.minusDays(50), 0))
+        val host = db.sessionDao().insert(session(11L, day.minusDays(40), 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("fully-funded", 11L, 30))
+        recovery.insertTimedPlacements(
+            listOf(timed("fully-funded-share", "fully-funded", 11L, host, 30, day)),
+        )
+
+        val snapshot = sessions.datedActivityLedgerSnapshot(
+            zone = zone,
+            startDateInclusive = selected.start,
+            endDateExclusive = selected.endInclusive.plusDays(1),
+            historyBefore = selected.start,
+            previousStartDateInclusive = previous.start,
+            previousEndDateExclusive = previous.endInclusive.plusDays(1),
+        ).first()
+
+        assertEquals(day, sessions.earliestCanonicalActivityDate.first())
+        assertEquals(day, snapshot.earliestCanonicalActivityDate)
+        assertEquals(30L, periodFacts(snapshot.selected).minutes)
+        assertNull(
+            deriveAnalyticsComparison(
+                window, day, snapshot.earliestCanonicalActivityDate, snapshot.selected, snapshot.previous,
+            ),
+        )
+    }
+
+    @Test
+    fun comparisonNeedsPositiveEarlierCoverageAndUpdatesWhenItsOnlyAnchorIsHidden() = runBlocking {
+        val window = AnalyticsWindow(day, AnalyticsWindowLength.TWO_WEEKS)
+        val selected = window.resolve()
+        val previous = requireNotNull(window.comparablePreviousBounds(day))
+        val anchorDate = day.minusDays(40)
+        db.sessionDao().insert(session(10L, anchorDate, 10))
+        db.sessionDao().insert(session(11L, day.minusDays(2), 20))
+        val ledger = probe(
+            sessions.datedActivityLedgerSnapshot(
+                zone = zone,
+                startDateInclusive = selected.start,
+                endDateExclusive = selected.endInclusive.plusDays(1),
+                historyBefore = selected.start,
+                previousStartDateInclusive = previous.start,
+                previousEndDateExclusive = previous.endInclusive.plusDays(1),
+            ),
+        )
+
+        try {
+            val supported = ledger.next()
+            val comparison = requireNotNull(
+                deriveAnalyticsComparison(
+                    window, day, supported.earliestCanonicalActivityDate,
+                    supported.selected, supported.previous,
+                ),
+            )
+            assertEquals(anchorDate, supported.earliestCanonicalActivityDate)
+            assertEquals(0L, comparison.previous.minutes)
+            assertEquals(20L, comparison.current.minutes)
+
+            hidden.hide(listOf(10L))
+            val unsupported = ledger.next()
+            assertEquals(day.minusDays(2), unsupported.earliestCanonicalActivityDate)
+            assertNull(
+                deriveAnalyticsComparison(
+                    window, day, unsupported.earliestCanonicalActivityDate,
+                    unsupported.selected, unsupported.previous,
+                ),
+            )
+        } finally {
+            ledger.job.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun analyticsLedgerSnapshotKeepsVarietyAndComparisonInOneVisibilityGeneration() = runBlocking {
+        val earlier = day.minusDays(40)
+        db.sessionDao().insert(session(10L, earlier, 15))
+        db.sessionDao().insert(session(10L, day, 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("allocation-only", 13L, 15))
+        recovery.insertAllocations(
+            listOf(allocation("allocation-only-v1", "allocation-only", 13L, day, 15, RecoveryAllocationMethods.SINGLE_DAY)),
+        )
+        val ledger = probe(
+            sessions.datedActivityLedgerSnapshot(
+                zone = zone,
+                startDateInclusive = day.minusDays(1),
+                endDateExclusive = day.plusDays(1),
+                historyBefore = day.minusDays(1),
+                previousStartDateInclusive = earlier,
+                previousEndDateExclusive = earlier.plusDays(1),
+            ),
+        )
+
+        fun assertAligned(snapshot: DatedActivityLedgerSnapshot, expectedAllocationByDate: Map<LocalDate, Long>) {
+            val selectedByDateAndGame = snapshot.selected.flatMap { total ->
+                total.minutesByGame.map { (appId, minutes) -> (total.date to appId) to minutes }
+            }.toMap()
+            val explanationsByDate = snapshot.allocations.groupBy { it.date }.mapValues { (_, rows) ->
+                recoveryShares(rows.map { it.toHistoryAllocationUi() }).sumOf { it.shareMinutes.toLong() }
+            }
+            val selectedAllocationByDate = selectedByDateAndGame
+                .filterKeys { it.second == 13L }
+                .mapKeys { it.key.first }
+            assertEquals(expectedAllocationByDate, selectedAllocationByDate)
+            assertEquals(expectedAllocationByDate, explanationsByDate)
+            snapshot.allocations.forEach { allocation ->
+                assertTrue(allocation.minutes > 0)
+                assertTrue((selectedByDateAndGame[allocation.date to allocation.appId] ?: 0L) >= allocation.minutes.toLong())
+            }
+        }
+
+        fun assertVisible(snapshot: DatedActivityLedgerSnapshot, allocationDate: LocalDate) {
+            assertEquals(45L, periodFacts(snapshot.selected).minutes)
+            assertEquals(15L, periodFacts(snapshot.previous).minutes)
+            assertEquals(RecordedActivityBounds(earlier, earlier), snapshot.history[10L])
+            val variety = deriveVariety(snapshot.selected, snapshot.history)
+            assertEquals(listOf(13L), variety.firstRecorded)
+            assertEquals(listOf(10L), variety.returned)
+            assertAligned(snapshot, mapOf(allocationDate to 15L))
+        }
+
+        try {
+            assertVisible(ledger.next(), day)
+
+            hidden.hide(listOf(13L))
+            val hiddenSnapshot = ledger.next()
+            assertEquals(30L, periodFacts(hiddenSnapshot.selected).minutes)
+            assertEquals(15L, periodFacts(hiddenSnapshot.previous).minutes)
+            assertEquals(RecordedActivityBounds(earlier, earlier), hiddenSnapshot.history[10L])
+            assertTrue(deriveVariety(hiddenSnapshot.selected, hiddenSnapshot.history).firstRecorded.isEmpty())
+            assertAligned(hiddenSnapshot, emptyMap())
+
+            hidden.unhide(listOf(13L))
+            assertVisible(ledger.next(), day)
+
+            db.withTransaction {
+                recovery.supersedeAllocationsUpTo("allocation-only", keepRevision = 2L)
+                recovery.insertAllocations(
+                    listOf(
+                        allocation(
+                            "allocation-only-v2", "allocation-only", 13L, day.minusDays(1), 15,
+                            RecoveryAllocationMethods.SINGLE_DAY, revision = 2L,
+                        ),
+                    ),
+                )
+            }
+            val corrected = ledger.next()
+            assertVisible(corrected, day.minusDays(1))
+        } finally {
+            ledger.job.cancelAndJoin()
+        }
+    }
 
     @Test
     fun dailyBreakdownAndHistoryUseFrozenActivityAndAnAllocationOnlyPagingFloor() = runTest {
@@ -985,10 +1170,10 @@ class SessionRepositoryRecoveryProjectionTest {
 
     private fun allocation(
         placementId: String, contributionId: String, appId: Long, date: LocalDate, minutes: Long,
-        method: String,
+        method: String, revision: Long = 1L,
     ) = UnknownTimeAllocation(
         placementId = placementId, contributionId = contributionId, account = account, appId = appId,
-        revision = 1L, date = date.toString(), minutes = minutes, method = method, zone = "UTC",
+        revision = revision, date = date.toString(), minutes = minutes, method = method, zone = "UTC",
         pendingDate = false, createdAt = 0L,
     )
 

@@ -677,9 +677,9 @@
     <string name="analytics_collapsed">Collapsed</string>
     <string name="analytics_show_chart_options">Show chart options</string>
     <string name="analytics_hide_chart_options">Hide chart options</string>
-    <string name="analytics_active_days_default">Active days only (default)</string>
-    <string name="analytics_all_days_selected">All days</string>
-    <string name="analytics_chart_display">Chart display</string>
+    <string name="analytics_active_days_default">Active days only for daily chart (default)</string>
+    <string name="analytics_all_days_selected">All dates in daily chart</string>
+    <string name="analytics_chart_display">Daily chart display</string>
     <string name="analytics_active_days_only">Active days only</string>
     <string name="analytics_all_days">All days</string>
     <string name="analytics_headline_no_data">No tracked play in this window yet.</string>
@@ -695,7 +695,11 @@
     <string name="analytics_family_shared_observed">Includes %1$s observed from Family Sharing</string>
     <string name="analytics_daily_playtime">Daily playtime</string>
     <string name="analytics_chart_select_day">Select a day - %1$s total</string>
+    <string name="analytics_chart_select_bucket">Select a bucket - %1$s total</string>
     <string name="analytics_chart_summary">Daily playtime chart. %1$s</string>
+    <string name="analytics_group_chart_summary">Grouped playtime chart. %1$s. Exact-date inspection: %2$s</string>
+    <string name="analytics_week_bucket_summary">Week %1$s – %2$s: %3$s</string>
+    <string name="analytics_month_bucket_summary">Month %1$s – %2$s: %3$s</string>
     <string name="analytics_selected_day_summary">%1$s, %2$s, %3$s. %4$s</string>
     <string name="analytics_omitted_date_range">%1$s no-play dates omitted (%2$s–%3$s).</string>
     <plurals name="analytics_active_only_omission_note">
@@ -759,7 +763,7 @@
         <item quantity="one">%s achievement</item>
         <item quantity="other">%s achievements</item>
     </plurals>
-    <string name="analytics_session_timing_unavailable">Session timing is unavailable for this period. Played minutes were recovered without exact session times.</string>
+    <string name="analytics_session_timing_unavailable">Finalized-session statistics are unavailable for this period.</string>
     <string name="analytics_time_of_day_unavailable">Time of day is unavailable for this period. Played minutes were recovered without exact session times.</string>
     <string name="analytics_estimated_day_total">%1$s played · %2$s estimated</string>
     <string name="analytics_recorded_estimated_accessibility">%1$s, of which %2$s estimated, without exact session times</string>
@@ -929,4 +933,25 @@
     <string name="progress_alerts_vibration_on">Channel vibration enabled</string>
     <string name="progress_alerts_vibration_off">Channel vibration disabled</string>
     <string name="progress_alerts_channel_settings">Sound and vibration settings</string>
+    <string name="analytics_core_insights">Core play insights</string>
+    <string name="analytics_period_facts">%1$s: %2$s min · %3$d active dates · %4$d games</string>
+    <string name="analytics_minutes_change">Playtime change: %1$s%%</string>
+    <string name="analytics_distinct_games">Distinct played games: %1$d</string>
+    <string name="analytics_first_recorded">First recorded: %1$s</string>
+    <string name="analytics_returned">Returned after 30 full dates without recorded play: %1$s</string>
+    <string name="analytics_remaining_games">Remaining games</string>
+    <string name="analytics_play_share">%1$s: %2$s min · %3$s%% of visible dated play</string>
+    <string name="analytics_focus_share">Focus with today’s tags: %1$s / %2$s visible dated minutes</string>
+    <string name="analytics_active_quest_consistency">Quest met on %1$d / %2$d active dates with known outcomes; %3$d active dates unavailable</string>
+    <string name="analytics_median_duration">Finalized sessions · median %1$s min</string>
+    <string name="analytics_session_under_30">Below 30 min: %1$d sessions</string>
+    <string name="analytics_session_30_59">30–59 min: %1$d sessions</string>
+    <string name="analytics_session_60_119">60–119 min: %1$d sessions</string>
+    <string name="analytics_session_120_plus">120 min or more: %1$d sessions</string>
+    <string name="analytics_activity_calendar">Activity calendar · select an exact date</string>
+    <string name="analytics_calendar_previous">Previous month</string>
+    <string name="analytics_calendar_next">Next month</string>
+    <string name="analytics_calendar_day">%1$s: %2$s</string>
+    <string name="analytics_weekly_playtime">Weekly playtime</string>
+    <string name="analytics_monthly_playtime">Monthly playtime</string>
 </resources>

@@ -802,7 +802,8 @@ private fun analyticsAllocationsOnlyState(): AnalyticsUiState {
         gamesByDate = dates.mapIndexed { index, date ->
             date to listOf(game.copy(minutes = shares[index], estimatedMinutes = shares[index]))
         }.toMap(),
-        timingUnavailable = true,
+        finalizedSessionStatsUnavailable = true,
+        timeOfDayUnavailable = true,
         estimatedSharesByDate = dates.mapIndexed { index, date ->
             date to listOf(shareFor(date, shares[index]))
         }.toMap(),
