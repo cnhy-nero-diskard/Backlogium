@@ -230,6 +230,7 @@ internal fun AnalyticsContent(
                     .height(180.dp),
             )
             CorePlayInsights(state)
+            AdvancedPlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,
@@ -260,6 +261,7 @@ internal fun AnalyticsContent(
             }
 
             CorePlayInsights(state)
+            AdvancedPlayInsights(state)
             StreakSummaryCard(
                 currentStreak = state.currentStreak,
                 longestStreak = state.longestStreak,

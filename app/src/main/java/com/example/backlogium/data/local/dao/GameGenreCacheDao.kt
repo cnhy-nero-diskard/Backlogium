@@ -18,6 +18,9 @@ interface GameGenreCacheDao {
     @Query("SELECT * FROM game_genre_cache")
     fun observeAll(): Flow<List<GameGenreCache>>
 
+    @Query("SELECT * FROM game_genre_cache")
+    suspend fun allSnapshot(): List<GameGenreCache>
+
     @Query("SELECT * FROM game_genre_cache WHERE appId = :appId LIMIT 1")
     suspend fun findByAppId(appId: Long): GameGenreCache?
 

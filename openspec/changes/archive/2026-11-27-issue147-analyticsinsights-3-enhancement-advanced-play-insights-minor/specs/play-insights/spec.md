@@ -31,6 +31,10 @@ Play insights SHALL report windowed count and rarity for eligible unlocks with s
 - **WHEN** a dated unlock has a retained first-unlock rarity snapshot
 - **THEN** the historical insight uses the retained snapshot for tier and rarest-unlock figures
 
+#### Scenario: Still-unlocked refresh omits its date
+- **WHEN** a later achievement response still confirms an unlock but has no positive unlock time
+- **THEN** its prior supported unlock date remains available; a reported relock clears that date, and a later undated re-unlock does not restore it
+
 #### Scenario: Achievement comparison is supported
 - **WHEN** both selected and previous periods have comparable bounds and enough dated unlock evidence
 - **THEN** Analytics shows the dated unlock counts for both periods and labels their dates

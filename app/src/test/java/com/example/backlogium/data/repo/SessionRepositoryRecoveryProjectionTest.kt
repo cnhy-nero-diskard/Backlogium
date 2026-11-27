@@ -4,11 +4,14 @@ import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.RecoveryReadStatusStore
+import com.example.backlogium.data.local.entity.Achievement
 import com.example.backlogium.data.local.entity.DailyProgress
-import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.local.entity.GameAchievementSync
+import com.example.backlogium.data.local.entity.GameGenreCache
 import com.example.backlogium.data.local.entity.GameRecoveryState
 import com.example.backlogium.data.local.entity.PlaytimeContribution
+import com.example.backlogium.data.local.entity.PlayerProfile
 import com.example.backlogium.data.local.entity.RecoveryAllocationMethods
 import com.example.backlogium.data.local.entity.RecoveryEvidenceQuality
 import com.example.backlogium.data.local.entity.RecoveryProvenance
@@ -24,9 +27,14 @@ import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
 import com.example.backlogium.ui.analytics.AnalyticsWindow
 import com.example.backlogium.ui.analytics.AnalyticsWindowLength
+import com.example.backlogium.ui.analytics.deriveAchievementActivity
 import com.example.backlogium.ui.analytics.deriveAnalyticsComparison
+import com.example.backlogium.ui.analytics.deriveClockMatrix
+import com.example.backlogium.ui.analytics.deriveGenreMix
+import com.example.backlogium.ui.analytics.deriveRecords
 import com.example.backlogium.ui.analytics.deriveVariety
 import com.example.backlogium.ui.analytics.periodFacts
+import com.example.backlogium.ui.analytics.sessionsWithinStartBounds
 import com.example.backlogium.ui.history.recoveryShares
 import com.example.backlogium.ui.history.toHistoryAllocationUi
 import kotlinx.coroutines.CompletableDeferred
@@ -278,6 +286,132 @@ class SessionRepositoryRecoveryProjectionTest {
             assertVisible(corrected, day.minusDays(1))
         } finally {
             ledger.job.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun analyticsSnapshotKeepsTotalsClockAchievementsAndRecordsAlignedAcrossHideAndUnhide() = runBlocking {
+        val firstDate = LocalDate.of(2026, 11, 1)
+        val fundedDate = firstDate.plusDays(1)
+        val today = LocalDate.of(2026, 11, 27)
+        val firstStart = firstDate.atTime(8, 0).atZone(zone).toInstant()
+        val fundedStart = firstDate.atTime(9, 0).atZone(zone).toInstant()
+        db.gameDao().upsert(Game(10L, "Hidden title", "", 0, 0, 0))
+        db.gameDao().upsert(Game(11L, "Visible title", "", 0, 0, 0))
+        db.gameGenreCacheDao().upsert(GameGenreCache(10L, GameGenreCodec.encode(listOf(GameGenre("10", "Action"))), 0))
+        db.gameGenreCacheDao().upsert(GameGenreCache(11L, GameGenreCodec.encode(listOf(GameGenre("11", "Puzzle"))), 0))
+        db.sessionDao().insert(
+            Session(
+                appId = 10L,
+                startAt = firstStart.toEpochMilli(),
+                endAt = firstStart.plusSeconds(30 * 60L).toEpochMilli(),
+                minutes = 30,
+                open = false,
+            ),
+        )
+        val fundedSession = db.sessionDao().insert(
+            Session(
+                appId = 11L,
+                startAt = fundedStart.toEpochMilli(),
+                endAt = fundedStart.plusSeconds(120 * 60L).toEpochMilli(),
+                minutes = 120,
+                open = false,
+            ),
+        )
+        db.playtimeRecoveryDao().insertContributionChecked(contribution("floor-mismatch", 11L, 120))
+        db.playtimeRecoveryDao().insertTimedPlacements(
+            listOf(timed("floor-mismatch-placement", "floor-mismatch", 11L, fundedSession, 120, fundedDate)),
+        )
+        db.gameAchievementSyncDao().upsertAll(listOf(
+            GameAchievementSync(10L, at(firstDate), at(firstDate), true, at(firstDate)),
+            GameAchievementSync(11L, at(fundedDate), at(fundedDate), true, at(fundedDate)),
+        ))
+        db.achievementDao().upsertAll(listOf(
+            Achievement(10L, "hidden-rare", displayName = "Hidden rare", unlocked = true, unlockedAt = at(firstDate), snapshotPercent = 0.01, fetchedAt = at(firstDate)),
+            Achievement(11L, "visible-rare", displayName = "Visible rare", unlocked = true, unlockedAt = at(fundedDate), snapshotPercent = 0.5, fetchedAt = at(fundedDate)),
+        ))
+
+        val window = AnalyticsWindow(today, AnalyticsWindowLength.ONE_MONTH)
+        val rawBounds = requireNotNull(window.resolveActivityBounds(today))
+        val snapshotFlow = sessions.datedActivityLedgerSnapshot(
+            zone = zone,
+            startDateInclusive = rawBounds.start,
+            endDateExclusive = rawBounds.endInclusive.plusDays(1),
+            historyBefore = rawBounds.start,
+            analyticsEvidenceBounds = AnalyticsEvidenceBounds(
+                sessionStartInclusiveMillis = rawBounds.start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                sessionEndExclusiveMillis = rawBounds.endInclusive.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+                achievementAccount = account,
+                achievementStartInclusiveMillis = rawBounds.start.atStartOfDay(zone).toInstant().toEpochMilli(),
+                achievementEndExclusiveMillis = rawBounds.endInclusive.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            ),
+        )
+        val snapshots = probe(snapshotFlow)
+
+        fun assertCoherent(
+            snapshot: DatedActivityLedgerSnapshot,
+            hiddenTitleHidden: Boolean,
+            visibleGenre: String = "Puzzle",
+        ) {
+            val represented = requireNotNull(window.resolveActivityBounds(today, snapshot.earliestCanonicalActivityDate))
+            val scopedSessions = sessionsWithinStartBounds(snapshot.sessions, represented, zone)
+            val activity = deriveAchievementActivity(snapshot.evidence, represented, null, zone)
+            val clock = deriveClockMatrix(scopedSessions, zone)
+            val records = deriveRecords(snapshot.selected, scopedSessions, snapshot.history, activity.unlocks)
+            val genres = snapshot.library.associate { it.appId to it.genres }
+            val mix = deriveGenreMix(snapshot.selected, genres)
+
+            val visibleAppIds = snapshot.library.map { it.appId }.toSet()
+            val datedAppIds = snapshot.selected.flatMap { it.minutesByGame.keys }.toSet()
+            val sessionAppIds = snapshot.sessions.map { it.appId }.toSet()
+            val achievementAppIds = snapshot.evidence.unlocks.map { it.appId }.toSet()
+            val recordAppIds = listOfNotNull(records.longestSession?.appId, records.rarestUnlock?.appId).toSet()
+            assertEquals(visibleGenre, snapshot.library.single { it.appId == 11L }.genres.single().label)
+            assertTrue(mix.shares.all { it.genre != null })
+            if (hiddenTitleHidden) {
+                assertEquals(fundedDate, snapshot.earliestCanonicalActivityDate)
+                assertTrue(11L in visibleAppIds)
+                assertFalse(10L in visibleAppIds)
+                assertEquals(setOf(11L), datedAppIds)
+                assertEquals(setOf(11L), sessionAppIds)
+                assertEquals(setOf(11L), achievementAppIds)
+                assertEquals(setOf(11L), snapshot.evidence.lifetimeRarity.map { it.appId }.toSet())
+                assertTrue(scopedSessions.isEmpty())
+                assertTrue(clock.cells.isEmpty())
+                assertNull(records.longestSession)
+                assertEquals(11L, records.rarestUnlock?.appId)
+                assertEquals(setOf(11L), recordAppIds)
+                assertEquals(120L, mix.totalMinutes)
+                assertEquals(120L, mix.knownMinutes)
+            } else {
+                assertEquals(firstDate, snapshot.earliestCanonicalActivityDate)
+                assertTrue(10L in visibleAppIds)
+                assertTrue(11L in visibleAppIds)
+                assertEquals(setOf(10L, 11L), datedAppIds)
+                assertEquals(setOf(10L, 11L), sessionAppIds)
+                assertEquals(setOf(10L, 11L), achievementAppIds)
+                assertEquals(setOf(10L, 11L), snapshot.evidence.lifetimeRarity.map { it.appId }.toSet())
+                assertEquals(150L, clock.cells.sumOf { it.minutes })
+                assertEquals(150L, mix.totalMinutes)
+                assertEquals(150L, mix.knownMinutes)
+                assertEquals(11L, records.longestSession?.appId)
+                assertEquals(10L, records.rarestUnlock?.appId)
+                assertEquals(setOf(10L, 11L), recordAppIds)
+            }
+        }
+
+        try {
+            assertCoherent(snapshots.next(), hiddenTitleHidden = false)
+            db.gameGenreCacheDao().upsert(
+                GameGenreCache(11L, GameGenreCodec.encode(listOf(GameGenre("11", "Strategy"))), 1),
+            )
+            assertCoherent(snapshots.next(), hiddenTitleHidden = false, visibleGenre = "Strategy")
+            hidden.hide(listOf(10L))
+            assertCoherent(snapshots.next(), hiddenTitleHidden = true, visibleGenre = "Strategy")
+            hidden.unhide(listOf(10L))
+            assertCoherent(snapshots.next(), hiddenTitleHidden = false, visibleGenre = "Strategy")
+        } finally {
+            snapshots.job.cancelAndJoin()
         }
     }
 

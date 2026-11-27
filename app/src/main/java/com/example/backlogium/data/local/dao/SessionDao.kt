@@ -164,6 +164,24 @@ interface SessionDao {
     )
     fun observeRecoveryProjectionInvalidation(): Flow<Long>
 
+    /** Also invalidates when Analytics' transactionally joined metadata or achievement facts change. */
+    @Query(
+        "SELECT " +
+            "(SELECT COUNT(*) FROM sessions) + " +
+            "(SELECT COUNT(*) FROM playtime_contributions) + " +
+            "(SELECT COUNT(*) FROM recovery_timed_placements) + " +
+            "(SELECT COUNT(*) FROM recovery_unknown_allocations) + " +
+            "(SELECT COUNT(*) FROM recovery_allocation_recipes) + " +
+            "(SELECT COUNT(*) FROM hidden_games) + " +
+            "(SELECT COUNT(*) FROM player_profile) + " +
+            "(SELECT COUNT(*) FROM achievements) + " +
+            "(SELECT COUNT(*) FROM game_achievement_sync) + " +
+            "(SELECT COUNT(*) FROM games) + " +
+            "(SELECT COUNT(*) FROM game_genre_cache) + " +
+            "(SELECT COUNT(*) FROM game_preferences)",
+    )
+    fun observeAnalyticsSnapshotInvalidation(): Flow<Long>
+
     /** Only two positive legacy-session boundaries per title cross the repository boundary. */
     @Query(
         "SELECT s.appId, MIN(s.startAt) AS firstAt, MAX(s.startAt) AS lastAt FROM sessions s " +

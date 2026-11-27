@@ -15,6 +15,9 @@ interface GameAchievementSyncDao {
     suspend fun getAll(appIds: Set<Long>): List<GameAchievementSync>
 
     @Query("SELECT * FROM game_achievement_sync")
+    suspend fun getAll(): List<GameAchievementSync>
+
+    @Query("SELECT * FROM game_achievement_sync")
     fun observeAll(): Flow<List<GameAchievementSync>>
 
     @Upsert

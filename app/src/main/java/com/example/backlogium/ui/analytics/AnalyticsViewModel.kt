@@ -2,12 +2,12 @@ package com.example.backlogium.ui.analytics
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.repo.AchievementRepository
+import com.example.backlogium.data.repo.AchievementEvidenceSnapshot
+import com.example.backlogium.data.repo.AnalyticsEvidenceBounds
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.DatedActivityLedgerSnapshot
 import com.example.backlogium.data.repo.DayProgress
-import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.repo.PlaySession
@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -293,6 +294,13 @@ data class AnalyticsUiState(
     val questOutcomesUnavailableDayCount: Int = 0,
     /** Up to five games ranked by tracked minutes in the selected window, descending. */
     val topGames: List<AnalyticsGame> = emptyList(),
+    val genreMix: AnalyticsGenreMix = AnalyticsGenreMix(),
+    val genreDrift: List<AnalyticsGenreDrift> = emptyList(),
+    val clockMatrix: AnalyticsClockMatrix = AnalyticsClockMatrix(),
+    val achievementActivity: AnalyticsAchievementActivity = AnalyticsAchievementActivity(),
+    val records: AnalyticsRecords = AnalyticsRecords(),
+    val gameNames: Map<Long, String> = emptyMap(),
+    val insightsZone: ZoneId = ZoneId.systemDefault(),
     val comparison: AnalyticsComparison? = null,
     val playMix: List<AnalyticsPlayShare> = emptyList(),
     val variety: AnalyticsVariety = AnalyticsVariety(),
@@ -348,6 +356,10 @@ data class AnalyticsUiState(
 }
 
 private data class AnalyticsInputs(
+    val zone: ZoneId,
+    val account: String?,
+    val evidence: AchievementEvidenceSnapshot,
+    val previousTotals: List<DatedCreditedTotal>,
     val window: AnalyticsWindow,
     /** The exact represented-date scope queried for this retained snapshot. */
     val activityBounds: AnalyticsWindowBounds?,
@@ -361,12 +373,6 @@ private data class AnalyticsInputs(
     val profile: PlayerStats?,
     val allocations: List<HistoryAllocationUi> = emptyList(),
     val pendingDateUnknownMinutes: Int = 0,
-)
-
-/** One windowed query snapshot feeding [AnalyticsInputs]; allocations are the recovery leaves. */
-private data class AnalyticsWindowed(
-    val sessions: List<PlaySession>,
-    val ledger: DatedActivityLedgerSnapshot,
 )
 
 /** A selected window remembers whether it should continue following the current period. */
@@ -407,6 +413,7 @@ private data class DatedAnalyticsWindow(
 )
 
 private data class ResolvedAnalyticsWindow(
+    val zone: ZoneId,
     val window: AnalyticsWindow,
     val today: LocalDate,
     /** Bounded query dates; the ledger snapshot applies its own canonical-history floor. */
@@ -427,9 +434,7 @@ private val INITIAL_WINDOW = AnalyticsWindow(
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
-    private val gameRepository: GameRepository,
     private val profileRepository: ProfileRepository,
-    private val achievementRepository: AchievementRepository,
     private val settings: SettingsRepository,
     private val credentials: CredentialsRepository,
     private val currentDate: CurrentDateProvider,
@@ -447,7 +452,10 @@ class AnalyticsViewModel @Inject constructor(
         ),
     )
 
-    private val today: StateFlow<LocalDate> = currentDate.currentDate
+    private val moment = currentDate.currentMoment.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000),
+        com.example.backlogium.domain.CurrentLocalMoment(time.nowMillis(), initialToday, time.zone()))
+
+    private val today: StateFlow<LocalDate> = moment.map { it.today }.distinctUntilChanged()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -491,11 +499,13 @@ class AnalyticsViewModel @Inject constructor(
         window: AnalyticsWindow,
         earliest: LocalDate?,
         today: LocalDate,
+        zone: ZoneId = time.zone(),
     ): ResolvedAnalyticsWindow {
         // Query the bounded selected period in full; the coherent ledger snapshot supplies the
         // canonical floor used to clip displayed dates and validate comparisons.
         val activityBounds = window.resolveActivityBounds(today)
         return ResolvedAnalyticsWindow(
+            zone = zone,
             window = window,
             today = today,
             activityBounds = activityBounds,
@@ -503,7 +513,7 @@ class AnalyticsViewModel @Inject constructor(
                 historyWindowBounds(
                     start = bounds.start,
                     endInclusive = bounds.endInclusive,
-                    zone = time.zone(),
+                    zone = zone,
                 )
             },
             earliestTrackedDate = earliest,
@@ -516,7 +526,8 @@ class AnalyticsViewModel @Inject constructor(
     private val resolvedWindow: StateFlow<ResolvedAnalyticsWindow> = combine(
         datedWindow,
         earliestTrackedDate,
-    ) { dated, earliest -> resolveWindow(dated.window, earliest, dated.today) }
+        moment.map { it.zone }.distinctUntilChanged(),
+    ) { dated, earliest, zone -> resolveWindow(dated.window, earliest, dated.today, zone) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -578,39 +589,46 @@ class AnalyticsViewModel @Inject constructor(
 
     // Re-query every windowed source when the same resolved bounds change. Room keeps the reads
     // indexed in SQL; no wider history is fetched and pruned in memory.
-    private val inputs: Flow<AnalyticsInputs> = resolvedWindow.flatMapLatest { resolved ->
+    private val inputs: Flow<AnalyticsInputs> = combine(
+        credentials.steamIdFlow.distinctUntilChanged(), resolvedWindow,
+    ) { account, resolved -> account to resolved }.flatMapLatest { (account, resolved) ->
         // A current calendar month/year is only elapsed-to-date, so compare the same elapsed
         // subrange in the prior period rather than a full month/year against a partial one.
         // When the elapsed day-count does not fit in the prior period, or tracking began inside
         // either range, omit the previous-period headline and fall back.
         val comparisonBounds = resolved.window.comparablePreviousBounds(resolved.today)
-        val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
-            sessionRepository.sessionsBetween(
-                startInclusiveMillis = bounds.startInclusiveMillis,
-                endExclusiveMillis = bounds.endExclusiveMillis,
-            )
-        } ?: flowOf(emptyList())
         val ledgerSnapshotFlow: Flow<DatedActivityLedgerSnapshot> = resolved.activityBounds?.let { bounds ->
+            val sessionBounds = requireNotNull(resolved.epochBounds)
+            val evidenceStart = minOf(bounds.start, comparisonBounds?.start ?: bounds.start)
             sessionRepository.datedActivityLedgerSnapshot(
-                zone = time.zone(),
+                zone = resolved.zone,
                 startDateInclusive = bounds.start,
                 endDateExclusive = bounds.endInclusive.plusDays(1),
                 historyBefore = bounds.start,
                 previousStartDateInclusive = comparisonBounds?.start,
                 previousEndDateExclusive = comparisonBounds?.endInclusive?.plusDays(1),
+                analyticsEvidenceBounds = AnalyticsEvidenceBounds(
+                    sessionStartInclusiveMillis = sessionBounds.startInclusiveMillis,
+                    sessionEndExclusiveMillis = sessionBounds.endExclusiveMillis,
+                    achievementAccount = account,
+                    achievementStartInclusiveMillis = evidenceStart.atStartOfDay(resolved.zone).toInstant().toEpochMilli(),
+                    achievementEndExclusiveMillis = bounds.endInclusive.plusDays(1)
+                        .atStartOfDay(resolved.zone).toInstant().toEpochMilli(),
+                ),
             )
         } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
         combine(
-            combine(sessionsFlow, ledgerSnapshotFlow) { sessions, ledger ->
-                AnalyticsWindowed(sessions, ledger)
-            },
-            gameRepository.library,
+            ledgerSnapshotFlow,
             profileRepository.dailyProgress,
             profileRepository.profile,
             sessionRepository.pendingDateUnknownQuantity,
-        ) { current, library, dailyProgress, profile, pending ->
-            val ledger = current.ledger
+        ) { current, dailyProgress, profile, pending ->
+            val ledger = current
             AnalyticsInputs(
+                zone = resolved.zone,
+                account = account,
+                evidence = current.evidence,
+                previousTotals = ledger.previous,
                 window = resolved.window,
                 activityBounds = resolved.window.resolveActivityBounds(
                     resolved.today,
@@ -627,7 +645,7 @@ class AnalyticsViewModel @Inject constructor(
                     previousTotals = ledger.previous,
                 ),
                 history = ledger.history,
-                library = library,
+                library = current.library,
                 dailyProgress = dailyProgress,
                 profile = profile,
                 allocations = ledger.allocations.map(CreditedAllocation::toHistoryAllocationUi),
@@ -641,8 +659,13 @@ class AnalyticsViewModel @Inject constructor(
         resolvedWindow,
         settings.ruleConfig,
         credentials.credentialsStateFlow,
-        achievementRepository.unlockedRarityDetails,
-    ) { inputs, resolved, ruleConfig, credState, rarityDetails ->
+    ) { inputs, resolved, ruleConfig, credState ->
+        val account = (credState as? CredentialsState.Configured)?.steamId
+        if (account == null || inputs.account != account || inputs.profile?.steamId != account) {
+            return@combine AnalyticsUiState(loading = false, configured = account != null,
+                window = resolved.window, windowBounds = resolved.window.resolve())
+        }
+        val rarityDetails = inputs.evidence.lifetimeRarity
         // The period identity stays the full calendar period for labels and navigation, while
         // activity is represented only within observed history through today.
         val periodBounds = inputs.window.resolve()
@@ -718,7 +741,11 @@ class AnalyticsViewModel @Inject constructor(
                 )
             }
 
-        val timingInsights = deriveAnalyticsTimingInsights(inputs.sessions, totalMinutes, time.zone())
+        val genreTags = inputs.library.associate { it.appId to it.genres }
+        val genreMix = deriveGenreMix(inputs.datedTotals, genreTags)
+        val achievementActivity = deriveAchievementActivity(inputs.evidence, dataBounds, inputs.comparison, inputs.zone)
+        val timingInsights = deriveAnalyticsTimingInsights(inputs.sessions, totalMinutes, inputs.zone)
+        val representedSessions = sessionsWithinStartBounds(inputs.sessions, dataBounds, inputs.zone)
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,
@@ -733,12 +760,12 @@ class AnalyticsViewModel @Inject constructor(
         // relabelled as the newly selected period. Navigation affordances still follow the
         // selection via resolved, while loading stays false once a snapshot exists so the
         // empty state reflects the displayed snapshot rather than a zero-value stack.
-        val updating = inputs.window != resolved.window
+        val updating = inputs.window != resolved.window || inputs.zone != resolved.zone
 
         AnalyticsUiState(
             loading = false,
             updating = updating,
-            configured = credState is CredentialsState.Configured,
+            configured = true,
             window = inputs.window,
             windowBounds = periodBounds,
             earliestTrackedDate = inputs.earliestTrackedDate,
@@ -754,6 +781,13 @@ class AnalyticsViewModel @Inject constructor(
             questOutcomesAvailableDayCount = questOutcomes.availableDays,
             questOutcomesUnavailableDayCount = questOutcomes.unavailableDays,
             topGames = topGames,
+            genreMix = genreMix,
+            genreDrift = deriveGenreDrift(genreMix, deriveGenreMix(inputs.previousTotals, genreTags), inputs.comparison != null),
+            clockMatrix = deriveClockMatrix(representedSessions, inputs.zone),
+            achievementActivity = achievementActivity,
+            records = deriveRecords(inputs.datedTotals, representedSessions, inputs.history, achievementActivity.unlocks),
+            gameNames = inputs.library.associate { it.appId to it.name },
+            insightsZone = inputs.zone,
             comparison = inputs.comparison,
             playMix = derivePlayMix(inputs.datedTotals),
             variety = deriveVariety(inputs.datedTotals, inputs.history),

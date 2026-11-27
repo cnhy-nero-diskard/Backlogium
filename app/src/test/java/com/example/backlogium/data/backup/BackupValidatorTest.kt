@@ -162,6 +162,30 @@ class BackupValidatorTest {
     }
 
     @Test
+    fun observedCompletionRequiresMatchingAccountKnownGameAndPlausibleDate() {
+        val valid = BackupAchievementCompletion("1", 1L, VALID_UNLOCKED_AT)
+        assertTrue(BackupValidator.validate(validFile(achievementCompletions = listOf(valid))) is BackupValidationResult.Valid)
+
+        val wrongAccount = validFile(achievementCompletions = listOf(valid.copy(account = "2"))).assertRejected()
+        assertTrue(wrongAccount.any { it.recordType == "achievementCompletion" && it.detail.contains("identity") })
+
+        val absentGame = validFile(achievementCompletions = listOf(valid.copy(appId = 999L))).assertRejected()
+        assertTrue(absentGame.any { it.recordType == "achievementCompletion" && it.detail.contains("absent game") })
+
+        val invalidDate = validFile(achievementCompletions = listOf(valid.copy(completedAt = "not-a-date"))).assertRejected()
+        assertTrue(invalidDate.any { it.recordType == "achievementCompletion" && it.detail.contains("unparseable") })
+
+        val implausibleDate = validFile(
+            achievementCompletions = listOf(valid.copy(completedAt = 0L.toIso8601())),
+        ).assertRejected()
+        assertTrue(implausibleDate.any { it.recordType == "achievementCompletion" && it.detail.contains("outside the supported range") })
+
+        val duplicate = validFile(achievementCompletions = listOf(valid, valid.copy(completedAt = "2026-06-02T12:00:00Z")))
+            .assertRejected()
+        assertTrue(duplicate.any { it.recordType == "achievementCompletion" && it.detail.contains("duplicate") })
+    }
+
+    @Test
     fun sessionEndingFarInTheFuture_rejectedEvenWhenStartIsValid() {
         val file = validFile(
             sessions = listOf(
@@ -373,6 +397,7 @@ class BackupValidatorTest {
         sessions: List<BackupSession> = emptyList(),
         dailyProgress: List<BackupDailyProgress> = emptyList(),
         achievements: List<BackupAchievement> = emptyList(),
+        achievementCompletions: List<BackupAchievementCompletion> = emptyList(),
         collections: List<BackupCollection> = emptyList(),
         collectionMembers: List<BackupCollectionMember> = emptyList(),
     ) = BackupFile(
@@ -392,6 +417,7 @@ class BackupValidatorTest {
         ),
         games = games.ifEmpty { listOf(BackupGame(appId = 1L, name = "Game", isGoal = false, backfillMinutes = 0)) },
         achievements = achievements,
+        achievementCompletions = achievementCompletions,
         sessions = sessions,
         dailyProgress = dailyProgress,
         hltbData = emptyList(),

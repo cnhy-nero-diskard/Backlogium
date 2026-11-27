@@ -30,7 +30,7 @@ data class SyncRun(
 @Entity(
     tableName = "game_achievement_sync",
     foreignKeys = [ForeignKey(entity = Game::class, parentColumns = ["appId"], childColumns = ["appId"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index("appId"), Index("playerStateFetchedAt"), Index("schemaFetchedAt")],
+    indices = [Index("appId"), Index("playerStateFetchedAt"), Index("schemaFetchedAt"), Index("completedAt")],
 )
 data class GameAchievementSync(
     @PrimaryKey val appId: Long,
@@ -39,6 +39,8 @@ data class GameAchievementSync(
     val hasAchievements: Boolean?,
     val checkedAt: Long,
     val globalPercentagesFetchedAt: Long? = null,
+    /** First observed confirmed incomplete-to-complete transition; no historical backfill. */
+    val completedAt: Long? = null,
 )
 
 @Entity(tableName = "request_breakdowns", foreignKeys = [ForeignKey(entity = SyncRun::class, parentColumns = ["id"], childColumns = ["runId"], onDelete = ForeignKey.CASCADE)], indices = [Index("runId")])

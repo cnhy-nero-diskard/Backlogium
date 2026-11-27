@@ -29,3 +29,18 @@ Current genre tags are not historical classifications, and later metadata can ch
 ## Migration Plan
 
 Add bounded projections and any required prospective dated evidence without backfilling unsupported completion dates. Keep lifetime rarity independent. Update affected visual baselines alongside the UI.
+
+### Record eligibility and tie order
+
+Records cover only the represented period. Longest session uses finalized positive-duration sessions; busiest day uses visible dated minutes; most varied day counts distinct positively credited games. Each game's run is consecutive positive local dates, clipped at the window edges. A qualifying return has at least 30 full quiet dates between positive records; the latest pre-window date is context only. Ties prefer the earliest date/start, then app id and row/API identity. Rarest dated unlock uses the retained rarity snapshot and excludes unknown rarity. Genre shares remain unrounded until display. Clock dominance and achievement count comparisons require at least three evidenced start/unlock dates (on each side for comparisons).
+
+Completion dates are first observed confirmed incomplete-to-full-set transitions, retained prospectively in sync metadata. They are observation dates, not inferred Steam completion dates. A complete first baseline does not create a dated completion. Missing-date unlock and unsupported-completion coverage counts describe the visible account's stored evidence across all dates, since undated evidence cannot be assigned to a period.
+
+### Portable completion evidence stays account-bound
+
+Backups carry prospective completion observations only when their source account matches the
+Room profile captured with the exported rows; a credentials/profile mismatch rejects the export
+rather than relabeling or silently dropping the evidence. Same-account restore keeps the earliest
+observation. A warned cross-account restore still merges ordinary history, but omits completion
+observations because they assert a transition in one player's confirmed achievement set, not a
+portable historical fact about the receiving player.

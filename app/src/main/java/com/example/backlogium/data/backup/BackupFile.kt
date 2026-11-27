@@ -50,6 +50,8 @@ data class BackupFile(
      * `null` must stay absent for the legacy formats.
      */
     val recovery: BackupRecovery? = null,
+    /** Prospective per-game completion observations; absent from older backups. */
+    val achievementCompletions: List<BackupAchievementCompletion> = emptyList(),
 ) {
     companion object {
         const val CURRENT_FORMAT_VERSION = 3
@@ -121,6 +123,14 @@ data class BackupAchievement(
     val displayName: String?,
     val snapshotPercent: Double?,
     val unlockedAt: String?,
+)
+
+/** A first-observed full-set transition, scoped to the source account recorded in the file. */
+@Serializable
+data class BackupAchievementCompletion(
+    val account: String,
+    val appId: Long,
+    val completedAt: String,
 )
 
 /** A synthesized play session. `open` is deliberately absent — a merged session is historical. */

@@ -37,6 +37,7 @@ class BackupVersionedDecoderTest {
     @Test fun pickedAndRetainedLegacySnapshotsAcceptExplicitAndOmittedV1() {
         val explicit = json.encodeToString(BackupFile.serializer(), legacy)
         assertEquals(1, decode(explicit)?.formatVersion)
+        assertEquals(emptyList<BackupAchievementCompletion>(), decode(explicit)?.achievementCompletions)
         val omitted = explicit.replace("\"formatVersion\":1,", "")
         assertFalse(omitted.contains("\"formatVersion\""))
         assertEquals(1, decode(omitted)?.formatVersion)

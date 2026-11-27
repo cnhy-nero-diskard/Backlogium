@@ -747,6 +747,7 @@ class RecoveryOverlappingFinalizationTest {
             dailyProgressDao = database.dailyProgressDao(),
             hltbDataDao = database.hltbDataDao(),
             achievementDao = database.achievementDao(),
+            gameAchievementSyncDao = database.gameAchievementSyncDao(),
             playerProfileDao = database.playerProfileDao(),
             collectionDao = database.collectionDao(),
             excludedSharedGameDao = database.excludedSharedGameDao(),

@@ -945,6 +945,8 @@ class AchievementRepositoryTest {
         override suspend fun getAll(appIds: Set<Long>): List<GameAchievementSync> =
             store.values.filter { it.appId in appIds }
 
+        override suspend fun getAll(): List<GameAchievementSync> = store.values.toList()
+
         override fun observeAll(): Flow<List<GameAchievementSync>> = flowOf(store.values.toList())
 
         override suspend fun upsert(row: GameAchievementSync) {
