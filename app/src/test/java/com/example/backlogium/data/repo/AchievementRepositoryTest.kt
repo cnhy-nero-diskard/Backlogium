@@ -33,6 +33,7 @@ import com.example.backlogium.domain.SmartCollectionAchievementSignals
 import com.example.backlogium.domain.SmartCollectionGame
 import com.example.backlogium.domain.SmartCollections
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.domain.OperationCounts
 import com.example.backlogium.gamification.AchievementInput
 import com.example.backlogium.gamification.Gamification
 import com.example.backlogium.gamification.RuleConfig
@@ -223,6 +224,59 @@ class AchievementRepositoryTest {
         assertEquals("neither actually updated anything", 0, result.refreshed)
         assertEquals("no metadata row is written for a game Steam reported nothing for", null, syncDao.get(1))
         assertEquals(null, syncDao.get(2))
+    }
+
+    @Test
+    fun `provider failure and suspicious empty payload are failed attempts but confirmed empty is skipped`() = runTest {
+        suspend fun attempt(api: FakeSteamApi): Pair<AchievementRepository.ReconciliationFetch, com.example.backlogium.domain.OperationCounts> {
+            var counts = com.example.backlogium.domain.OperationCounts()
+            val fetched = repository(api, gameDao = FakeGameDao(game(1, 100, 0)))
+                .fetchReconciliationGames(KEY, STEAM_ID, onRefresh = {}, onAttempts = { counts = it })
+            return fetched to counts
+        }
+
+        val (providerFailure, failedProviderCounts) = attempt(FakeSteamApi(noStatsFor = setOf(1L)))
+        assertEquals(0, providerFailure.refreshed)
+        assertEquals(1, failedProviderCounts.failed)
+        assertEquals(0, failedProviderCounts.skipped)
+        assertTrue("usable schema/global components make this a partial result, never a success", providerFailure.partialComponents)
+
+        val (suspiciousEmpty, suspiciousCounts) = attempt(FakeSteamApi(
+            schemaAchievements = listOf(com.example.backlogium.data.remote.dto.AchievementSchemaDto(name = "KNOWN")),
+            playerAchievements = emptyList(),
+        ))
+        assertEquals(0, suspiciousEmpty.refreshed)
+        assertEquals(1, suspiciousCounts.failed)
+        assertEquals(0, suspiciousCounts.skipped)
+        assertTrue(suspiciousEmpty.partialComponents)
+
+        val (confirmedEmpty, emptyCounts) = attempt(FakeSteamApi(
+            schemaAchievements = emptyList(), playerAchievements = emptyList(),
+        ))
+        assertEquals(1, confirmedEmpty.refreshed)
+        assertEquals(0, emptyCounts.failed)
+        assertEquals(1, emptyCounts.skipped)
+        assertFalse(confirmedEmpty.partialComponents)
+    }
+
+    @Test
+    fun `nonretryable schema and globals errors remain failed components alongside usable player data`() = runTest {
+        val api = FakeSteamApi(failSchemaNonRetryable = true, failGlobalsNonRetryable = true)
+        val repo = repository(api, gameDao = FakeGameDao(game(1, 100, 0)))
+        var counts = com.example.backlogium.domain.OperationCounts()
+        val refreshes = mutableListOf<AchievementRefresh>()
+
+        val fetched = repo.fetchReconciliationGames(
+            KEY, STEAM_ID, onRefresh = { refreshes += it }, onAttempts = { counts = it },
+        )
+
+        assertEquals(1, fetched.refreshed)
+        assertEquals(1, counts.failed)
+        assertEquals(AchievementComponentOutcome.SUCCEEDED, refreshes.single().playerOutcome)
+        assertEquals(AchievementComponentOutcome.FAILED, refreshes.single().schemaOutcome)
+        assertEquals(AchievementComponentOutcome.FAILED, refreshes.single().globalsOutcome)
+        assertFalse(refreshes.single().retryableFailure)
+        assertTrue(fetched.partialComponents)
     }
 
     /**
@@ -843,6 +897,9 @@ class AchievementRepositoryTest {
         private val failSchema: Boolean = false,
         private val failPlayerAchievementsFor: Set<Long> = emptySet(),
         private val noStatsFor: Set<Long> = emptySet(),
+        private val playerAchievements: List<PlayerAchievementDto>? = null,
+        private val failSchemaNonRetryable: Boolean = false,
+        private val failGlobalsNonRetryable: Boolean = false,
     ) : SteamApi {
         override suspend fun getWishlist(
             steamId: String,
@@ -888,7 +945,7 @@ class AchievementRepositoryTest {
                 return PlayerAchievementsResponse(
                     PlayerAchievementsResult(
                         success = true,
-                        achievements = listOf(PlayerAchievementDto(apiName = "ACH_1", achieved = 1, unlocktime = 5)),
+                        achievements = playerAchievements ?: listOf(PlayerAchievementDto(apiName = "ACH_1", achieved = 1, unlocktime = 5)),
                     ),
                 )
             } finally {
@@ -903,6 +960,7 @@ class AchievementRepositoryTest {
         ): GameSchemaResponse {
             schemas += appId
             if (failSchema) throw IOException("schema unavailable")
+            if (failSchemaNonRetryable) throw IllegalArgumentException("schema rejected")
             return GameSchemaResponse(
                 GameSchemaResult(
                     availableGameStats = AvailableGameStatsDto(
@@ -923,6 +981,7 @@ class AchievementRepositoryTest {
             scope: SyncRunRecorder.RunScope?,
         ): GlobalAchievementPercentagesResponse {
             globalPercentageCalls++
+            if (failGlobalsNonRetryable) throw IllegalArgumentException("globals rejected")
             return GlobalAchievementPercentagesResponse()
         }
 

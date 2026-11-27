@@ -4,6 +4,7 @@ import androidx.work.Data
 import androidx.work.WorkInfo
 import com.example.backlogium.domain.OperationCounts
 import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationProgress
 import com.example.backlogium.domain.OperationStatus
 import java.util.UUID
 import kotlinx.coroutines.test.runTest
@@ -36,6 +37,8 @@ class OperationReportingTest {
         assertNull(operationProgress(info(WorkInfo.State.SUCCEEDED, data), 4))
         val stale = operationData(UUID.randomUUID().toString(), 3, OperationPhase.PREPARING)
         assertNull(operationProgress(info(WorkInfo.State.RUNNING, stale), 3))
+        val mismatchedTag = operationData(id.toString(), 4, OperationPhase.PREPARING)
+        assertNull(operationProgress(info(WorkInfo.State.RUNNING, mismatchedTag), 3))
     }
 
     @Test fun `pending work from an older build keeps coarse progress only for its original account`() {
@@ -60,6 +63,14 @@ class OperationReportingTest {
         assertEquals(OperationStatus.PARTIAL, operationProgress(info(WorkInfo.State.SUCCEEDED, data), 3)?.status)
     }
 
+    @Test fun `usable player data with failed catalogue components remains partial when all games are attempted`() {
+        val data = Data.Builder().putAll(operationData(
+            id.toString(), 3, OperationPhase.ACHIEVEMENTS, OperationCounts(1, 1, failed = 1),
+        )).putBoolean(OP_PARTIAL, true).build()
+
+        assertEquals(OperationStatus.PARTIAL, operationProgress(info(WorkInfo.State.SUCCEEDED, data), 3)?.status)
+    }
+
     @Test fun `phase without counts is indeterminate and completed batches flush throttled writes`() = runTest {
         var now = 0L
         var writes = 0
@@ -74,5 +85,40 @@ class OperationReportingTest {
         assertEquals(4, writes)
         assertNull(operationProgress(info(WorkInfo.State.RUNNING,
             operationData(id.toString(), 3, OperationPhase.FETCHING_LIBRARY)), 3)?.counts)
+    }
+
+    @Test fun `a newer periodic result survives its sleeping schedule and does not reveal an older manual result`() {
+        val manual = TimedOperation(OperationProgress("manual", OperationStatus.SUCCEEDED), startedAt = 100)
+        val periodic = StoredOperationReport(
+            workId = id.toString(), generation = 3, startedAt = 200,
+            progress = OperationProgress("3:periodic-cycle", OperationStatus.PARTIAL,
+                OperationPhase.ACHIEVEMENTS, OperationCounts(4, 4, failed = 1), updated = 2),
+        )
+        val sleeping = WorkInfo(id, WorkInfo.State.ENQUEUED, emptySet(), runAttemptCount = 0)
+
+        val selected = latestOperation(listOfNotNull(manual, periodicOperation(sleeping, 3, periodic)))
+
+        assertEquals("3:periodic-cycle", selected?.id)
+        assertEquals(OperationStatus.PARTIAL, selected?.status)
+        assertEquals(2, selected?.updated)
+        assertNull("a schedule that has never run is not itself an operation",
+            periodicOperation(WorkInfo(UUID.randomUUID(), WorkInfo.State.ENQUEUED, emptySet()), 3, null))
+    }
+
+    @Test fun `periodic backoff retains the attempted cycle identity and reports retrying`() {
+        val periodicId = UUID.randomUUID()
+        val report = StoredOperationReport(
+            workId = periodicId.toString(), generation = 3, startedAt = 300,
+            progress = OperationProgress("3:cycle", OperationStatus.RUNNING,
+                OperationPhase.ACHIEVEMENTS, OperationCounts(2, 5, failed = 1)),
+        )
+        val retry = WorkInfo(periodicId, WorkInfo.State.ENQUEUED, emptySet(), runAttemptCount = 1)
+
+        val selected = periodicOperation(retry, 3, report)?.progress
+
+        assertEquals("3:cycle", selected?.id)
+        assertEquals(OperationStatus.RETRYING, selected?.status)
+        assertEquals(2, selected?.counts?.processed)
+        assertNull(periodicOperation(retry, 4, report))
     }
 }

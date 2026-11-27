@@ -17,6 +17,9 @@ internal const val OP_SKIPPED = "operation_skipped"
 internal const val OP_FAILED = "operation_failed"
 internal const val OP_UPDATED = "operation_updated"
 internal const val OP_FAILURE = "operation_failure"
+internal const val OP_EXECUTION_ID = "operation_execution_id"
+internal const val OP_STARTED_AT = "operation_started_at"
+internal const val OP_PARTIAL = "operation_partial"
 
 internal fun operationData(
     id: String,
@@ -25,10 +28,25 @@ internal fun operationData(
     counts: OperationCounts? = null,
     updated: Int? = null,
     failed: Boolean = false,
-): Data = workDataOf(OP_ID to id, OP_ACCOUNT to generation, OP_PHASE to phase.name,
-    OP_PROCESSED to (counts?.processed ?: -1), OP_TOTAL to (counts?.total ?: -1),
-    OP_SKIPPED to (counts?.skipped ?: 0), OP_FAILED to (counts?.failed ?: 0),
-    OP_UPDATED to (updated ?: -1), OP_FAILURE to failed)
+    executionId: String? = null,
+    startedAt: Long? = null,
+    partial: Boolean = false,
+): Data = Data.Builder()
+    .putString(OP_ID, id)
+    .putLong(OP_ACCOUNT, generation)
+    .putString(OP_PHASE, phase.name)
+    .putInt(OP_PROCESSED, counts?.processed ?: -1)
+    .putInt(OP_TOTAL, counts?.total ?: -1)
+    .putInt(OP_SKIPPED, counts?.skipped ?: 0)
+    .putInt(OP_FAILED, counts?.failed ?: 0)
+    .putInt(OP_UPDATED, updated ?: -1)
+    .putBoolean(OP_FAILURE, failed)
+    .putBoolean(OP_PARTIAL, partial)
+    .apply {
+        executionId?.let { putString(OP_EXECUTION_ID, it) }
+        startedAt?.let { putLong(OP_STARTED_AT, it) }
+    }
+    .build()
 
 internal fun Data.operationCounts(): OperationCounts? = getInt(OP_TOTAL, -1).takeIf { it >= 0 }?.let {
     OperationCounts(getInt(OP_PROCESSED, 0), it, getInt(OP_SKIPPED, 0), getInt(OP_FAILED, 0))
@@ -37,9 +55,14 @@ internal fun Data.operationCounts(): OperationCounts? = getInt(OP_TOTAL, -1).tak
 /** Unknown constraint causes stay queued; older builds can supply only a coarse WorkInfo state. */
 internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgress? {
     val data = if (info.state.isFinished) info.outputData else info.progress
-    val taggedGeneration = info.tags.firstOrNull { it.startsWith("setup-account:") }
-        ?.substringAfter(":")?.toLongOrNull()
-    val account = data.getLong(OP_ACCOUNT, taggedGeneration ?: 0L)
+    val taggedGenerations = info.tags.filter { it.startsWith("setup-account:") }
+        .map { it.substringAfter(":").toLongOrNull() ?: return null }
+        .distinct()
+    if (taggedGenerations.size > 1) return null
+    val taggedGeneration = taggedGenerations.singleOrNull()
+    val payloadGeneration = data.getLong(OP_ACCOUNT, Long.MIN_VALUE).takeUnless { it == Long.MIN_VALUE }
+    if (taggedGeneration != null && payloadGeneration != null && taggedGeneration != payloadGeneration) return null
+    val account = payloadGeneration ?: taggedGeneration ?: 0L
     if (account != generation) return null
     if (data.getString(OP_ID)?.let { it != info.id.toString() } == true) return null
     val counts = data.operationCounts()
@@ -57,15 +80,51 @@ internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgr
         WorkInfo.State.FAILED -> OperationStatus.FAILED
         WorkInfo.State.SUCCEEDED -> when {
             data.getBoolean(OP_FAILURE, false) || data.getString(SteamSyncWorker.KEY_SETUP_FAILURE) != null -> OperationStatus.FAILED
+            data.getBoolean(OP_PARTIAL, false) -> OperationStatus.PARTIAL
             (counts?.failed ?: 0) > 0 -> if (data.getString(SteamSyncWorker.KEY_POLL_RESULT) == SteamSyncWorker.POLL_COMMITTED ||
                 counts!!.failed < counts.processed - counts.skipped) OperationStatus.PARTIAL else OperationStatus.FAILED
             else -> OperationStatus.SUCCEEDED
         }
     }
-    return OperationProgress(info.id.toString(), status,
+    return OperationProgress(data.getString(OP_EXECUTION_ID) ?: info.id.toString(), status,
         data.getString(OP_PHASE)?.let { name -> OperationPhase.entries.firstOrNull { it.name == name } },
         counts, data.getInt(OP_UPDATED, -1).takeIf { it >= 0 })
 }
+
+internal data class TimedOperation(val progress: OperationProgress, val startedAt: Long)
+
+internal fun latestOperation(candidates: List<TimedOperation>): OperationProgress? =
+    candidates.maxWithOrNull(compareBy<TimedOperation>({ it.startedAt }, { it.progress.active }))?.progress
+
+internal fun periodicOperation(
+    info: WorkInfo?,
+    generation: Long,
+    stored: StoredOperationReport?,
+): TimedOperation? {
+    val report = stored?.takeIf { it.generation == generation }
+    val live = info?.let { operationProgress(it, generation)?.let { progress ->
+        TimedOperation(progress, operationStartedAt(it) ?: operationRequestedAt(it) ?: 0L)
+    } }
+    return when {
+        info?.state == WorkInfo.State.RUNNING -> live ?: report?.timed()
+        info?.state == WorkInfo.State.ENQUEUED && info.runAttemptCount > 0 ->
+            (report?.takeIf { it.progress.status in setOf(OperationStatus.RUNNING, OperationStatus.RETRYING) }
+                ?.copy(progress = report.progress.copy(status = OperationStatus.RETRYING))?.timed()) ?: live
+        live != null && info?.state?.isFinished == true -> live
+        report != null -> report.timed()
+        else -> live?.takeIf { info?.state != WorkInfo.State.ENQUEUED }
+    }
+}
+
+internal fun operationStartedAt(info: WorkInfo): Long? =
+    (if (info.state.isFinished) info.outputData else info.progress)
+        .getLong(OP_STARTED_AT, -1L).takeIf { it >= 0L }
+
+internal fun operationRequestedAt(info: WorkInfo): Long? = info.tags.firstOrNull {
+    it.startsWith("operation-requested:")
+}?.substringAfter(":")?.toLongOrNull()
+
+private fun StoredOperationReport.timed() = TimedOperation(progress, startedAt)
 
 /** Publish phase changes immediately and bound writes during a large batch; always flush its end. */
 internal class OperationReporter(private val clock: () -> Long = android.os.SystemClock::elapsedRealtime) {

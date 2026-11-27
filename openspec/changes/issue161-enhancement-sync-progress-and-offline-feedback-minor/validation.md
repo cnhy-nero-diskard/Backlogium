@@ -5,6 +5,9 @@ Android SDK. No production credentials were copied into test fixtures.
 
 ## Checks
 
+- At the PR-review checkpoint, five focused regression suites passed; the full
+  `:app:testDebugUnitTest :gamification:test` run passed 2,661 app unit tests and
+  53 gamification tests with no failures. Strict OpenSpec validation passed.
 - `:app:assembleDebug :app:testDebugUnitTest :gamification:test :app:lintDebug`
   passed. The full app run completed 2,648 tests without failures; the unchanged
   gamification suite's 53 tests were up to date. Lint passed with existing warnings

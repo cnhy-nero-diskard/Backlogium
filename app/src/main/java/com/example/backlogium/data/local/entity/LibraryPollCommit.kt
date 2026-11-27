@@ -13,4 +13,12 @@ data class LibraryPollCommit(
     val committedAt: Long,
     val gameCount: Int,
     val finalized: Boolean = false,
+    val accountGeneration: Long? = null,
+    val executionId: String? = null,
+    val executionStartedAt: Long? = null,
+    val achievementProcessed: Int? = null,
+    val achievementTotal: Int? = null,
+    val achievementSkipped: Int? = null,
+    val achievementFailed: Int? = null,
+    val achievementUpdated: Int? = null,
 )

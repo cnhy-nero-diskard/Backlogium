@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -47,6 +48,7 @@ class SyncSchedulerTest {
     private lateinit var workManager: WorkManager
     private lateinit var scheduler: SyncScheduler
     private lateinit var schedulerScope: CoroutineScope
+    private lateinit var operationReports: OperationReportStore
 
     @Before
     fun setUp() {
@@ -56,8 +58,10 @@ class SyncSchedulerTest {
             .build()
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         workManager = WorkManager.getInstance(context)
+        operationReports = OperationReportStore(context)
+        runBlocking { operationReports.clearForTest() }
         schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        scheduler = SyncScheduler(context, schedulerScope)
+        scheduler = SyncScheduler(context, schedulerScope, operationReports = operationReports)
     }
 
     @After
@@ -131,6 +135,17 @@ class SyncSchedulerTest {
         val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
         assertFalse(constraints.requiresCharging())
         assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `reconciliation request captures the same account generation in payload and tag`() = runTest {
+        scheduler.reconcileNow(force = true)
+
+        val info = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single()
+        val payloadGeneration = inputFor(ReconciliationWorker.ONE_TIME_NAME).getLong(OP_ACCOUNT, -1L)
+        val tagGeneration = info.tags.first { it.startsWith("setup-account:") }.substringAfter(":").toLong()
+
+        assertEquals(tagGeneration, payloadGeneration)
     }
 
     /**
