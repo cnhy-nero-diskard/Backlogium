@@ -47,21 +47,36 @@ class ProgressAlerts @Inject constructor(
             appId.toString(), appId, "Completed $name", "All confirmed achievements unlocked."))
     }
 
-    /** Captured before the atomic marks update; the callback only creates handoffs for new earns. */
-    suspend fun earnedBoundary(): (com.example.backlogium.domain.ProgressMarks, com.example.backlogium.domain.ProgressMarks) -> Set<String> {
+    /** Android eligibility is captured before finalization; category opt-in is read in its DataStore edit. */
+    suspend fun earnedBoundary(): (com.example.backlogium.domain.ProgressMarks, com.example.backlogium.domain.ProgressMarks, Set<ProgressCategory>) -> Set<String> {
         val account = database.playerProfileDao().get()?.steamId?.takeIf { it.isNotBlank() }
-            ?: return { _, _ -> emptySet() }
+            ?: return { _, _, _ -> emptySet() }
         val generation = marker.generation()
-        val quota = prepare(ProgressCategory.QUOTA, account, generation, "", title = "Daily quota met", text = "")
-        val streak = prepare(ProgressCategory.STREAK, account, generation, "", title = "Streak ended", text = "")
-        return { before, after ->
+        fun boundaryAlert(category: ProgressCategory, title: String): ProgressAlert {
+            val permissionGranted = platform.permissionGranted()
+            val channelAllowed = platform.channelAllowed(category)
+            return ProgressAlert("$account:$generation:${category.name}:", account, generation,
+                category.name, "", null, title, "",
+                if (permissionGranted && channelAllowed != false) ProgressAlert.PENDING else ProgressAlert.SUPPRESSED)
+        }
+        val quota = boundaryAlert(ProgressCategory.QUOTA, "Daily quota met")
+        val streak = boundaryAlert(ProgressCategory.STREAK, "Streak ended")
+        return { before, after, enabledCategories ->
+            fun handoff(template: ProgressAlert, category: ProgressCategory, sourceId: String, text: String) =
+                Json.encodeToString(template.copy(
+                    eventKey = "${template.eventKey}$sourceId",
+                    sourceId = sourceId,
+                    text = text,
+                    state = if (template.state == ProgressAlert.PENDING && category in enabledCategories)
+                        ProgressAlert.PENDING else ProgressAlert.SUPPRESSED,
+                ))
             buildSet {
                 (after.pendingQuestDates - before.pendingQuestDates).forEach { date ->
-                    add(Json.encodeToString(quota.copy(eventKey = "${quota.eventKey}$date", sourceId = date.toString(), text = "Daily quota met on $date.")))
+                    add(handoff(quota, ProgressCategory.QUOTA, date.toString(), "Daily quota met on $date."))
                 }
                 after.pendingStreakBreak?.takeIf { it != before.pendingStreakBreak }?.let {
-                    add(Json.encodeToString(streak.copy(eventKey = "${streak.eventKey}${it.date}", sourceId = it.date.toString(),
-                        text = "Your ${it.previousLength}-day streak ended on ${it.date}.")))
+                    add(handoff(streak, ProgressCategory.STREAK, it.date.toString(),
+                        "Your ${it.previousLength}-day streak ended on ${it.date}."))
                 }
             }
         }

@@ -27,7 +27,9 @@ import java.lang.reflect.Proxy
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.Executor
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -84,6 +86,68 @@ class ProgressAlertsTest {
         ProgressCategory.entries.forEach { settings.setProgressAlert(it, true) }
     }
     @After fun close() { db.close(); context.deleteDatabase(databaseName) }
+
+    private suspend fun CoroutineScope.commitQuotaWhilePreferenceChanges(
+        date: LocalDate,
+        enabledBeforePreparation: Boolean,
+        enabledAtCommit: Boolean,
+        enabledBeforeDispatch: Boolean,
+    ): DataStoreProgressMarksStore {
+        settings.setProgressAlert(ProgressCategory.QUOTA, enabledBeforePreparation)
+        val backingStore = settingsRule.backingStore()
+        val editReached = CompletableDeferred<Unit>()
+        val releaseEdit = CompletableDeferred<Unit>()
+        var gateFirstEdit = true
+        val gatedStore = object : DataStore<Preferences> by backingStore {
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+                if (gateFirstEdit) {
+                    gateFirstEdit = false
+                    editReached.complete(Unit)
+                    releaseEdit.await()
+                }
+                return backingStore.updateData(transform)
+            }
+        }
+        val gatedSettings = SettingsDataStore(gatedStore)
+        val alerts = ProgressAlerts(db, gatedSettings, platform, marker, credentials, coordinator)
+        val marksStore = DataStoreProgressMarksStore(gatedSettings, alerts)
+        val write = launch {
+            marksStore.update { it.copy(initialized = true, pendingQuestDates = setOf(date)) }
+        }
+
+        // updateData is reached only after earnedBoundary() has prepared the event payload.
+        editReached.await()
+        settings.setProgressAlert(ProgressCategory.QUOTA, enabledAtCommit)
+        releaseEdit.complete(Unit)
+        write.join()
+        settings.setProgressAlert(ProgressCategory.QUOTA, enabledBeforeDispatch)
+        alerts.dispatch()
+        return marksStore
+    }
+
+    @Test fun earnedOptOutAtCommitStaysSuppressedAfterReenableAndKeepsInAppEvent() = runBlocking {
+        val date = LocalDate.of(2026, 11, 25)
+        val store = commitQuotaWhilePreferenceChanges(date,
+            enabledBeforePreparation = true, enabledAtCommit = false, enabledBeforeDispatch = true)
+        val eventKey = "$account:${marker.generation()}:QUOTA:$date"
+
+        assertEquals(ProgressAlert.SUPPRESSED, db.progressAlertDao().get(eventKey)?.state)
+        assertTrue(manager.activeNotifications.isEmpty())
+        val repository = ProgressEventRepository(store, db.playerProfileDao(), db.dailyProgressDao(), ProgressTransitionCoordinator())
+        assertTrue(repository.pendingEvents.first().contains(ProgressEvent.QuestMet(date)))
+    }
+
+    @Test fun earnedOptInAtCommitCreatesPendingAlertEvenIfDisabledAtPreparation() = runBlocking {
+        val date = LocalDate.of(2026, 11, 24)
+        val store = commitQuotaWhilePreferenceChanges(date,
+            enabledBeforePreparation = false, enabledAtCommit = true, enabledBeforeDispatch = true)
+        val eventKey = "$account:${marker.generation()}:QUOTA:$date"
+
+        assertEquals(ProgressAlert.DELIVERED, db.progressAlertDao().get(eventKey)?.state)
+        assertEquals(1, manager.activeNotifications.size)
+        val repository = ProgressEventRepository(store, db.playerProfileDao(), db.dailyProgressDao(), ProgressTransitionCoordinator())
+        assertTrue(repository.pendingEvents.first().contains(ProgressEvent.QuestMet(date)))
+    }
 
     @Test fun ownedAndSharedSourceCommitsSurviveDeathBeforeEnqueueAndUseAdmissionIdentity() = runBlocking {
         val generation = marker.generation()

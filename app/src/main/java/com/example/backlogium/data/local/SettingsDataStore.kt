@@ -39,6 +39,7 @@ import com.example.backlogium.data.repo.CloudReadSummary
 import com.example.backlogium.data.repo.CloudReadSummaryOutcome
 import com.example.backlogium.data.repo.CloudReadTrigger
 import com.example.backlogium.data.repo.CloudReadFailure
+import com.example.backlogium.data.notifications.ProgressCategory
 import com.example.backlogium.gamification.QuestMode
 import com.example.backlogium.gamification.RuleConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -80,6 +81,12 @@ private val Context.dataStore: DataStore<Preferences>
     get() = SettingsDataStoreInstance.get(this)
 
 private val cloudPresenceRefilingReceiptJson = Json { ignoreUnknownKeys = true }
+
+private fun progressAlertPreferenceKey(category: ProgressCategory) =
+    booleanPreferencesKey("progress_alert_${category.name}")
+
+private fun progressAlertEnabled(prefs: Preferences, category: ProgressCategory) =
+    prefs[progressAlertPreferenceKey(category)] ?: category.defaultEnabled
 
 /**
  * App settings backed by Preferences DataStore: the tunable gamification [RuleConfig], plus the
@@ -291,12 +298,10 @@ class SettingsDataStore internal constructor(
     private val progressAlertHandoffsKey = stringSetPreferencesKey("progress_alert_handoffs")
     val progressAlertHandoffs = store.data.map { it[progressAlertHandoffsKey].orEmpty() }
     val progressAlertPreferences = store.data.map { prefs ->
-        com.example.backlogium.data.notifications.ProgressCategory.entries.associateWith {
-            prefs[booleanPreferencesKey("progress_alert_${it.name}")] ?: it.defaultEnabled
-        }
+        ProgressCategory.entries.associateWith { progressAlertEnabled(prefs, it) }
     }
     suspend fun setProgressAlert(category: com.example.backlogium.data.notifications.ProgressCategory, enabled: Boolean) {
-        store.edit { it[booleanPreferencesKey("progress_alert_${category.name}")] = enabled }
+        store.edit { it[progressAlertPreferenceKey(category)] = enabled }
     }
     suspend fun removeProgressAlertHandoff(raw: String) {
         store.edit { it[progressAlertHandoffsKey] = it[progressAlertHandoffsKey].orEmpty() - raw }
@@ -318,14 +323,18 @@ class SettingsDataStore internal constructor(
      */
     suspend fun updateProgressMarks(
         transform: (ProgressMarks) -> ProgressMarks,
-        notificationBoundary: ((ProgressMarks, ProgressMarks) -> Set<String>)? = null,
+        notificationBoundary: ((ProgressMarks, ProgressMarks, Set<ProgressCategory>) -> Set<String>)? = null,
     ): ProgressMarks {
         lateinit var result: ProgressMarks
         store.edit { prefs ->
             val before = decodeProgressMarks(prefs)
             result = transform(before)
             notificationBoundary?.let {
-                prefs[progressAlertHandoffsKey] = prefs[progressAlertHandoffsKey].orEmpty() + it(before, result)
+                val enabledCategories = ProgressCategory.entries.filter { category ->
+                    progressAlertEnabled(prefs, category)
+                }.toSet()
+                prefs[progressAlertHandoffsKey] = prefs[progressAlertHandoffsKey].orEmpty() +
+                    it(before, result, enabledCategories)
             }
             encodeProgressMarks(prefs, result)
         }
