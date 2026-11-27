@@ -1204,8 +1204,7 @@ class AchievementRepository @Inject constructor(
             emptyList()
         }
         // Require complete known sets on both sides; partial observations and first baselines do not earn completion.
-        val expectedNames = refresh.schemaByName.keys.takeIf { it.isNotEmpty() }
-            ?: catalogue?.entries(refresh.appId)?.map { it.apiName }?.toSet().orEmpty()
+        val expectedNames = catalogue?.entries(refresh.appId)?.map { it.apiName }?.toSet().orEmpty()
         val previousActive = existing.filterNot { it.retired }
         if (refresh.account != null && metadata?.playerStateFetchedAt != null &&
             expectedNames.isNotEmpty() && incomingNames == expectedNames &&

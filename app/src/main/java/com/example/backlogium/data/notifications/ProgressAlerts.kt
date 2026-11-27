@@ -124,7 +124,9 @@ class ProgressAlerts @Inject constructor(
                     credentials.currentCredentials()?.steamId == current.account && current.state != ProgressAlert.DELIVERED
                 ) {
                     database.gameDao().getById(checkNotNull(current.appId))?.let {
-                        settings.setSharedGameAnnouncement(it.appId, it.name, System.currentTimeMillis())
+                        settings.publishSharedGameAnnouncement(
+                            current.eventKey, it.appId, it.name, time.nowMillis(),
+                        )
                     }
                 }
                 dao.finishSharedFallback(current.eventKey)

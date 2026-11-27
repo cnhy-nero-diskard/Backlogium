@@ -3,6 +3,8 @@ package com.example.backlogium.data.notifications
 import android.Manifest
 import android.app.Application
 import android.app.NotificationManager
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.room.Room
 import androidx.room.withTransaction
 import com.example.backlogium.GameNotificationIntent
@@ -11,6 +13,7 @@ import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.achievement.AchievementObservationStore
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.data.local.BacklogiumDatabase
+import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.entity.AchievementAdmissionWork
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.remote.SteamApi
@@ -267,6 +270,49 @@ class ProgressAlertsTest {
         assertNull(settings.sharedGameAnnouncementFlow.first())
     }
 
+    @Test fun sharedFallbackPublicationSurvivesFailureDismissalAndRestartedRetry() = runBlocking {
+        settings.setProgressAlert(ProgressCategory.SHARED, false)
+        val appId = 32L
+        val eventId = "${account}:${marker.generation()}:SHARED:$appId"
+        db.gameDao().upsert(Game(appId, "Borrowed", "", 0, 0, 0))
+        val fallback = alerts().prepare(ProgressCategory.SHARED, account, marker.generation(), appId.toString(), appId,
+            "Now tracking Borrowed", "Family Sharing").copy(sharedFallbackPending = true)
+        db.progressAlertDao().insert(fallback)
+
+        var failAfterCommit = true
+        val backingStore = settingsRule.backingStore()
+        val failingStore = object : DataStore<Preferences> by backingStore {
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+                val committed = backingStore.updateData(transform)
+                if (failAfterCommit) {
+                    failAfterCommit = false
+                    error("simulated process death after fallback DataStore commit")
+                }
+                return committed
+            }
+        }
+        try {
+            ProgressAlerts(db, SettingsDataStore(failingStore), platform, marker, credentials, coordinator)
+                .dispatch()
+            fail("expected failure after DataStore committed")
+        } catch (expected: IllegalStateException) {
+            assertEquals("simulated process death after fallback DataStore commit", expected.message)
+        }
+
+        assertTrue(db.progressAlertDao().get(eventId)!!.sharedFallbackPending)
+        assertEquals(appId, settings.sharedGameAnnouncementFlow.first()?.appId)
+        settings.clearSharedGameAnnouncement(appId) // The foreground dismisses the committed cue.
+
+        db.close(); db = open() // Restart with the Room half still pending.
+        val restartedSettings = settingsRule.create()
+        ProgressAlerts(db, restartedSettings, platform, marker, credentials, coordinator).dispatch()
+        assertNull(restartedSettings.sharedGameAnnouncementFlow.first())
+        assertFalse(db.progressAlertDao().get(eventId)!!.sharedFallbackPending)
+
+        restartedSettings.clearAccountDerivedState()
+        assertTrue(restartedSettings.publishSharedGameAnnouncement(eventId, appId, "Borrowed", 99L))
+    }
+
     @Test fun sourceRollbackDoesNotLeaveAnAlertOrAdmission() = runBlocking {
         try {
             db.withTransaction {
@@ -314,5 +360,58 @@ class ProgressAlertsTest {
         manager.cancelAll()
         alerts().dispatch()
         assertTrue(manager.activeNotifications.isEmpty())
+    }
+
+    @Test fun completionUsesTheAcceptedCatalogueAfterAnOlderSchemaRefreshLosesTheRace() = runBlocking {
+        val api = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) { _, _, _ -> error("No network expected") } as SteamApi
+        val time = object : TimeProvider {
+            override fun nowMillis() = 1000L
+            override fun today() = LocalDate.of(2026, 11, 25)
+            override fun zone() = ZoneId.of("UTC")
+        }
+        val hidden = HiddenGamesRepository(db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time)
+        val repo = AchievementRepository(api, db.achievementDao(), db.gameAchievementSyncDao(), db.gameDao(), hidden, time,
+            observationStore = AchievementObservationStore(db, credentials, marker, coordinator),
+            transaction = RoomDatabaseTransactionScope(db), progressAlerts = alerts())
+        db.gameDao().upsert(Game(3L, "Expanded catalogue", "", 0, 0, 0))
+        fun schema(names: List<String>) = names.associateWith { AchievementSchemaDto(it, it) }
+        suspend fun player(at: Long, names: List<String>, states: List<Int>, schemaByName: Map<String, AchievementSchemaDto> = emptyMap(), schemaAt: Long? = null, schemaLoaded: Boolean = false) {
+            repo.applyRefreshes(listOf(AchievementRefresh(
+                appId = 3L,
+                fetchedAt = at,
+                achievements = names.mapIndexed { index, name -> PlayerAchievementDto(name, states[index], 0L) },
+                globalPercentByName = emptyMap(),
+                schemaByName = schemaByName,
+                schemaFetchedAt = schemaAt,
+                schemaLoaded = schemaLoaded,
+                account = account,
+            )))
+        }
+
+        player(10L, listOf("a", "b"), listOf(0, 0), schema(listOf("a", "b")), 10L, schemaLoaded = true)
+        repo.applyRefreshes(listOf(AchievementRefresh(
+            appId = 3L,
+            fetchedAt = 30L,
+            achievements = null,
+            globalPercentByName = emptyMap(),
+            schemaByName = schema(listOf("a", "b", "c")),
+            schemaFetchedAt = 30L,
+            schemaLoaded = true,
+            account = account,
+        )))
+
+        // This older schema loses the catalogue timestamp race, but its individual unlocks remain valid.
+        player(20L, listOf("a", "b"), listOf(1, 1), schema(listOf("a", "b")), 20L, schemaLoaded = true)
+        assertTrue(db.progressAlertDao().pending().isEmpty())
+        assertEquals(setOf("a", "b", "c"), db.achievementCatalogueDao().entries(3L).map { it.apiName }.toSet())
+        val individuallyUpdated = db.achievementDao().getForGame(3L).filter { it.apiName in setOf("a", "b") }
+        assertEquals(2, individuallyUpdated.size)
+        assertTrue(individuallyUpdated.all { it.unlocked })
+
+        // Confirm all three names while C is still locked; only a later full unlock is a transition.
+        player(40L, listOf("a", "b", "c"), listOf(1, 1, 0))
+        assertTrue(db.progressAlertDao().pending().isEmpty())
+        player(50L, listOf("a", "b", "c"), listOf(1, 1, 1))
+        assertEquals(1, db.progressAlertDao().pending().count { it.category == ProgressCategory.COMPLETION.name })
     }
 }
