@@ -47,6 +47,7 @@ screen, state, theme, and viewport:
 - `main/<screen>/<state>/<theme>/<viewport>.png` contains the 20 core cells.
 - `alternatives/<screen>/<state>/dark/standard.png` contains the bounded edge-state cells.
 - `alternatives/analytics/{core-large,calendar-large}/dark/narrow.png` covers core facts and exact-date calendar navigation at 1.5× text size.
+- `alternatives/analytics/advanced-{genre,clock,achievements,records}-large/dark/narrow.png` covers advanced values, evidence scopes and expandable records at 1.5× text size; `advanced-clock-values/dark/narrow.png` shows the full matrix at default text size.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
 - `detail/<state>/<theme>/<viewport>.png` covers owned, shared-overlay, missing-data, and achievement states.
 - `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.

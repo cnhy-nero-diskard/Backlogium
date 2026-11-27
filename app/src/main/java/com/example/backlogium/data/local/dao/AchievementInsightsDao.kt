@@ -5,6 +5,12 @@ import androidx.room.Query
 
 @Dao
 interface AchievementInsightsDao {
+    @Query("SELECT a.appId, g.name AS gameName, a.apiName, a.displayName, a.snapshotPercent AS rarityPercent " +
+        "FROM achievements a JOIN games g ON g.appId = a.appId WHERE a.unlocked = 1 AND a.retired = 0 AND a.snapshotPercent IS NOT NULL " +
+        "AND a.appId NOT IN (SELECT appId FROM hidden_games) " +
+        "AND EXISTS (SELECT 1 FROM player_profile WHERE steamId = :account)")
+    suspend fun lifetimeRarity(account: String): List<LifetimeRarityRow>
+
     @Query("SELECT a.appId, a.apiName, COALESCE(a.displayName, a.apiName) AS name, a.unlockedAt, a.snapshotPercent FROM achievements a " +
         "JOIN game_achievement_sync s ON s.appId = a.appId " +
         "WHERE a.unlocked = 1 AND a.retired = 0 AND s.playerStateFetchedAt IS NOT NULL " +
@@ -34,3 +40,5 @@ interface AchievementInsightsDao {
 
 data class DatedUnlockRow(val appId: Long, val apiName: String, val name: String, val unlockedAt: Long, val snapshotPercent: Double?)
 data class DatedCompletionRow(val appId: Long, val completedAt: Long)
+
+data class LifetimeRarityRow(val appId: Long, val gameName: String, val apiName: String, val displayName: String?, val rarityPercent: Double)

@@ -26,7 +26,7 @@ class AchievementInsightsRepositoryTest {
                 Achievement(1, "start", unlocked = true, unlockedAt = 100, globalPercent = 90.0, snapshotPercent = 1.0, fetchedAt = 100),
                 Achievement(1, "end", unlocked = true, unlockedAt = 200, fetchedAt = 100),
                 Achievement(1, "undated", unlocked = true, fetchedAt = 100),
-                Achievement(2, "baseline", unlocked = true, unlockedAt = 50, fetchedAt = 100),
+                Achievement(2, "baseline", unlocked = true, unlockedAt = 50, snapshotPercent = 5.0, fetchedAt = 100),
                 Achievement(3, "hidden", unlocked = true, unlockedAt = 120, fetchedAt = 100),
                 Achievement(1, "retired", unlocked = true, unlockedAt = 130, retired = true, fetchedAt = 100),
             ))
@@ -38,6 +38,10 @@ class AchievementInsightsRepositoryTest {
             assertEquals(listOf(DatedCompletionEvidence(1, 150)), snapshot.completions)
             assertEquals(1, snapshot.unsupportedUnlocks)
             assertEquals(1, snapshot.unsupportedCompletions)
+            assertEquals(2, snapshot.lifetimeRarity.size)
+            val next = repo.between("fixture", 200, 300).first()
+            assertEquals(listOf("end"), next.unlocks.map { it.apiName })
+            assertEquals(snapshot.lifetimeRarity, next.lifetimeRarity)
             assertEquals(AchievementEvidenceSnapshot(), repo.between("other", 100, 200).first())
             AccountRoomReset(db).resetForAccountChange("other")
             assertEquals(AchievementEvidenceSnapshot(), repo.between("fixture", 100, 200).first())
