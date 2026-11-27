@@ -2,8 +2,8 @@
 
 ## 1. Genre and session patterns
 
-- [ ] 1.1 Verify the core insights prerequisite. Add bounded genre allocation and drift, with tests for multiple genres, unknown coverage, comparison eligibility, rounding and share conservation.
-- [ ] 1.2 Add the weekday by start-hour matrix using the established attribution. Verify overnight sessions, local zone changes and timing-free allocations.
+- [x] 1.1 Verify the core insights prerequisite. Add bounded genre allocation and drift, with tests for multiple genres, unknown coverage, comparison eligibility, rounding and share conservation.
+- [x] 1.2 Add the weekday by start-hour matrix using the established attribution. Verify overnight sessions, local zone changes and timing-free allocations.
 
 ## 2. Achievements and records
 
