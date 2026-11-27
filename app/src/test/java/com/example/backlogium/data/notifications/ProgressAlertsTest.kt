@@ -478,4 +478,53 @@ class ProgressAlertsTest {
         player(50L, listOf("a", "b", "c"), listOf(1, 1, 1))
         assertEquals(1, db.progressAlertDao().pending().count { it.category == ProgressCategory.COMPLETION.name })
     }
+
+    @Test fun completionCarriesRetainedLockedEvidenceAcrossCatalogueExpansionButNotRemoval() = runBlocking {
+        val api = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) { _, _, _ -> error("No network expected") } as SteamApi
+        val time = object : TimeProvider {
+            override fun nowMillis() = 1000L
+            override fun today() = LocalDate.of(2026, 11, 25)
+            override fun zone() = ZoneId.of("UTC")
+        }
+        val hidden = HiddenGamesRepository(db.hiddenGameDao(), db.gameDao(), db.gameGenreCacheDao(), time)
+        val repo = AchievementRepository(api, db.achievementDao(), db.gameAchievementSyncDao(), db.gameDao(), hidden, time,
+            observationStore = AchievementObservationStore(db, credentials, marker, coordinator),
+            transaction = RoomDatabaseTransactionScope(db), progressAlerts = alerts())
+        db.gameDao().upsert(Game(3L, "Expanded catalogue", "", 0, 0, 0))
+        db.gameDao().upsert(Game(4L, "Removed achievement", "", 0, 0, 0))
+        fun schema(names: List<String>) = names.associateWith { AchievementSchemaDto(it, it) }
+        suspend fun refresh(
+            appId: Long,
+            at: Long,
+            player: List<Pair<String, Int>>? = null,
+            schemaNames: List<String> = emptyList(),
+            schemaLoaded: Boolean = false,
+            fullReconciliation: Boolean = false,
+        ) {
+            repo.applyRefreshes(listOf(AchievementRefresh(
+                appId = appId,
+                fetchedAt = at,
+                achievements = player?.map { (name, achieved) -> PlayerAchievementDto(name, achieved, 0L) },
+                globalPercentByName = emptyMap(),
+                schemaByName = schema(schemaNames),
+                schemaFetchedAt = at.takeIf { schemaLoaded },
+                schemaLoaded = schemaLoaded,
+                fullReconciliation = fullReconciliation,
+                account = account,
+            )))
+        }
+
+        for (appId in listOf(3L, 4L)) {
+            refresh(appId, 10L, listOf("a" to 0, "b" to 1), listOf("a", "b"), schemaLoaded = true)
+        }
+        refresh(3L, 20L, schemaNames = listOf("a", "b", "c"), schemaLoaded = true)
+        refresh(4L, 21L, schemaNames = listOf("b", "c"), schemaLoaded = true)
+
+        refresh(3L, 30L, listOf("a" to 1, "b" to 1, "c" to 1), fullReconciliation = true)
+        refresh(4L, 31L, listOf("b" to 1, "c" to 1), fullReconciliation = true)
+
+        val completions = db.progressAlertDao().pending()
+            .filter { it.category == ProgressCategory.COMPLETION.name }
+        assertEquals(listOf(3L), completions.map { it.appId })
+    }
 }

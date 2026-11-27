@@ -36,9 +36,8 @@ concurrent claims and ambiguous posting recovery. Recap tests cover midnight,
 23/25-hour daylight-saving days, time-zone changes, delayed execution, canonical
 activity, hidden games and unsupported unlock dates. The progress Settings card
 has a reviewed Roborazzi baseline; the existing main-screen and achievement
-Settings baselines are verified separately. Five pre-existing Library card-gradient
-baselines were refreshed after reproducing their mismatch on the unchanged base;
-Library rendering code is unchanged.
+Settings baselines are verified separately. Library rendering code and its
+baselines are unchanged.
 
 Device acceptance uses temporary local fixture databases and preferences. Start
 the GPU-verified launcher first, and substitute its reported serial:
