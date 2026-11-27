@@ -767,6 +767,28 @@ class AchievementRepositoryTest {
         )
     }
 
+    @Test
+    fun `attempt progress reaches the fixed total even when player requests fail`() = runTest {
+        val repo = repository(FakeSteamApi(failPlayerAchievementsFor = setOf(2L)))
+        val seen = mutableListOf<com.example.backlogium.domain.OperationCounts>()
+        repo.fetchLibraryGames(KEY, STEAM_ID,
+            listOf(ownedGame(1, 100, 10), ownedGame(2, 100, 10)), emptyMap(),
+            onAttempts = { seen += it })
+        assertEquals(0, seen.first().processed)
+        assertEquals(2, seen.last().processed)
+        assertEquals(2, seen.last().total)
+        assertEquals(1, seen.last().failed)
+    }
+
+    @Test
+    fun `refreshing identical content does not count as an update`() = runTest {
+        val repo = repository(FakeSteamApi())
+        val refresh = repo.fetchLibraryGames(KEY, STEAM_ID,
+            listOf(ownedGame(1, 100, 10)), emptyMap()).refreshes.single()
+        assertTrue(repo.applyRefreshCountingChanges(refresh))
+        assertFalse(repo.applyRefreshCountingChanges(refresh.copy(fetchedAt = refresh.fetchedAt + 1)))
+    }
+
     // --- helpers -----------------------------------------------------------------------------
 
     private fun repository(

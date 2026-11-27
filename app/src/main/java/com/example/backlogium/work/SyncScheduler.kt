@@ -97,6 +97,25 @@ class SyncScheduler @Inject constructor(
             .setRequiresCharging(true)
             .build()
 
+    private fun operation(oneTimeName: String, periodicName: String): Flow<com.example.backlogium.domain.OperationProgress?> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(oneTimeName),
+        workManager.getWorkInfosForUniqueWorkFlow(periodicName),
+        accountMarker.activeGeneration,
+    ) { oneTime, periodic, generation ->
+        generation?.let { activeGeneration ->
+            val candidates = (oneTime + periodic.filter { it.state == WorkInfo.State.RUNNING })
+                .mapNotNull { info -> operationProgress(info, activeGeneration)?.let { info to it } }
+            candidates.maxWithOrNull(compareBy<Pair<WorkInfo, com.example.backlogium.domain.OperationProgress>>(
+                { it.second.active },
+                { pair -> pair.first.tags.firstOrNull { it.startsWith("operation-requested:") }
+                    ?.substringAfter(":")?.toLongOrNull() ?: 0L },
+            ))?.second
+        }
+    }.distinctUntilChanged()
+
+    val steamOperation = operation(SteamSyncWorker.ONE_TIME_NAME, SteamSyncWorker.UNIQUE_PERIODIC_NAME)
+    val achievementOperation = operation(ReconciliationWorker.ONE_TIME_NAME, ReconciliationWorker.PERIODIC_NAME)
+
     /**
      * Emits true while a reconciliation pass is enqueued or running — the manual/forced one-time
      * pass and the periodic deferred one alike. The periodic work is watched with the
@@ -199,6 +218,7 @@ class SyncScheduler @Inject constructor(
         admitSetupWork(SteamSyncWorker.ONE_TIME_NAME, generation) {
         OneTimeWorkRequestBuilder<SteamSyncWorker>()
             .setId(id)
+            .addTag("operation-requested:${System.currentTimeMillis()}")
             .addTag(setupAccountTag(it))
             .setConstraints(networkConstraints)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -377,9 +397,12 @@ class SyncScheduler @Inject constructor(
      * Suspends only to read that state — `getWorkInfosForUniqueWorkFlow` never blocks a thread.
      */
     suspend fun reconcileNow(force: Boolean = false) {
+        val generation = accountMarker.generation()
         val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
+            .addTag(setupAccountTag(generation))
+            .addTag("operation-requested:${System.currentTimeMillis()}")
             .setConstraints(if (force) networkConstraints else reconciliationConstraints)
-            .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
+            .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force, OP_ACCOUNT to generation))
         val policy = if (force) {
             builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             builder.addTag(forcedTag)

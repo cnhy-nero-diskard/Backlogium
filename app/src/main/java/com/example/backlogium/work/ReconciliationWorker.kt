@@ -1,5 +1,8 @@
 package com.example.backlogium.work
 
+import com.example.backlogium.domain.OperationCounts
+import com.example.backlogium.domain.OperationPhase
+
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
@@ -45,7 +48,10 @@ class ReconciliationWorker @AssistedInject constructor(
         // the ledger mutex while it waits on Steam.
         return runAfterAccountChangeAdmission(
             coordinator = syncCoordinator,
-            accountChangePending = { accountChangeMarker.pendingSteamId() != null },
+            accountChangePending = {
+                accountChangeMarker.pendingSteamId() != null ||
+                    inputData.getLong(OP_ACCOUNT, accountChangeMarker.generation()) != accountChangeMarker.generation()
+            },
             work = { doWorkUnlocked() },
         ) ?: Result.success()
     }
@@ -54,11 +60,12 @@ class ReconciliationWorker @AssistedInject constructor(
         val creds = credentials.currentCredentials()
         if (creds == null) {
             Timber.tag(TAG).i("Skipping reconciliation: no Steam credentials")
-            return Result.success()
+            return Result.success(operationData(id.toString(), accountChangeMarker.generation(), OperationPhase.PREPARING, failed = true))
         }
 
         val apiKey = creds.apiKey
         val steamId = creds.steamId
+        val generation = accountChangeMarker.generation()
         val force = inputData.getBoolean(KEY_FORCE, false)
 
         val scope = diagnostics.begin(
@@ -68,13 +75,18 @@ class ReconciliationWorker @AssistedInject constructor(
         // Updated by onProgress after every committed game, so a cancelled pass
         // still has an accurate refreshed/total count to persist in the `finally` below — the
         // ReconciliationFetch return value is never reached if the coroutine is cancelled mid-sweep.
+        var counts: OperationCounts? = null
+        var updated = 0
+        val reporter = OperationReporter()
         var refreshedSoFar = 0
         var totalSoFar = 0
         var outcome = SyncOutcome.SUCCESS
         var errorMessage: String? = null
 
         return try {
-            setProgress(workDataOf(KEY_RUNNING to true))
+            setProgress(androidx.work.Data.Builder()
+                .putAll(operationData(id.toString(), generation, OperationPhase.PREPARING))
+                .putBoolean(KEY_RUNNING, true).build())
             val fetched = achievementRepository.fetchReconciliationGames(
                 apiKey = apiKey,
                 steamId = steamId,
@@ -87,7 +99,7 @@ class ReconciliationWorker @AssistedInject constructor(
                         syncCoordinator.withLock {
                             if (!isAccountActive(steamId)) return@withLock
                             database.withTransaction {
-                                achievementRepository.applyRefreshes(listOf(refresh))
+                                if (achievementRepository.applyRefreshCountingChanges(refresh)) updated++
                             }
                         }
                     }
@@ -95,7 +107,13 @@ class ReconciliationWorker @AssistedInject constructor(
                 onProgress = { refreshed, total ->
                     refreshedSoFar = refreshed
                     totalSoFar = total
-                }
+                },
+                onAttempts = { current ->
+                    counts = current
+                    reporter.report(OperationPhase.ACHIEVEMENTS, current) {
+                        setProgress(operationData(id.toString(), generation, OperationPhase.ACHIEVEMENTS, current, updated))
+                    }
+                },
             )
             refreshedSoFar = fetched.refreshed
             totalSoFar = fetched.total
@@ -105,7 +123,9 @@ class ReconciliationWorker @AssistedInject constructor(
             } else {
                 Timber.tag(TAG).i("Reconciliation complete: ${fetched.refreshed}/${fetched.total} games refreshed")
             }
-            Result.success(workDataOf(KEY_REFRESHED to fetched.refreshed, KEY_TOTAL to fetched.total))
+            Result.success(androidx.work.Data.Builder()
+                .putAll(operationData(id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts, updated))
+                .putInt(KEY_REFRESHED, fetched.refreshed).putInt(KEY_TOTAL, fetched.total).build())
         } catch (e: CancellationException) {
             outcome = SyncOutcome.INCOMPLETE
             Timber.tag(TAG).i("Reconciliation cancelled early: $refreshedSoFar/$totalSoFar games refreshed")

@@ -1,8 +1,12 @@
 package com.example.backlogium.work
 
+import com.example.backlogium.domain.OperationCounts
+import com.example.backlogium.domain.OperationPhase
+
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
+import androidx.work.Data
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -226,6 +230,18 @@ class SteamSyncWorker @AssistedInject constructor(
     private val operationId = if (trigger == TRIGGER_MANUAL) workId else UUID.randomUUID().toString()
     private var accountGeneration: Long? = null
 
+    private val operationReporter = OperationReporter()
+    private var operationPhase = OperationPhase.PREPARING
+    private var operationCounts: OperationCounts? = null
+
+    private suspend fun report(phase: OperationPhase, counts: OperationCounts? = null) {
+        operationPhase = phase
+        operationCounts = counts
+        operationReporter.report(phase, counts) {
+            setProgress(operationData(workId, accountGeneration ?: 0L, phase, counts))
+        }
+    }
+
     override suspend fun doWork(): Result {
         val admission = syncCoordinator.withLock {
             accountChangeMarker.withAccountState {
@@ -257,6 +273,7 @@ class SteamSyncWorker @AssistedInject constructor(
             val apiKey = creds.apiKey
             val steamId = creds.steamId
             workerSteamId = steamId
+            report(OperationPhase.PREPARING)
             val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() }
             if (!canDiffAgainstAccount(storedSteamId, steamId)) {
                 recordErrorIfAccountActive(
@@ -316,6 +333,7 @@ class SteamSyncWorker @AssistedInject constructor(
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
+            report(OperationPhase.FETCHING_LIBRARY)
             val summary = runCatching {
                 steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
@@ -402,7 +420,8 @@ class SteamSyncWorker @AssistedInject constructor(
             // fails after a reset completed must not stamp its error onto the new account.
             recordErrorIfAccountActive(workerSteamId, e.message ?: "Sync failed")
             error = e.message ?: "Sync failed"
-            setProgress(workDataOf(KEY_POLL_RESULT to POLL_FAILED, KEY_POLL_OPERATION to operationId))
+            setProgress(Data.Builder().putAll(operationData(workId, accountGeneration ?: 0L, operationPhase, operationCounts))
+                .putString(KEY_POLL_RESULT, POLL_FAILED).putString(KEY_POLL_OPERATION, operationId).build())
             Result.retry()
         } finally {
             // NonCancellable: once cancelled, a plain suspend call here would throw at its first
@@ -490,7 +509,10 @@ class SteamSyncWorker @AssistedInject constructor(
             ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
+            onAttempts = { report(OperationPhase.ACHIEVEMENTS, it) },
         )
+        val achievementCounts = operationCounts
+        report(OperationPhase.SAVING, achievementCounts)
         scope.recordTiers(
             hot = achievementFetch.selection.hot.size,
             warm = achievementFetch.selection.warm.size,
@@ -867,14 +889,15 @@ class SteamSyncWorker @AssistedInject constructor(
     }
 
     private fun setupSkipped(reason: String): Result =
-        Result.success(workDataOf(
+        Result.success(Data.Builder().putAll(operationData(workId, accountGeneration ?: 0L, operationPhase, operationCounts, failed = true)).putAll(workDataOf(
             KEY_SETUP_FAILURE to reason,
             KEY_POLL_RESULT to POLL_NOT_PERFORMED,
             KEY_POLL_OPERATION to operationId,
-        ))
+        )).build())
 
     private fun committedResult(committedOperationId: String): Result =
-        Result.success(workDataOf(KEY_POLL_RESULT to POLL_COMMITTED, KEY_POLL_OPERATION to committedOperationId))
+        Result.success(Data.Builder().putAll(operationData(workId, accountGeneration ?: 0L, operationPhase, operationCounts))
+            .putString(KEY_POLL_RESULT, POLL_COMMITTED).putString(KEY_POLL_OPERATION, committedOperationId).build())
 
     companion object {
         internal const val KEY_ACCOUNT_GENERATION = "account_generation"

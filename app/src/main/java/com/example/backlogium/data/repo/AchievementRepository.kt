@@ -1,5 +1,6 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.domain.OperationCounts
 import com.example.backlogium.data.achievement.achievementRetryAfter
 import com.example.backlogium.data.achievement.achievementRetryDelay
 import com.example.backlogium.data.achievement.AchievementNetwork
@@ -470,12 +471,14 @@ class AchievementRepository @Inject constructor(
         ownedGames: List<AchievementFreshness.OwnedGame>,
         playtimeDeltaByAppId: Map<Long, Int>,
         scope: SyncRunRecorder.RunScope? = null,
+        onAttempts: (suspend (OperationCounts) -> Unit)? = null,
     ): AchievementLibraryFetch {
         // Hidden games leave the tiering input, not just the request loop, so the tier counts this
         // records describe the work actually being done (add-hidden-games).
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
         val visibleGames = if (hidden.isEmpty()) ownedGames else ownedGames.filterNot { it.appId in hidden }
         if (visibleGames.isEmpty()) {
+            onAttempts?.invoke(OperationCounts())
             return AchievementLibraryFetch(
                 selection = AchievementFreshness.Result(
                     emptyList(),
@@ -513,9 +516,22 @@ class AchievementRepository @Inject constructor(
                 metadataByAppId[it]?.schemaFetchedAt
             },
             scope = scope,
+            onAttempts = onAttempts,
         )
 
         return AchievementLibraryFetch(selection, refreshes)
+    }
+
+    /** Count changed stored content, excluding freshness timestamps. */
+    suspend fun applyRefreshCountingChanges(refresh: AchievementRefresh): Boolean = transaction.run {
+        mergeMutex.withLock {
+            val before = achievementDao.getForGame(refresh.appId).canonicalContent()
+            val catalogue = observationStore?.database?.achievementCatalogueDao()
+            val beforeCatalogue = catalogue?.entries(refresh.appId)?.sortedBy { it.apiName }
+            applyRefresh(refresh)
+            before != achievementDao.getForGame(refresh.appId).canonicalContent() ||
+                beforeCatalogue != catalogue?.entries(refresh.appId)?.sortedBy { it.apiName }
+        }
     }
 
     /** Apply already-fetched achievement payloads. The caller may surround this with a Room transaction. */
@@ -831,11 +847,15 @@ class AchievementRepository @Inject constructor(
         scope: SyncRunRecorder.RunScope? = null,
         onRefresh: suspend (AchievementRefresh) -> Unit,
         onProgress: ((refreshed: Int, total: Int) -> Unit)? = null,
+        onAttempts: (suspend (OperationCounts) -> Unit)? = null,
     ): ReconciliationFetch {
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
         val games = gameDao.getAll()
         val visibleGames = if (hidden.isEmpty()) games else games.filterNot { it.appId in hidden }
-        if (visibleGames.isEmpty()) return ReconciliationFetch(refreshed = 0, total = 0)
+        if (visibleGames.isEmpty()) {
+            onAttempts?.invoke(OperationCounts())
+            return ReconciliationFetch(refreshed = 0, total = 0)
+        }
 
         val metadataByAppId = gameAchievementSyncDao.getAll(visibleGames.map { it.appId }.toSet())
             .associateBy { it.appId }
@@ -873,6 +893,7 @@ class AchievementRepository @Inject constructor(
             },
             onGameDone = { refreshedSoFar -> onProgress?.invoke(refreshedSoFar, cold.size) },
             fullReconciliation = true,
+            onAttempts = onAttempts,
         )
         return ReconciliationFetch(refreshed = refreshed, total = cold.size)
     }
@@ -908,12 +929,20 @@ class AchievementRepository @Inject constructor(
         onRefresh: (suspend (AchievementRefresh) -> Unit)? = null,
         onGameDone: ((refreshedSoFar: Int) -> Unit)? = null,
         fullReconciliation: Boolean = false,
+        onAttempts: (suspend (OperationCounts) -> Unit)? = null,
     ): List<AchievementRefresh> {
         val hidden = hiddenGamesRepository.hiddenAppIdSet()
-        val visibleAppIds = if (hidden.isEmpty()) appIds else appIds.filterNot { it in hidden }
+        val visibleAppIds = appIds.filterNot { it in hidden }.toSet()
         val refreshes = mutableListOf<AchievementRefresh>()
         var refreshedSoFar = 0
-        for (appId in visibleAppIds) {
+        var counts = OperationCounts(total = appIds.size)
+        onAttempts?.invoke(counts)
+        for (appId in appIds) {
+            if (appId !in visibleAppIds) {
+                counts = counts.copy(processed = counts.processed + 1, skipped = counts.skipped + 1)
+                onAttempts?.invoke(counts)
+                continue
+            }
             val refresh = try {
                 fetchGame(
                     apiKey = apiKey,
@@ -941,6 +970,11 @@ class AchievementRepository @Inject constructor(
                 if (refresh.achievements != null) refreshedSoFar++
                 onGameDone?.invoke(refreshedSoFar)
             }
+            val failed = refresh == null || refresh.playerUnavailable || refresh.retryableFailure
+            counts = counts.copy(processed = counts.processed + 1,
+                failed = counts.failed + if (failed) 1 else 0,
+                skipped = counts.skipped + if (!failed && refresh?.achievements == null) 1 else 0)
+            onAttempts?.invoke(counts)
         }
         return refreshes
     }
