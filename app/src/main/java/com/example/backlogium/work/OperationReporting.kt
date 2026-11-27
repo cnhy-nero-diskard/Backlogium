@@ -51,9 +51,14 @@ internal fun Data.operationCounts(): OperationCounts? = getInt(OP_TOTAL, -1).tak
     OperationCounts(getInt(OP_PROCESSED, 0), it, getInt(OP_SKIPPED, 0), getInt(OP_FAILED, 0))
 }
 
+private fun WorkInfo.operationData(): Data =
+    if (state == WorkInfo.State.CANCELLED) progress
+    else if (state.isFinished) outputData
+    else progress
+
 /** Unknown constraint causes stay queued; older builds can supply only a coarse WorkInfo state. */
 internal fun operationProgress(info: WorkInfo, generation: Long): OperationProgress? {
-    val data = if (info.state.isFinished) info.outputData else info.progress
+    val data = info.operationData()
     val taggedGenerations = info.tags.filter { it.startsWith("setup-account:") }
         .map { it.substringAfter(":").toLongOrNull() ?: return null }
         .distinct()
@@ -123,7 +128,7 @@ private fun workOperation(
             (it.source == OperationSource.LEGACY || it.source == if (periodic) OperationSource.PERIODIC else OperationSource.MANUAL)
     }
     val live = operationProgress(info, generation)
-    val data = if (info.state.isFinished) info.outputData else info.progress
+    val data = info.operationData()
     val payloadExecutionId = data.getString(OP_EXECUTION_ID)
     val reportMatchesLive = report != null && (payloadExecutionId == null || payloadExecutionId == report.progress.id)
     val requestedAt = operationStartedAt(info) ?: operationRequestedAt(info) ?: 0L
@@ -135,23 +140,36 @@ private fun workOperation(
         )
     }
 
-    fun fromLive(progress: OperationProgress) = TimedOperation(
-        progress.copy(workId = info.id.toString()),
-        if (reportMatchesLive && report!!.progress.id == progress.id) report.startedAt else requestedAt,
-    )
+    fun fromLive(progress: OperationProgress): TimedOperation {
+        val matchingReport = report?.takeIf { reportMatchesLive }
+        if (matchingReport != null) {
+            val stored = matchingReport.progress
+            val phase = listOfNotNull(stored.phase, progress.phase).maxByOrNull { it.ordinal }
+            return TimedOperation(
+                stored.copy(
+                    status = progress.status,
+                    phase = phase,
+                    counts = progress.counts ?: stored.counts,
+                    updated = progress.updated ?: stored.updated,
+                    workId = info.id.toString(),
+                ),
+                matchingReport.startedAt,
+            )
+        }
+        return TimedOperation(progress.copy(workId = info.id.toString()), requestedAt)
+    }
 
     return when (info.state) {
         WorkInfo.State.RUNNING -> when {
-            live != null && payloadExecutionId != null -> fromLive(live)
-            reportMatchesLive && report!!.progress.active -> fromReport(OperationStatus.RUNNING)
             live != null -> fromLive(live)
+            reportMatchesLive && report!!.progress.active -> fromReport(OperationStatus.RUNNING)
             reportMatchesLive -> fromReport(OperationStatus.RUNNING)
             else -> null
         }
         WorkInfo.State.ENQUEUED -> {
             val status = live?.status ?: enqueuedStatus(info)
             when {
-                reportMatchesLive && report!!.progress.active -> fromReport(status)
+                reportMatchesLive && report!!.progress.active -> live?.let(::fromLive) ?: fromReport(status)
                 periodic && reportMatchesLive && report!!.progress.status in terminalStatuses &&
                     info.runAttemptCount == 0 && !info.hasKnownConstraintStop() -> report.timed()
                 live != null && (!periodic || info.runAttemptCount > 0 || info.hasKnownConstraintStop()) -> fromLive(live)
@@ -187,7 +205,7 @@ private fun WorkInfo.hasKnownConstraintStop() = stopReason in setOf(
 )
 
 internal fun operationStartedAt(info: WorkInfo): Long? =
-    (if (info.state.isFinished) info.outputData else info.progress)
+    info.operationData()
         .getLong(OP_STARTED_AT, -1L).takeIf { it >= 0L }
 
 internal fun operationRequestedAt(info: WorkInfo): Long? = info.tags.firstOrNull {

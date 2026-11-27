@@ -458,6 +458,9 @@ class SteamSyncWorker @AssistedInject constructor(
             // suspension point and never persist the record — the exact case the INCOMPLETE
             // outcome above exists to make visible.
             withContext(NonCancellable) {
+                if (outcome == SyncOutcome.INCOMPLETE) {
+                    runCatching { persistOperationReport(OperationStatus.RUNNING, interrupted = true) }
+                }
                 runCatching {
                     syncCoordinator.withLock {
                         if (isAccountActive(workerSteamId)) {
@@ -657,21 +660,25 @@ class SteamSyncWorker @AssistedInject constructor(
             expectedSteamId = expectedSteamId,
         )
 
-    private suspend fun persistOperationReport(status: OperationStatus) {
+    private suspend fun persistOperationReport(status: OperationStatus, interrupted: Boolean = false) {
         val generation = accountGeneration ?: return
         val id = executionId ?: return
         val startedAt = executionStartedAt ?: return
         syncCoordinator.withLock {
             accountChangeMarker.withAccountState {
                 if (isAccountActive(admittedSteamId)) {
-                    operationReports.save(
-                        OperationChannel.STEAM,
-                        StoredOperationReport(
-                            workId, generation, startedAt,
-                            OperationProgress(id, status, operationPhase, operationCounts, operationUpdated),
-                            operationSource,
-                        ),
+                    val report = StoredOperationReport(
+                        workId, generation, startedAt,
+                        OperationProgress(id, status, operationPhase, operationCounts, operationUpdated),
+                        operationSource,
                     )
+                    if (interrupted) {
+                        operationReports.saveInterrupted(OperationChannel.STEAM, report) {
+                            isAccountActive(admittedSteamId)
+                        }
+                    } else {
+                        operationReports.save(OperationChannel.STEAM, report)
+                    }
                 }
             }
         }

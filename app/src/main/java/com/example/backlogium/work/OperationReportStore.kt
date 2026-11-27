@@ -100,6 +100,23 @@ class OperationReportStore @Inject constructor(
         }
     }
 
+    internal suspend fun saveInterrupted(
+        channel: OperationChannel,
+        report: StoredOperationReport,
+        isCurrent: suspend () -> Boolean,
+    ) {
+        val snapshot = report.copy(progress = report.progress.copy(status = OperationStatus.RUNNING))
+        if (!isCurrent()) return
+        store.edit { prefs ->
+            val prior = prefs.report(channel, report.source)
+            if (prior != null && prior.workId == report.workId && prior.generation == report.generation &&
+                prior.startedAt == report.startedAt && prior.progress.id == report.progress.id && prior.progress.active
+            ) {
+                prefs.write(channel, snapshot)
+            }
+        }
+    }
+
     internal suspend fun clearForTest() = store.edit { it.clear() }
 }
 

@@ -7,11 +7,13 @@ import com.example.backlogium.domain.OperationPhase
 import com.example.backlogium.domain.OperationProgress
 import com.example.backlogium.domain.OperationStatus
 import java.util.UUID
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class OperationReportingTest {
@@ -193,6 +195,83 @@ class OperationReportingTest {
         assertEquals("3:cycle", selected?.id)
         assertEquals(OperationStatus.WAITING, selected?.status)
         assertEquals(2, selected?.counts?.processed)
+    }
+
+    @Test fun `interrupted reporting retains measured progress through constraint wait and cancellation`() = runTest {
+        val reports = OperationReportStore(RuntimeEnvironment.getApplication())
+        reports.clearForTest()
+        val workId = UUID.randomUUID()
+        val begun = reports.begin(OperationChannel.STEAM, OperationSource.PERIODIC,
+            workId.toString(), generation = 3, retry = false)
+        assertNull(begun.progress.counts)
+
+        val counts = OperationCounts(processed = 6, total = 10, failed = 1)
+        var workProgress = Data.EMPTY
+        OperationReporter { 1_000L }.report(OperationPhase.ACHIEVEMENTS, counts) {
+            workProgress = operationData(
+                workId.toString(), 3, OperationPhase.ACHIEVEMENTS, counts, updated = 4,
+                executionId = begun.progress.id, startedAt = begun.startedAt,
+            )
+        }
+        val measured = operationProgress(WorkInfo(
+            workId, WorkInfo.State.RUNNING, setOf("setup-account:3"), progress = workProgress,
+        ), 3)!!
+        reports.saveInterrupted(
+            OperationChannel.STEAM,
+            begun.copy(progress = measured),
+        ) { true }
+        val stored = reports.observe(OperationChannel.STEAM).first().single()
+        assertEquals(begun.progress.id, stored.progress.id)
+        assertEquals(OperationPhase.ACHIEVEMENTS, stored.progress.phase)
+        assertEquals(counts, stored.progress.counts)
+        assertEquals(4, stored.progress.updated)
+        assertEquals(OperationStatus.RUNNING, stored.progress.status)
+
+        val newerCounts = OperationCounts(processed = 7, total = 10, failed = 1)
+        val newerWorkProgress = operationData(
+            workId.toString(), 3, OperationPhase.ACHIEVEMENTS, newerCounts, updated = 5,
+            executionId = begun.progress.id, startedAt = begun.startedAt,
+        )
+        val waitingWithProgress = WorkInfo(
+            workId, WorkInfo.State.ENQUEUED, setOf("setup-account:3"), progress = newerWorkProgress,
+            runAttemptCount = 2, stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+        )
+        val waitingWithClearedProgress = WorkInfo(
+            workId, WorkInfo.State.ENQUEUED, setOf("setup-account:3"), progress = Data.EMPTY,
+            runAttemptCount = 2, stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+        )
+        listOf(
+            waitingWithProgress to (newerCounts to 5),
+            waitingWithClearedProgress to (counts to 4),
+        ).forEach { (info, expected) ->
+            val projected = periodicOperation(info, 3, stored)?.progress
+            assertEquals(OperationStatus.WAITING, projected?.status)
+            assertEquals(begun.progress.id, projected?.id)
+            assertEquals(workId.toString(), projected?.workId)
+            assertEquals(OperationPhase.ACHIEVEMENTS, projected?.phase)
+            assertEquals(expected.first, projected?.counts)
+            assertEquals(expected.second, projected?.updated)
+            assertTrue(projected?.active == true)
+        }
+
+        val cancelled = WorkInfo(
+            workId, WorkInfo.State.CANCELLED, setOf("setup-account:3"), progress = workProgress,
+        )
+        val cancellationSummary = periodicOperation(cancelled, 3, stored)?.progress
+        assertEquals(OperationStatus.CANCELLED, cancellationSummary?.status)
+        assertEquals(begun.progress.id, cancellationSummary?.id)
+        assertEquals(OperationPhase.ACHIEVEMENTS, cancellationSummary?.phase)
+        assertEquals(counts, cancellationSummary?.counts)
+        assertFalse(cancellationSummary?.active == true)
+
+        val cancelledWithoutProgress = WorkInfo(
+            workId, WorkInfo.State.CANCELLED, setOf("setup-account:3"), progress = Data.EMPTY,
+        )
+        val recoveredCancellation = periodicOperation(cancelledWithoutProgress, 3, stored)?.progress
+        assertEquals(OperationStatus.CANCELLED, recoveredCancellation?.status)
+        assertEquals(begun.progress.id, recoveredCancellation?.id)
+        assertEquals(OperationPhase.ACHIEVEMENTS, recoveredCancellation?.phase)
+        assertEquals(counts, recoveredCancellation?.counts)
     }
 
     @Test fun `cancelled periodic work reconciles its stored running report`() {

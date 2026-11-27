@@ -70,22 +70,31 @@ initial snapshots, reconnection, subscription cleanup and legacy progress payloa
 
 ## Latest review checkpoint
 
-- Confirmed the PR branch head is `9dc139c45a7a2b23073b742c9e1368bef36ca5a4`.
-  CI run [#853](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/46036766925)
+- Confirmed the PR branch head is `8583300d73d97b9cad080d4a2a86e8fc01cb1cd8`.
+  CI run [#854](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/46041440149)
   completed successfully on that exact head, superseding the earlier screenshot
   failures.
-- The focused operation-reporting, report-store, and scheduler JVM suites passed
-  locally (36 tests, no failures):
+- The focused operation-reporting, report-store, scheduler, and sync-worker JVM
+  suites passed locally after the interruption-reporting changes:
   ```sh
   ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest \
     --tests 'com.example.backlogium.work.OperationReportingTest' \
     --tests 'com.example.backlogium.work.OperationReportStoreTest' \
-    --tests 'com.example.backlogium.work.SyncSchedulerTest' --no-daemon
+    --tests 'com.example.backlogium.work.SyncSchedulerTest' \
+    --tests 'com.example.backlogium.work.SteamSyncLibraryEvidenceWorkerTest' --no-daemon
   ```
-  This includes periodic/manual overlap through retry and terminal projection, as
-  well as removed, replaced, cancelled, and connectivity-stopped work.
-- The local review-resolution edits are uncommitted and unpublished as required;
-  CI #853 predates them and is not claimed as remote validation for these edits.
+  This includes production Steam and reconciliation worker interruption after
+  measured achievement progress, retained/cleared WorkManager progress, explicit
+  cancellation projection, execution identity fencing, periodic/manual overlap,
+  and removed/replaced work.
+- Full local JVM validation also passed:
+  ```sh
+  ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest :gamification:test --no-daemon
+  ```
+- `openspec validate issue161-enhancement-sync-progress-and-offline-feedback-minor --strict`
+  passed.
+- The review-resolution edits remain uncommitted and unpublished as required. CI
+  #854 predates these local edits and is not claimed as remote validation for them.
 
 ## Existing baseline drift
 

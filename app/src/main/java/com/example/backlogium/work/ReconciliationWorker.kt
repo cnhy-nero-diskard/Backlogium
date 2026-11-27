@@ -171,6 +171,17 @@ class ReconciliationWorker @AssistedInject constructor(
             Result.retry()
         } finally {
             withContext(NonCancellable) {
+                if (outcome == SyncOutcome.INCOMPLETE) {
+                    runCatching {
+                        saveReport(
+                            OperationStatus.RUNNING,
+                            OperationPhase.ACHIEVEMENTS,
+                            counts,
+                            updated,
+                            interrupted = true,
+                        )
+                    }
+                }
                 runCatching {
                     syncCoordinator.withLock {
                         accountChangeMarker.withAccountState {
@@ -207,6 +218,7 @@ class ReconciliationWorker @AssistedInject constructor(
         phase: OperationPhase,
         counts: OperationCounts?,
         updated: Int,
+        interrupted: Boolean = false,
     ) {
         val reportGeneration = generation ?: return
         val reportId = executionId ?: return
@@ -214,14 +226,18 @@ class ReconciliationWorker @AssistedInject constructor(
         syncCoordinator.withLock {
             accountChangeMarker.withAccountState {
                 if (isAccountActive(reportGeneration, admittedSteamId)) {
-                    operationReports.save(
-                        OperationChannel.ACHIEVEMENTS,
-                        StoredOperationReport(
-                            id.toString(), reportGeneration, startedAt,
-                            OperationProgress(reportId, status, phase, counts, updated),
-                            operationSource,
-                        ),
+                    val report = StoredOperationReport(
+                        id.toString(), reportGeneration, startedAt,
+                        OperationProgress(reportId, status, phase, counts, updated),
+                        operationSource,
                     )
+                    if (interrupted) {
+                        operationReports.saveInterrupted(OperationChannel.ACHIEVEMENTS, report) {
+                            isAccountActive(reportGeneration, admittedSteamId)
+                        }
+                    } else {
+                        operationReports.save(OperationChannel.ACHIEVEMENTS, report)
+                    }
                 }
             }
         }

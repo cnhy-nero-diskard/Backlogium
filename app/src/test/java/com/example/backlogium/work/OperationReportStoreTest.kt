@@ -102,4 +102,26 @@ class OperationReportStoreTest {
         assertEquals(newer.progress.id, current.progress.id)
         assertEquals(OperationStatus.RUNNING, current.progress.status)
     }
+
+    @Test fun `an interrupted snapshot cannot replace a newer execution in the same slot`() = runTest {
+        store.clearForTest()
+        val workId = UUID.randomUUID().toString()
+        val interrupted = store.begin(OperationChannel.STEAM, OperationSource.PERIODIC,
+            workId, generation = 4, retry = false)
+        val replacement = store.begin(OperationChannel.STEAM, OperationSource.PERIODIC,
+            workId, generation = 4, retry = false)
+
+        store.saveInterrupted(
+            OperationChannel.STEAM,
+            interrupted.copy(progress = interrupted.progress.copy(
+                phase = OperationPhase.ACHIEVEMENTS,
+                counts = OperationCounts(2, 5),
+            )),
+        ) { true }
+
+        val current = store.observe(OperationChannel.STEAM).first().single()
+        assertEquals(replacement.progress.id, current.progress.id)
+        assertEquals(OperationPhase.PREPARING, current.progress.phase)
+        assertEquals(null, current.progress.counts)
+    }
 }
