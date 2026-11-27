@@ -67,6 +67,18 @@ data class AnalyticsClockMatrix(val cells: List<AnalyticsClockCell> = emptyList(
     val dominant: AnalyticsClockCell? get() = cells.takeIf { activeDates >= 3 }?.maxByOrNull { it.minutes }
 }
 
+/** Keep session-start metrics inside the same clipped local-date range disclosed by their cards. */
+internal fun sessionsWithinStartBounds(
+    sessions: List<PlaySession>,
+    bounds: AnalyticsWindowBounds?,
+    zone: ZoneId,
+): List<PlaySession> = bounds?.let { represented ->
+    sessions.filter { session ->
+        Instant.ofEpochMilli(session.startAt).atZone(zone).toLocalDate() in
+            represented.start..represented.endInclusive
+    }
+}.orEmpty()
+
 internal fun deriveClockMatrix(sessions: List<PlaySession>, zone: ZoneId): AnalyticsClockMatrix {
     val positive = sessions.filter { it.minutes > 0 }
     val grouped = positive.groupBy {

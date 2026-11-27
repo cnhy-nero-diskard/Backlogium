@@ -24,13 +24,21 @@ class AchievementInsightsRepository @Inject constructor(private val database: Ba
     fun between(account: String, start: Long, end: Long): Flow<AchievementEvidenceSnapshot> =
         database.invalidationTracker.createFlow("achievements", "game_achievement_sync", "hidden_games", "player_profile", "games").map {
             database.withTransaction {
-                val dao = database.achievementInsightsDao()
-                AchievementEvidenceSnapshot(
-                    dao.unlocks(account, start, end).map { DatedAchievementEvidence(it.appId, it.apiName, it.name, it.unlockedAt, it.snapshotPercent) },
-                    dao.completions(account, start, end).map { DatedCompletionEvidence(it.appId, it.completedAt) },
-                    dao.unsupportedUnlocks(account), dao.unsupportedCompletions(account),
-                    dao.lifetimeRarity(account).map { UnlockedAchievementRarity(it.appId, it.gameName, it.displayName?.takeIf(String::isNotBlank) ?: it.apiName, it.rarityPercent) },
-                )
+                database.achievementInsightsDao().readSnapshot(account, start, end)
             }
         }
 }
+
+internal suspend fun com.example.backlogium.data.local.dao.AchievementInsightsDao.readSnapshot(
+    account: String,
+    start: Long,
+    end: Long,
+): AchievementEvidenceSnapshot = AchievementEvidenceSnapshot(
+    unlocks(account, start, end).map { DatedAchievementEvidence(it.appId, it.apiName, it.name, it.unlockedAt, it.snapshotPercent) },
+    completions(account, start, end).map { DatedCompletionEvidence(it.appId, it.completedAt) },
+    unsupportedUnlocks(account),
+    unsupportedCompletions(account),
+    lifetimeRarity(account).map {
+        UnlockedAchievementRarity(it.appId, it.gameName, it.displayName?.takeIf(String::isNotBlank) ?: it.apiName, it.rarityPercent)
+    },
+)

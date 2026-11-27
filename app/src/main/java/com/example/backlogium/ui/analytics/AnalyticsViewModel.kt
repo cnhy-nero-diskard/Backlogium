@@ -2,13 +2,12 @@ package com.example.backlogium.ui.analytics
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.backlogium.data.repo.AchievementInsightsRepository
 import com.example.backlogium.data.repo.AchievementEvidenceSnapshot
+import com.example.backlogium.data.repo.AnalyticsEvidenceBounds
 import com.example.backlogium.data.repo.CredentialsRepository
 import com.example.backlogium.data.repo.CredentialsState
 import com.example.backlogium.data.repo.DatedActivityLedgerSnapshot
 import com.example.backlogium.data.repo.DayProgress
-import com.example.backlogium.data.repo.GameRepository
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.domain.GameSource
 import com.example.backlogium.data.repo.PlaySession
@@ -376,13 +375,6 @@ private data class AnalyticsInputs(
     val pendingDateUnknownMinutes: Int = 0,
 )
 
-/** One windowed query snapshot feeding [AnalyticsInputs]; allocations are the recovery leaves. */
-private data class AnalyticsWindowed(
-    val sessions: List<PlaySession>,
-    val ledger: DatedActivityLedgerSnapshot,
-    val evidence: AchievementEvidenceSnapshot,
-)
-
 /** A selected window remembers whether it should continue following the current period. */
 internal data class AnalyticsWindowSelection(
     val window: AnalyticsWindow,
@@ -442,9 +434,7 @@ private val INITIAL_WINDOW = AnalyticsWindow(
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
     private val sessionRepository: SessionRepository,
-    private val gameRepository: GameRepository,
     private val profileRepository: ProfileRepository,
-    private val achievementInsightsRepository: AchievementInsightsRepository,
     private val settings: SettingsRepository,
     private val credentials: CredentialsRepository,
     private val currentDate: CurrentDateProvider,
@@ -607,13 +597,9 @@ class AnalyticsViewModel @Inject constructor(
         // When the elapsed day-count does not fit in the prior period, or tracking began inside
         // either range, omit the previous-period headline and fall back.
         val comparisonBounds = resolved.window.comparablePreviousBounds(resolved.today)
-        val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
-            sessionRepository.sessionsBetween(
-                startInclusiveMillis = bounds.startInclusiveMillis,
-                endExclusiveMillis = bounds.endExclusiveMillis,
-            )
-        } ?: flowOf(emptyList())
         val ledgerSnapshotFlow: Flow<DatedActivityLedgerSnapshot> = resolved.activityBounds?.let { bounds ->
+            val sessionBounds = requireNotNull(resolved.epochBounds)
+            val evidenceStart = minOf(bounds.start, comparisonBounds?.start ?: bounds.start)
             sessionRepository.datedActivityLedgerSnapshot(
                 zone = resolved.zone,
                 startDateInclusive = bounds.start,
@@ -621,24 +607,23 @@ class AnalyticsViewModel @Inject constructor(
                 historyBefore = bounds.start,
                 previousStartDateInclusive = comparisonBounds?.start,
                 previousEndDateExclusive = comparisonBounds?.endInclusive?.plusDays(1),
+                analyticsEvidenceBounds = AnalyticsEvidenceBounds(
+                    sessionStartInclusiveMillis = sessionBounds.startInclusiveMillis,
+                    sessionEndExclusiveMillis = sessionBounds.endExclusiveMillis,
+                    achievementAccount = account,
+                    achievementStartInclusiveMillis = evidenceStart.atStartOfDay(resolved.zone).toInstant().toEpochMilli(),
+                    achievementEndExclusiveMillis = bounds.endInclusive.plusDays(1)
+                        .atStartOfDay(resolved.zone).toInstant().toEpochMilli(),
+                ),
             )
         } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
-        val evidenceFlow = resolved.activityBounds?.takeIf { account != null }?.let { bounds ->
-            val start = minOf(bounds.start, comparisonBounds?.start ?: bounds.start)
-            achievementInsightsRepository.between(requireNotNull(account),
-                start.atStartOfDay(resolved.zone).toInstant().toEpochMilli(),
-                bounds.endInclusive.plusDays(1).atStartOfDay(resolved.zone).toInstant().toEpochMilli())
-        } ?: flowOf(AchievementEvidenceSnapshot())
         combine(
-            combine(sessionsFlow, ledgerSnapshotFlow, evidenceFlow) { sessions, ledger, evidence ->
-                AnalyticsWindowed(sessions, ledger, evidence)
-            },
-            gameRepository.library,
+            ledgerSnapshotFlow,
             profileRepository.dailyProgress,
             profileRepository.profile,
             sessionRepository.pendingDateUnknownQuantity,
-        ) { current, library, dailyProgress, profile, pending ->
-            val ledger = current.ledger
+        ) { current, dailyProgress, profile, pending ->
+            val ledger = current
             AnalyticsInputs(
                 zone = resolved.zone,
                 account = account,
@@ -660,7 +645,7 @@ class AnalyticsViewModel @Inject constructor(
                     previousTotals = ledger.previous,
                 ),
                 history = ledger.history,
-                library = library,
+                library = current.library,
                 dailyProgress = dailyProgress,
                 profile = profile,
                 allocations = ledger.allocations.map(CreditedAllocation::toHistoryAllocationUi),
@@ -760,6 +745,7 @@ class AnalyticsViewModel @Inject constructor(
         val genreMix = deriveGenreMix(inputs.datedTotals, genreTags)
         val achievementActivity = deriveAchievementActivity(inputs.evidence, dataBounds, inputs.comparison, inputs.zone)
         val timingInsights = deriveAnalyticsTimingInsights(inputs.sessions, totalMinutes, inputs.zone)
+        val representedSessions = sessionsWithinStartBounds(inputs.sessions, dataBounds, inputs.zone)
 
         val headline = deriveAnalyticsHeadline(
             totalMinutes = totalMinutes,
@@ -797,9 +783,9 @@ class AnalyticsViewModel @Inject constructor(
             topGames = topGames,
             genreMix = genreMix,
             genreDrift = deriveGenreDrift(genreMix, deriveGenreMix(inputs.previousTotals, genreTags), inputs.comparison != null),
-            clockMatrix = deriveClockMatrix(inputs.sessions, inputs.zone),
+            clockMatrix = deriveClockMatrix(representedSessions, inputs.zone),
             achievementActivity = achievementActivity,
-            records = deriveRecords(inputs.datedTotals, inputs.sessions, inputs.history, achievementActivity.unlocks),
+            records = deriveRecords(inputs.datedTotals, representedSessions, inputs.history, achievementActivity.unlocks),
             gameNames = inputs.library.associate { it.appId to it.name },
             insightsZone = inputs.zone,
             comparison = inputs.comparison,

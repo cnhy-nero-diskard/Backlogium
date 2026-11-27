@@ -51,6 +51,33 @@ class AdvancedPlayInsightsTest {
         assertTrue(deriveClockMatrix(emptyList(), ZoneId.of("UTC")).cells.isEmpty())
         assertNull(deriveClockMatrix(listOf(session.copy(minutes = 0)), ZoneId.of("UTC")).dominant)
     }
+
+    @Test fun sessionStartMetricsFollowTheClippedDateFloorWithoutMatchingCreditQuantity() {
+        val zone = ZoneId.of("UTC")
+        val start = LocalDate.of(2026, 11, 1)
+        val session = PlaySession(
+            id = 4,
+            appId = 4,
+            startAt = start.atTime(23, 30).atZone(zone).toInstant().toEpochMilli(),
+            minutes = 120,
+            open = false,
+        )
+        val window = AnalyticsWindowBounds(start, date)
+        val clippedAfterFloorMoves = AnalyticsWindowBounds(start.plusDays(1), date)
+
+        assertEquals(listOf(session), sessionsWithinStartBounds(listOf(session), window, zone))
+        assertTrue(sessionsWithinStartBounds(listOf(session), clippedAfterFloorMoves, zone).isEmpty())
+
+        val inScopeSession = session.copy(startAt = start.plusDays(1).atTime(9, 0).atZone(zone).toInstant().toEpochMilli())
+        val records = deriveRecords(
+            totals(4L to 30L),
+            sessionsWithinStartBounds(listOf(inScopeSession), clippedAfterFloorMoves, zone),
+            emptyMap(),
+            emptyList(),
+        )
+        assertEquals(120, records.longestSession?.minutes)
+    }
+
     @Test fun recordsUseOnlyDatedPositiveEvidenceWithStableTiesAndContext() {
         val days = listOf(
             DatedCreditedTotal(date, 60, mapOf(2L to 30L, 1L to 30L)),

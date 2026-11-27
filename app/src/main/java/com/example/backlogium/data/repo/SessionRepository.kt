@@ -12,6 +12,8 @@ import com.example.backlogium.data.local.entity.TimedContributionPlacement
 import com.example.backlogium.data.local.entity.TimingInformedSteamPlayState
 import com.example.backlogium.data.local.entity.UnknownTimeAllocation
 import com.example.backlogium.data.local.entity.UnknownTimeAllocationRecipe
+import com.example.backlogium.data.local.entity.Game
+import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.ContributionCredit
 import com.example.backlogium.domain.CreditedAllocation
 import com.example.backlogium.domain.DatedAllocationCredit
@@ -26,6 +28,7 @@ import com.example.backlogium.domain.RecoveryEstimateWindow
 import com.example.backlogium.domain.SessionCredit
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.TimedShareCredit
+import com.example.backlogium.domain.GameArtworkVariant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
@@ -505,12 +508,14 @@ class SessionRepository @Inject constructor(
         historyBefore: LocalDate,
         previousStartDateInclusive: LocalDate? = null,
         previousEndDateExclusive: LocalDate? = null,
+        analyticsEvidenceBounds: AnalyticsEvidenceBounds? = null,
     ): Flow<DatedActivityLedgerSnapshot> {
         require((previousStartDateInclusive == null) == (previousEndDateExclusive == null)) {
             "previous bounds must both be supplied or omitted"
         }
         if (database != null) {
-            return coherentRecoverySnapshot { dao ->
+            val db = database
+            return coherentAnalyticsSnapshot { dao ->
                 val hidden = dao.hiddenAppIdsSnapshot().toSet()
                 val recipes = dao.activeRecoveryRecipesSnapshot()
                 val earliest = dao.readEarliestCanonicalActivityDate(zone)
@@ -521,6 +526,37 @@ class SessionRepository @Inject constructor(
                 } == true
                 val fromIso = startDateInclusive.toString()
                 val toExclusiveIso = endDateExclusive.toString()
+                val analyticsSessions = analyticsEvidenceBounds?.let { bounds ->
+                    dao.sessionsBetweenSnapshot(bounds.sessionStartInclusiveMillis, bounds.sessionEndExclusiveMillis)
+                        .filterNot { it.appId in hidden }
+                        .map(Session::toDomain)
+                }.orEmpty()
+                val achievementEvidence = analyticsEvidenceBounds?.let { bounds ->
+                    bounds.achievementAccount?.let { account ->
+                        db.achievementInsightsDao().readSnapshot(
+                            account,
+                            bounds.achievementStartInclusiveMillis,
+                            bounds.achievementEndExclusiveMillis,
+                        )
+                    }
+                } ?: AchievementEvidenceSnapshot()
+                val visibleGames = analyticsEvidenceBounds?.let {
+                    val genresByAppId = db.gameGenreCacheDao().allSnapshot().associate { cache ->
+                        cache.appId to GameGenreCodec.decodeOrEmpty(cache.genresJson)
+                    }
+                    val artworkByAppId = db.gamePreferenceDao().getAll().associate { preference ->
+                        preference.appId to GameArtworkVariant.fromToken(preference.artworkVariant)
+                    }
+                    db.gameDao().getAll().asSequence()
+                        .filterNot { it.appId in hidden }
+                        .map { game ->
+                            game.toAnalyticsLibraryGame(
+                                genresByAppId[game.appId].orEmpty(),
+                                artworkByAppId[game.appId],
+                            )
+                        }
+                        .toList()
+                }.orEmpty()
                 DatedActivityLedgerSnapshot(
                     selected = dao.readDatedCreditedTotalsSnapshot(
                         zone, startDateInclusive, endDateExclusive, hidden, recipes,
@@ -548,6 +584,9 @@ class SessionRepository @Inject constructor(
                         startDateInclusive = startDateInclusive,
                         endDateInclusive = endDateExclusive.minusDays(1),
                     ),
+                    sessions = analyticsSessions,
+                    evidence = achievementEvidence,
+                    library = visibleGames,
                 )
             }
         }
@@ -561,7 +600,7 @@ class SessionRepository @Inject constructor(
                 zone, previousStartDateInclusive, requireNotNull(previousEndDateExclusive),
             )
         }
-        return combine(
+        val ledger = combine(
             datedCreditedTotalsBetween(zone, startDateInclusive, endDateExclusive),
             activityBoundariesBefore(zone, historyBefore),
             previous,
@@ -574,6 +613,10 @@ class SessionRepository @Inject constructor(
                 earliestCanonicalActivityDate = earliest,
             )
         }
+        val sessions = analyticsEvidenceBounds?.let { bounds ->
+            sessionsBetween(bounds.sessionStartInclusiveMillis, bounds.sessionEndExclusiveMillis)
+        } ?: flowOf(emptyList())
+        return combine(ledger, sessions) { snapshot, sessionRows -> snapshot.copy(sessions = sessionRows) }
     }
 
     /**
@@ -764,6 +807,13 @@ class SessionRepository @Inject constructor(
     private fun <T> coherentRecoverySnapshot(read: suspend (SessionDao) -> T): Flow<T> {
         val db = requireNotNull(database)
         return sessionDao.observeRecoveryProjectionInvalidation().map {
+            withObservedTransaction { db.withTransaction { read(db.sessionDao()) } }
+        }
+    }
+
+    private fun <T> coherentAnalyticsSnapshot(read: suspend (SessionDao) -> T): Flow<T> {
+        val db = requireNotNull(database)
+        return sessionDao.observeAnalyticsSnapshotInvalidation().map {
             withObservedTransaction { db.withTransaction { read(db.sessionDao()) } }
         }
     }
@@ -1104,6 +1154,40 @@ data class DatedActivityLedgerSnapshot(
     val allocations: List<CreditedAllocation> = emptyList(),
     /** Canonical coverage floor; production Room reads it with the window totals in one transaction. */
     val earliestCanonicalActivityDate: LocalDate? = null,
+    /** Advanced analytics inputs read with the ledger, visibility, and metadata in one transaction. */
+    val sessions: List<PlaySession> = emptyList(),
+    val evidence: AchievementEvidenceSnapshot = AchievementEvidenceSnapshot(),
+    val library: List<LibraryGame> = emptyList(),
+)
+
+/** Bounded session and achievement reads included in the coherent Analytics snapshot. */
+data class AnalyticsEvidenceBounds(
+    val sessionStartInclusiveMillis: Long,
+    val sessionEndExclusiveMillis: Long,
+    val achievementAccount: String?,
+    val achievementStartInclusiveMillis: Long,
+    val achievementEndExclusiveMillis: Long,
+)
+
+private fun Game.toAnalyticsLibraryGame(
+    genres: List<GameGenre>,
+    artworkVariant: GameArtworkVariant?,
+) = LibraryGame(
+    appId = appId,
+    name = name,
+    iconUrl = iconUrl,
+    headerUrl = SteamIconMapper.coverUrls(appId, artworkVariant).first(),
+    heroCapsuleUrl = SteamIconMapper.coverUrls(appId, artworkVariant, portrait = true).first(),
+    playtimeForever = playtimeForever,
+    playtime2Weeks = playtime2Weeks,
+    backfillMinutes = backfillMinutes,
+    isGoal = isGoal,
+    genres = genres,
+    source = source,
+    manualSharedMinutes = manualSharedMinutes,
+    lastPlayedAt = lastPlayedAt,
+    firstSeenAt = firstSeenAt,
+    artworkVariant = artworkVariant,
 )
 
 /** Find recipe boundaries arithmetically, without expanding its historical date window. */
