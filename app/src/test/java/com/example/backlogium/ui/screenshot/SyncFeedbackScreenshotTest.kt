@@ -1,6 +1,9 @@
 package com.example.backlogium.ui.screenshot
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import com.example.backlogium.ui.components.OfflineStatus
+import com.example.backlogium.data.network.ConnectivityStatus
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
@@ -25,6 +28,10 @@ import org.robolectric.annotation.GraphicsMode
 
 abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
     @get:Rule val compose = createAndroidComposeRule<ScreenshotTestActivity>()
+    @Test fun offlineLibraryLight() = capture("offline-library", false)
+    @Test fun offlineLibraryDark() = capture("offline-library", true)
+    @Test fun offlineDetailLight() = capture("offline-detail", false)
+    @Test fun offlineDetailDark() = capture("offline-detail", true)
     @Test fun setupFetchingLight() = capture("setup-fetching", false)
     @Test fun setupFetchingDark() = capture("setup-fetching", true)
     @Test fun setupAchievementsLight() = capture("setup-achievements", false)
@@ -39,7 +46,14 @@ abstract class SyncFeedbackScreenshotBase(private val viewport: String) {
         compose.setContent { BacklogiumTheme(darkTheme = dark) {
             Surface(Modifier.fillMaxSize()) {
                 Column(Modifier.padding(16.dp)) {
-                    if (scene.startsWith("setup")) {
+                    if (scene.startsWith("offline")) {
+                        OfflineStatus(ConnectivityStatus.OFFLINE)
+                        Box(Modifier.weight(1f)) {
+                            MainScreenshotFixtureHost(MainScreenshotFixture(
+                                if (scene == "offline-library") MainFixtureKind.LIBRARY_POPULATED else MainFixtureKind.DETAIL_OWNED,
+                                darkTheme = dark))
+                        }
+                    } else if (scene.startsWith("setup")) {
                         val operation = OperationProgress("library", OperationStatus.RUNNING,
                             if (scene == "setup-fetching") OperationPhase.FETCHING_LIBRARY else OperationPhase.ACHIEVEMENTS,
                             if (scene == "setup-fetching") null else OperationCounts(3, 8, 0, 1))
