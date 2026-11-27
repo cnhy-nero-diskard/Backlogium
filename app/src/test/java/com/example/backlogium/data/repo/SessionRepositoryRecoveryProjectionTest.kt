@@ -22,6 +22,9 @@ import com.example.backlogium.domain.UnknownTimeMaterializer
 import com.example.backlogium.domain.PlaytimeActivity
 import com.example.backlogium.domain.PlaytimeAllocationMethod
 import com.example.backlogium.domain.DatedPlayTotal
+import com.example.backlogium.ui.analytics.AnalyticsWindow
+import com.example.backlogium.ui.analytics.AnalyticsWindowLength
+import com.example.backlogium.ui.analytics.deriveAnalyticsComparison
 import com.example.backlogium.ui.analytics.deriveVariety
 import com.example.backlogium.ui.analytics.periodFacts
 import com.example.backlogium.ui.history.recoveryShares
@@ -118,6 +121,83 @@ class SessionRepositoryRecoveryProjectionTest {
         assertEquals(setOf(10L, 13L), bounds.keys)
         assertEquals(RecordedActivityBounds(day.minusDays(2), day.minusDays(2)), bounds[10L])
         assertEquals(RecordedActivityBounds(earlier, earlier), bounds[13L])
+    }
+
+    @Test
+    fun comparisonCoverageIgnoresZeroRowsAndFullyFundedHostStartDates() = runTest {
+        val window = AnalyticsWindow(day, AnalyticsWindowLength.TWO_WEEKS)
+        val previous = requireNotNull(window.comparablePreviousBounds(day))
+        val selected = window.resolve()
+        db.sessionDao().insert(session(10L, day.minusDays(50), 0))
+        val host = db.sessionDao().insert(session(11L, day.minusDays(40), 30))
+        val recovery = db.playtimeRecoveryDao()
+        recovery.insertContributionChecked(contribution("fully-funded", 11L, 30))
+        recovery.insertTimedPlacements(
+            listOf(timed("fully-funded-share", "fully-funded", 11L, host, 30, day)),
+        )
+
+        val snapshot = sessions.datedActivityLedgerSnapshot(
+            zone = zone,
+            startDateInclusive = selected.start,
+            endDateExclusive = selected.endInclusive.plusDays(1),
+            historyBefore = selected.start,
+            previousStartDateInclusive = previous.start,
+            previousEndDateExclusive = previous.endInclusive.plusDays(1),
+        ).first()
+
+        assertEquals(day, sessions.earliestCanonicalActivityDate.first())
+        assertEquals(day, snapshot.earliestCanonicalActivityDate)
+        assertEquals(30L, periodFacts(snapshot.selected).minutes)
+        assertNull(
+            deriveAnalyticsComparison(
+                window, day, snapshot.earliestCanonicalActivityDate, snapshot.selected, snapshot.previous,
+            ),
+        )
+    }
+
+    @Test
+    fun comparisonNeedsPositiveEarlierCoverageAndUpdatesWhenItsOnlyAnchorIsHidden() = runBlocking {
+        val window = AnalyticsWindow(day, AnalyticsWindowLength.TWO_WEEKS)
+        val selected = window.resolve()
+        val previous = requireNotNull(window.comparablePreviousBounds(day))
+        val anchorDate = day.minusDays(40)
+        db.sessionDao().insert(session(10L, anchorDate, 10))
+        db.sessionDao().insert(session(11L, day.minusDays(2), 20))
+        val ledger = probe(
+            sessions.datedActivityLedgerSnapshot(
+                zone = zone,
+                startDateInclusive = selected.start,
+                endDateExclusive = selected.endInclusive.plusDays(1),
+                historyBefore = selected.start,
+                previousStartDateInclusive = previous.start,
+                previousEndDateExclusive = previous.endInclusive.plusDays(1),
+            ),
+        )
+
+        try {
+            val supported = ledger.next()
+            val comparison = requireNotNull(
+                deriveAnalyticsComparison(
+                    window, day, supported.earliestCanonicalActivityDate,
+                    supported.selected, supported.previous,
+                ),
+            )
+            assertEquals(anchorDate, supported.earliestCanonicalActivityDate)
+            assertEquals(0L, comparison.previous.minutes)
+            assertEquals(20L, comparison.current.minutes)
+
+            hidden.hide(listOf(10L))
+            val unsupported = ledger.next()
+            assertEquals(day.minusDays(2), unsupported.earliestCanonicalActivityDate)
+            assertNull(
+                deriveAnalyticsComparison(
+                    window, day, unsupported.earliestCanonicalActivityDate,
+                    unsupported.selected, unsupported.previous,
+                ),
+            )
+        } finally {
+            ledger.job.cancelAndJoin()
+        }
     }
 
     @Test

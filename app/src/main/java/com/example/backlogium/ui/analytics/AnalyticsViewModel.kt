@@ -351,10 +351,10 @@ private data class AnalyticsInputs(
     val window: AnalyticsWindow,
     /** The exact represented-date scope queried for this retained snapshot. */
     val activityBounds: AnalyticsWindowBounds?,
+    val earliestTrackedDate: LocalDate?,
     val sessions: List<PlaySession>,
     val datedTotals: List<DatedCreditedTotal>,
-    val previousTotals: List<DatedCreditedTotal>,
-    val comparisonBounds: AnalyticsWindowBounds?,
+    val comparison: AnalyticsComparison?,
     val history: Map<Long, com.example.backlogium.data.repo.RecordedActivityBounds>,
     val library: List<LibraryGame>,
     val dailyProgress: List<DayProgress>,
@@ -366,10 +366,7 @@ private data class AnalyticsInputs(
 /** One windowed query snapshot feeding [AnalyticsInputs]; allocations are the recovery leaves. */
 private data class AnalyticsWindowed(
     val sessions: List<PlaySession>,
-    val datedTotals: List<DatedCreditedTotal>,
-    val previousTotals: List<DatedCreditedTotal>,
-    val allocations: List<CreditedAllocation>,
-    val history: Map<Long, com.example.backlogium.data.repo.RecordedActivityBounds>,
+    val ledger: DatedActivityLedgerSnapshot,
 )
 
 /** A selected window remembers whether it should continue following the current period. */
@@ -412,7 +409,7 @@ private data class DatedAnalyticsWindow(
 private data class ResolvedAnalyticsWindow(
     val window: AnalyticsWindow,
     val today: LocalDate,
-    /** Dates that all windowed data sources are allowed to represent. */
+    /** Bounded query dates; the ledger snapshot applies its own canonical-history floor. */
     val activityBounds: AnalyticsWindowBounds?,
     val epochBounds: HistoryWindowBounds?,
     val earliestTrackedDate: LocalDate?,
@@ -495,7 +492,9 @@ class AnalyticsViewModel @Inject constructor(
         earliest: LocalDate?,
         today: LocalDate,
     ): ResolvedAnalyticsWindow {
-        val activityBounds = window.resolveActivityBounds(today, earliest)
+        // Query the bounded selected period in full; the coherent ledger snapshot supplies the
+        // canonical floor used to clip displayed dates and validate comparisons.
+        val activityBounds = window.resolveActivityBounds(today)
         return ResolvedAnalyticsWindow(
             window = window,
             today = today,
@@ -584,10 +583,7 @@ class AnalyticsViewModel @Inject constructor(
         // subrange in the prior period rather than a full month/year against a partial one.
         // When the elapsed day-count does not fit in the prior period, or tracking began inside
         // either range, omit the previous-period headline and fall back.
-        val comparisonBounds = resolved.window.comparablePreviousBoundsIfFullyObserved(
-            today = resolved.today,
-            earliestTrackedDate = resolved.earliestTrackedDate,
-        )
+        val comparisonBounds = resolved.window.comparablePreviousBounds(resolved.today)
         val sessionsFlow: Flow<List<PlaySession>> = resolved.epochBounds?.let { bounds ->
             sessionRepository.sessionsBetween(
                 startInclusiveMillis = bounds.startInclusiveMillis,
@@ -606,31 +602,35 @@ class AnalyticsViewModel @Inject constructor(
         } ?: flowOf(DatedActivityLedgerSnapshot(emptyList(), emptyMap(), emptyList()))
         combine(
             combine(sessionsFlow, ledgerSnapshotFlow) { sessions, ledger ->
-                AnalyticsWindowed(
-                    sessions = sessions,
-                    datedTotals = ledger.selected,
-                    previousTotals = ledger.previous,
-                    allocations = ledger.allocations,
-                    history = ledger.history,
-                )
+                AnalyticsWindowed(sessions, ledger)
             },
             gameRepository.library,
             profileRepository.dailyProgress,
             profileRepository.profile,
             sessionRepository.pendingDateUnknownQuantity,
         ) { current, library, dailyProgress, profile, pending ->
+            val ledger = current.ledger
             AnalyticsInputs(
                 window = resolved.window,
-                activityBounds = resolved.activityBounds,
+                activityBounds = resolved.window.resolveActivityBounds(
+                    resolved.today,
+                    ledger.earliestCanonicalActivityDate,
+                ),
+                earliestTrackedDate = ledger.earliestCanonicalActivityDate,
                 sessions = current.sessions,
-                datedTotals = current.datedTotals,
-                previousTotals = current.previousTotals,
-                comparisonBounds = comparisonBounds,
-                history = current.history,
+                datedTotals = ledger.selected,
+                comparison = deriveAnalyticsComparison(
+                    window = resolved.window,
+                    today = resolved.today,
+                    earliestTrackedDate = ledger.earliestCanonicalActivityDate,
+                    currentTotals = ledger.selected,
+                    previousTotals = ledger.previous,
+                ),
+                history = ledger.history,
                 library = library,
                 dailyProgress = dailyProgress,
                 profile = profile,
-                allocations = current.allocations.map(CreditedAllocation::toHistoryAllocationUi),
+                allocations = ledger.allocations.map(CreditedAllocation::toHistoryAllocationUi),
                 pendingDateUnknownMinutes = pending,
             )
         }
@@ -725,7 +725,8 @@ class AnalyticsViewModel @Inject constructor(
             activeDays = dailyMinutes.count { it.minutes > 0 },
             totalDays = dataBounds?.dayCount ?: 0,
             leadingGame = topGames.firstOrNull(),
-            previousMinutes = periodFacts(inputs.previousTotals).minutes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt().takeIf { it > 0 },
+            previousMinutes = inputs.comparison?.previous?.minutes
+                ?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()?.takeIf { it > 0 },
         )
         // The figures below all derive from inputs.window. Keep the visible period metadata
         // on that same snapshot until the new bounded query lands, so old figures are never
@@ -740,7 +741,7 @@ class AnalyticsViewModel @Inject constructor(
             configured = credState is CredentialsState.Configured,
             window = inputs.window,
             windowBounds = periodBounds,
-            earliestTrackedDate = resolved.earliestTrackedDate,
+            earliestTrackedDate = inputs.earliestTrackedDate,
             canStepEarlier = resolved.canStepEarlier,
             canStepLater = resolved.canStepLater,
             isCurrentWindow = resolved.isCurrentWindow,
@@ -753,9 +754,7 @@ class AnalyticsViewModel @Inject constructor(
             questOutcomesAvailableDayCount = questOutcomes.availableDays,
             questOutcomesUnavailableDayCount = questOutcomes.unavailableDays,
             topGames = topGames,
-            comparison = inputs.comparisonBounds?.let { previous ->
-                dataBounds?.let { AnalyticsComparison(it, previous, periodFacts(inputs.datedTotals), periodFacts(inputs.previousTotals)) }
-            },
+            comparison = inputs.comparison,
             playMix = derivePlayMix(inputs.datedTotals),
             variety = deriveVariety(inputs.datedTotals, inputs.history),
             focusShare = deriveFocusShare(inputs.datedTotals, inputs.library.filter { it.isGoal }.map { it.appId }.toSet()),

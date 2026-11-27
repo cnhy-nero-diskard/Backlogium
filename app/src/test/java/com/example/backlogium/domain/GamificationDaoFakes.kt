@@ -75,6 +75,10 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
     override fun observeEarliestSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override fun observeEarliestVisibleSessionStart(): Flow<Long?> = flowOf(sessions.minOfOrNull { it.startAt })
     override suspend fun earliestVisibleSessionStartSnapshot(): Long? = sessions.minOfOrNull { it.startAt }
+    override fun observeEarliestPositiveSessionStart(): Flow<Long?> =
+        flowOf(sessions.filter { it.minutes > 0 }.minOfOrNull { it.startAt })
+    override suspend fun earliestPositiveSessionStartSnapshot(): Long? =
+        sessions.filter { it.minutes > 0 }.minOfOrNull { it.startAt }
     override fun observeFirstSessionStartByGame(): Flow<List<GameSessionInstant>> = flowOf(
         sessions.groupBy { it.appId }.map { (appId, rows) -> GameSessionInstant(appId, rows.minOf { it.startAt }) },
     )

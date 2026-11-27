@@ -212,6 +212,25 @@ interface SessionDao {
     @Query("SELECT MIN(startAt) FROM sessions WHERE appId NOT IN (SELECT appId FROM hidden_games)")
     suspend fun earliestVisibleSessionStartSnapshot(): Long?
 
+    /** Earliest visible session start that still has a positive canonical legacy remainder. */
+    @Query(
+        "SELECT MIN(s.startAt) FROM sessions s " +
+            "WHERE s.appId NOT IN (SELECT appId FROM hidden_games) " +
+            "AND s.minutes > COALESCE((SELECT SUM(p.minutes) FROM recovery_timed_placements p " +
+            "WHERE p.sessionId = s.id AND p.superseded = 0 " +
+            "AND p.account = (SELECT steamId FROM player_profile WHERE id = 0)), 0)",
+    )
+    fun observeEarliestPositiveSessionStart(): Flow<Long?>
+
+    @Query(
+        "SELECT MIN(s.startAt) FROM sessions s " +
+            "WHERE s.appId NOT IN (SELECT appId FROM hidden_games) " +
+            "AND s.minutes > COALESCE((SELECT SUM(p.minutes) FROM recovery_timed_placements p " +
+            "WHERE p.sessionId = s.id AND p.superseded = 0 " +
+            "AND p.account = (SELECT steamId FROM player_profile WHERE id = 0)), 0)",
+    )
+    suspend fun earliestPositiveSessionStartSnapshot(): Long?
+
     /**
      * Natural-key lookup for the backup/restore merge engine (add-backup-restore): [Session.id]
      * is a surrogate autoincrement that does not survive an export/import round trip, so a
@@ -414,7 +433,7 @@ interface SessionDao {
     @Query(
         "SELECT MIN(date) FROM recovery_unknown_allocations " +
             "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
-            "AND superseded = 0 AND pendingDate = 0 " +
+            "AND superseded = 0 AND pendingDate = 0 AND minutes > 0 " +
             "AND appId NOT IN (SELECT appId FROM hidden_games)",
     )
     fun observeEarliestDatedAllocationDate(): Flow<String?>
@@ -422,7 +441,7 @@ interface SessionDao {
     @Query(
         "SELECT MIN(date) FROM recovery_unknown_allocations " +
             "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
-            "AND superseded = 0 AND pendingDate = 0 " +
+            "AND superseded = 0 AND pendingDate = 0 AND minutes > 0 " +
             "AND appId NOT IN (SELECT appId FROM hidden_games)",
     )
     suspend fun earliestDatedAllocationDateSnapshot(): String?
@@ -431,7 +450,7 @@ interface SessionDao {
     @Query(
         "SELECT MIN(creditedDate) FROM recovery_timed_placements " +
             "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
-            "AND superseded = 0 " +
+            "AND superseded = 0 AND minutes > 0 " +
             "AND appId NOT IN (SELECT appId FROM hidden_games)",
     )
     fun observeEarliestTimedShareDate(): Flow<String?>
@@ -439,7 +458,8 @@ interface SessionDao {
     @Query(
         "SELECT MIN(creditedDate) FROM recovery_timed_placements " +
             "WHERE account = (SELECT steamId FROM player_profile WHERE id = 0) " +
-            "AND superseded = 0 AND appId NOT IN (SELECT appId FROM hidden_games)",
+            "AND superseded = 0 AND minutes > 0 " +
+            "AND appId NOT IN (SELECT appId FROM hidden_games)",
     )
     suspend fun earliestTimedShareDateSnapshot(): String?
 

@@ -228,8 +228,8 @@ class SessionRepository @Inject constructor(
             .visibleKeys()
 
     /**
-     * Earliest canonical dated activity in the device zone: the first session start date, first
-     * *positive* dated allocation, first frozen timed-share date or first positive recipe-
+     * Earliest canonical dated activity in the device zone: the first positive legacy session
+     * remainder date, positive dated allocation, frozen timed-share date or positive recipe-
      * derived date. Unlike [earliestSessionStart] (an exact session instant) this is a *date*, so
      * History and Analytics can anchor period availability over allocation-only days that precede
      * the first timestamped session. Excluded/zero rows never anchor history. Bounded reads: each
@@ -241,7 +241,7 @@ class SessionRepository @Inject constructor(
         }
     } else {
         combine(
-            sessionDao.observeEarliestVisibleSessionStart(),
+            sessionDao.observeEarliestPositiveSessionStart(),
             sessionDao.observeEarliestDatedAllocationDate(),
             sessionDao.observeEarliestTimedShareDate(),
             sessionDao.observeActiveRecoveryRecipes(),
@@ -513,6 +513,12 @@ class SessionRepository @Inject constructor(
             return coherentRecoverySnapshot { dao ->
                 val hidden = dao.hiddenAppIdsSnapshot().toSet()
                 val recipes = dao.activeRecoveryRecipesSnapshot()
+                val earliest = dao.readEarliestCanonicalActivityDate(zone)
+                val comparisonObserved = previousStartDateInclusive?.let { previousStart ->
+                    earliest != null &&
+                        !earliest.isAfter(startDateInclusive) &&
+                        !earliest.isAfter(previousStart)
+                } == true
                 val fromIso = startDateInclusive.toString()
                 val toExclusiveIso = endDateExclusive.toString()
                 DatedActivityLedgerSnapshot(
@@ -520,7 +526,7 @@ class SessionRepository @Inject constructor(
                         zone, startDateInclusive, endDateExclusive, hidden, recipes,
                     ),
                     history = dao.readActivityBoundariesBefore(zone, historyBefore, hidden, recipes),
-                    previous = if (previousStartDateInclusive == null) emptyList() else {
+                    previous = if (!comparisonObserved) emptyList() else {
                         dao.readDatedCreditedTotalsSnapshot(
                             zone,
                             previousStartDateInclusive,
@@ -529,6 +535,7 @@ class SessionRepository @Inject constructor(
                             recipes,
                         )
                     },
+                    earliestCanonicalActivityDate = earliest,
                     allocations = PlaytimeReadProjector.creditedAllocationsBetween(
                         timedShares = dao.timedPlacementsByDateSnapshot(fromIso, toExclusiveIso)
                             .filterNot { it.appId in hidden }
@@ -559,8 +566,13 @@ class SessionRepository @Inject constructor(
             activityBoundariesBefore(zone, historyBefore),
             previous,
             allocations,
-        ) { selected, history, prior, explanationRows ->
-            DatedActivityLedgerSnapshot(selected, history, prior, explanationRows)
+            earliestCanonicalActivityDate,
+        ) { selected, history, prior, explanationRows, earliest ->
+            DatedActivityLedgerSnapshot(
+                selected, history, prior,
+                allocations = explanationRows,
+                earliestCanonicalActivityDate = earliest,
+            )
         }
     }
 
@@ -864,7 +876,7 @@ internal suspend fun SessionDao.readCanonicalDatedActivity(
 
 /** Earliest visible date, including frozen funded shares and allocation-only activity. */
 internal suspend fun SessionDao.readEarliestCanonicalActivityDate(zone: ZoneId): LocalDate? {
-    val earliestSessionMillis = earliestVisibleSessionStartSnapshot()
+    val earliestSessionMillis = earliestPositiveSessionStartSnapshot()
     val earliestAllocationDate = earliestDatedAllocationDateSnapshot()
     val earliestTimedShareDate = earliestTimedShareDateSnapshot()
     val hidden = hiddenAppIdsSnapshot().toSet()
@@ -1090,6 +1102,8 @@ data class DatedActivityLedgerSnapshot(
     val previous: List<DatedCreditedTotal>,
     /** Bounded estimate explanations from the same ledger generation as [selected]. */
     val allocations: List<CreditedAllocation> = emptyList(),
+    /** Canonical coverage floor; production Room reads it with the window totals in one transaction. */
+    val earliestCanonicalActivityDate: LocalDate? = null,
 )
 
 /** Find recipe boundaries arithmetically, without expanding its historical date window. */

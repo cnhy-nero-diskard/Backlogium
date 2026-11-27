@@ -1,6 +1,7 @@
 package com.example.backlogium.ui.analytics
 
 import com.example.backlogium.domain.DatedCreditedTotal
+import java.time.LocalDate
 
 /** Counts use canonical visible dated credit in both periods, including allocations. */
 data class AnalyticsPeriodFacts(val minutes: Long, val activeDays: Int, val distinctGames: Int)
@@ -24,6 +25,18 @@ internal fun periodFacts(totals: List<DatedCreditedTotal>): AnalyticsPeriodFacts
         distinctGames = totals.flatMap { it.minutesByGame.entries }
             .filter { it.value > 0 }.map { it.key }.distinct().size,
     )
+
+internal fun deriveAnalyticsComparison(
+    window: AnalyticsWindow,
+    today: LocalDate,
+    earliestTrackedDate: LocalDate?,
+    currentTotals: List<DatedCreditedTotal>,
+    previousTotals: List<DatedCreditedTotal>,
+): AnalyticsComparison? {
+    val current = window.resolveActivityBounds(today, earliestTrackedDate) ?: return null
+    val previous = window.comparablePreviousBoundsIfFullyObserved(today, earliestTrackedDate) ?: return null
+    return AnalyticsComparison(current, previous, periodFacts(currentTotals), periodFacts(previousTotals))
+}
 
 data class AnalyticsPlayShare(val appId: Long?, val minutes: Long, val percent: Double)
 

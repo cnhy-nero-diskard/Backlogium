@@ -96,7 +96,8 @@ class PersonalPaceRepositoryTest {
                 "observeAllOpenSessions" -> flowOf(sessions.filter { it.open })
                 "observeHostSessionsForDates" -> flowOf(sessions)
                 "observeActiveTimedPlacementsForSessions" -> flowOf(emptyList<Any>())
-                "observeEarliestSessionStart", "observeEarliestVisibleSessionStart" -> flowOf(null)
+                "observeEarliestSessionStart", "observeEarliestVisibleSessionStart",
+                "observeEarliestPositiveSessionStart" -> flowOf(null)
                 "observeTrackedMinutesByGame", "observeSessionCountsByGame",
                 "observeFirstSessionStartByGame", "observeLatestSessionInstantByGame", "observeLatestMeaningfulSessionInstantByGame",
                 "observeSince", "observeActiveRecoveryAllocations",
