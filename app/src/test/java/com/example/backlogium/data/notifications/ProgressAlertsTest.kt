@@ -23,11 +23,14 @@ import com.example.backlogium.work.SteamSyncCoordinator
 import java.lang.reflect.Proxy
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.concurrent.Executor
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.Dispatchers
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -51,8 +54,10 @@ class ProgressAlertsTest {
     private val coordinator = SteamSyncCoordinator()
     private var account = "fixture"
     private var failCredentials = false
+    private var beforeCredentialCheck: (suspend () -> Unit)? = null
     private val credentials = object : CredentialsProvider {
         override suspend fun currentCredentials(): CredentialsState.Configured {
+            beforeCredentialCheck?.also { beforeCredentialCheck = null }?.invoke()
             if (failCredentials) error("definitive pre-post failure")
             return CredentialsState.Configured("fixture-key", account)
         }
@@ -61,6 +66,7 @@ class ProgressAlertsTest {
     private val manager get() = context.getSystemService(NotificationManager::class.java)
     private val databaseName = "progress-alert-test.db"
     private fun open() = Room.databaseBuilder(context, BacklogiumDatabase::class.java, databaseName)
+        .setQueryExecutor(Executor { it.run() })
         .allowMainThreadQueries().build()
 
     @Before fun setup() = runBlocking {
@@ -211,6 +217,54 @@ class ProgressAlertsTest {
         settings.clearAccountDerivedState()
         assertTrue(db.progressAlertDao().pending().isEmpty())
         assertTrue(settings.progressAlertHandoffs.first().isEmpty())
+    }
+
+    @Test fun concurrentDispatchDoesNotFallbackAnAdmissionDeliveredByAnotherWorker() = runBlocking {
+        settings.progressAlertHandoffs.first()
+        val pending = alerts().prepare(ProgressCategory.QUOTA, account, marker.generation(), "dispatch-first",
+            title = "Quota", text = "")
+        db.progressAlertDao().insert(pending)
+
+        val shared = alerts().prepare(ProgressCategory.SHARED, account, marker.generation(), "30", 30L,
+            "Now tracking Borrowed", "Family Sharing").copy(sharedFallbackPending = true)
+        db.gameDao().upsert(Game(30L, "Borrowed", "", 0, 0, 0))
+        var secondWorker: kotlinx.coroutines.Job? = null
+        beforeCredentialCheck = {
+            db.progressAlertDao().insert(shared)
+            // This worker snapshots the new admission while the first worker still owns the fence.
+            secondWorker = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) { alerts().dispatch() }
+        }
+
+        alerts().dispatch()
+        secondWorker?.join()
+
+        assertEquals(ProgressAlert.DELIVERED, db.progressAlertDao().get(shared.eventKey)?.state)
+        assertTrue(manager.activeNotifications.any { it.tag == shared.eventKey })
+        assertNull(settings.sharedGameAnnouncementFlow.first())
+    }
+
+    @Test fun concurrentTerminalFallbackReadersCreateOneAnnouncement() = runBlocking {
+        settings.progressAlertHandoffs.first()
+        settings.setProgressAlert(ProgressCategory.SHARED, false)
+        db.gameDao().upsert(Game(31L, "Borrowed", "", 0, 0, 0))
+        val suppressed = alerts().prepare(ProgressCategory.SHARED, account, marker.generation(), "31", 31L,
+            "Now tracking Borrowed", "Family Sharing").copy(sharedFallbackPending = true)
+        db.progressAlertDao().insert(suppressed)
+
+        val workers = coordinator.withLock {
+            // Both workers read the terminal receipt before either can consume it under the fence.
+            listOf(
+                async(start = CoroutineStart.UNDISPATCHED) { alerts().dispatch() },
+                async(start = CoroutineStart.UNDISPATCHED) { alerts().dispatch() },
+            )
+        }
+        workers.awaitAll()
+
+        assertEquals(1, settings.sharedGameAnnouncementsFlow.first().size)
+        assertFalse(db.progressAlertDao().get(suppressed.eventKey)!!.sharedFallbackPending)
+        settings.clearSharedGameAnnouncement(31L)
+        alerts().dispatch()
+        assertNull(settings.sharedGameAnnouncementFlow.first())
     }
 
     @Test fun sourceRollbackDoesNotLeaveAnAlertOrAdmission() = runBlocking {

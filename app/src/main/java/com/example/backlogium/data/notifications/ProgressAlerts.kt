@@ -116,14 +116,18 @@ class ProgressAlerts @Inject constructor(
     private suspend fun recoverSharedFallbacks() {
         for (alert in database.progressAlertDao().sharedFallbacks()) {
             coordinator.withLock { marker.withAccountState {
-                if (marker.pendingSteamId() == null && marker.generation() == alert.generation &&
-                    credentials.currentCredentials()?.steamId == alert.account && alert.state != ProgressAlert.DELIVERED
+                val dao = database.progressAlertDao()
+                val current = dao.get(alert.eventKey) ?: return@withAccountState
+                if (!current.sharedFallbackPending || current.state == ProgressAlert.PENDING) return@withAccountState
+
+                if (marker.pendingSteamId() == null && marker.generation() == current.generation &&
+                    credentials.currentCredentials()?.steamId == current.account && current.state != ProgressAlert.DELIVERED
                 ) {
-                    database.gameDao().getById(checkNotNull(alert.appId))?.let {
+                    database.gameDao().getById(checkNotNull(current.appId))?.let {
                         settings.setSharedGameAnnouncement(it.appId, it.name, System.currentTimeMillis())
                     }
                 }
-                database.progressAlertDao().finishSharedFallback(alert.eventKey)
+                dao.finishSharedFallback(current.eventKey)
             } }
         }
     }

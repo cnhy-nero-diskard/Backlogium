@@ -27,8 +27,8 @@ interface ProgressAlertDao {
     @Query("SELECT * FROM progress_alerts WHERE sharedFallbackPending = 1")
     suspend fun sharedFallbacks(): List<ProgressAlert>
 
-    @Query("UPDATE progress_alerts SET sharedFallbackPending = 0 WHERE eventKey = :key")
-    suspend fun finishSharedFallback(key: String)
+    @Query("UPDATE progress_alerts SET sharedFallbackPending = 0 WHERE eventKey = :key AND sharedFallbackPending = 1 AND state != 'PENDING'")
+    suspend fun finishSharedFallback(key: String): Int
 
     @Query("DELETE FROM progress_alerts")
     suspend fun deleteAll()
