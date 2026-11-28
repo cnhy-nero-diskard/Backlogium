@@ -3,6 +3,7 @@ package com.example.backlogium.work
 import android.content.Context
 import androidx.work.Configuration
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -19,6 +20,7 @@ import androidx.work.workDataOf
 import com.example.backlogium.data.credentials.AccountChangeMarkerStore
 import com.example.backlogium.domain.OperationCounts
 import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationProgress
 import com.example.backlogium.domain.OperationStatus
 import com.example.backlogium.ui.setup.setupStagesUi
 import com.example.backlogium.work.setup.SetupRunState
@@ -43,6 +45,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -432,6 +435,80 @@ class SyncSchedulerTest {
         }
     }
 
+    @Test
+    fun `setup recovers its exact interrupted report with retained or cleared WorkManager progress`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val generation = AccountChangeMarkerStore(context).activeGeneration.first()!!
+        val stageId = SetupStageRegistry.STAGE_LIBRARY_SYNC
+
+        listOf(false, true).forEach { clearProgress ->
+            HeldOperationProgressWorker.gate = CompletableDeferred()
+            HeldOperationProgressWorker.progressReady = CompletableDeferred()
+            val request = OneTimeWorkRequestBuilder<HeldOperationProgressWorker>()
+                .addTag("setup-account:$generation")
+                .setInputData(workDataOf(
+                    OP_ACCOUNT to generation,
+                    HeldOperationProgressWorker.EXECUTION_ID to "$generation:execution",
+                    HeldOperationProgressWorker.CLEAR_PROGRESS to clearProgress,
+                ))
+                .build()
+            workManager.enqueue(request).await()
+
+            try {
+                HeldOperationProgressWorker.progressReady.await()
+                val counts = OperationCounts(6, 10)
+                val executionId = "$generation:execution"
+                val begun = StoredOperationReport(
+                    workId = request.id.toString(),
+                    generation = generation,
+                    startedAt = 1234L,
+                    progress = OperationProgress(executionId, OperationStatus.RUNNING, OperationPhase.PREPARING),
+                    source = OperationSource.MANUAL,
+                    attempt = 0,
+                )
+                operationReports.save(OperationChannel.STEAM, begun)
+                operationReports.saveInterrupted(
+                    OperationChannel.STEAM,
+                    begun.copy(progress = OperationProgress(
+                        executionId, OperationStatus.RUNNING, OperationPhase.ACHIEVEMENTS, counts, updated = 4,
+                    )),
+                ) { true }
+                workManager.cancelWorkById(request.id).await()
+                val interruptedInfo = workManager.getWorkInfoByIdFlow(request.id).first {
+                    it?.state == WorkInfo.State.CANCELLED
+                }!!
+                assertEquals(
+                    if (clearProgress) -1 else 5,
+                    interruptedInfo.progress.getInt(OP_PROCESSED, -1),
+                )
+
+                val operation = scheduler.operationForWork(request.id.toString()).first {
+                    it?.status == OperationStatus.CANCELLED
+                }!!
+                val row = setupStagesUi(
+                    stages = listOf(fakeStage(stageId)),
+                    selection = setOf(stageId),
+                    run = SetupRunState(
+                        loaded = true,
+                        running = true,
+                        pending = setOf(stageId),
+                        workIds = mapOf(stageId to request.id.toString()),
+                    ),
+                    libraryOperation = operation,
+                ).single()
+
+                assertEquals(if (clearProgress) "cleared" else "retained", counts, row.operation?.counts)
+                assertEquals(OperationPhase.ACHIEVEMENTS, row.operation?.phase)
+                assertEquals(4, row.operation?.updated)
+                assertEquals(request.id.toString(), row.operation?.workId)
+                assertEquals(OperationStatus.CANCELLED, row.operation?.status)
+                assertEquals(null, scheduler.operationForWork(UUID.randomUUID().toString()).first())
+            } finally {
+                HeldOperationProgressWorker.gate.complete(Unit)
+            }
+        }
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 
     private fun inputFor(name: String) = WorkManagerImpl.getInstance()!!
@@ -446,17 +523,21 @@ class HeldOperationProgressWorker(context: Context, params: WorkerParameters) : 
             id = id.toString(),
             generation = inputData.getLong(OP_ACCOUNT, 0L),
             phase = OperationPhase.ACHIEVEMENTS,
-            counts = OperationCounts(2, 4),
+            counts = OperationCounts(5, 10),
             executionId = inputData.getString(EXECUTION_ID),
             startedAt = 1234L,
         ))
+        if (inputData.getBoolean(CLEAR_PROGRESS, false)) setProgress(Data.EMPTY)
+        progressReady.complete(Unit)
         gate.await()
         return Result.success()
     }
 
     companion object {
         const val EXECUTION_ID = "execution_id"
+        const val CLEAR_PROGRESS = "clear_progress"
         var gate = CompletableDeferred<Unit>()
+        var progressReady = CompletableDeferred<Unit>()
     }
 }
 
@@ -466,7 +547,10 @@ class OverlapOperationWorker(context: Context, params: WorkerParameters) : Corou
         val source = if (role == PERIODIC) OperationSource.PERIODIC else OperationSource.MANUAL
         val generation = inputData.getLong(OP_ACCOUNT, 0L)
         val store = OperationReportStore(applicationContext)
-        val report = store.begin(OperationChannel.STEAM, source, id.toString(), generation, runAttemptCount > 0)
+        val report = store.begin(
+            OperationChannel.STEAM, source, id.toString(), generation,
+            retry = runAttemptCount > 0, attempt = runAttemptCount,
+        )
         val counts = when {
             role == MANUAL -> OperationCounts(5, 5)
             runAttemptCount == 0 -> OperationCounts(2, 8)
@@ -478,7 +562,7 @@ class OverlapOperationWorker(context: Context, params: WorkerParameters) : Corou
         )
         setProgress(operationData(
             id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
-            executionId = progress.id, startedAt = report.startedAt,
+            executionId = progress.id, startedAt = report.startedAt, attempt = runAttemptCount,
         ))
 
         if (role == MANUAL) {
@@ -503,7 +587,7 @@ class OverlapOperationWorker(context: Context, params: WorkerParameters) : Corou
         if (role == PERIODIC) periodicFinished.complete(Unit)
         return Result.success(operationData(
             id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
-            executionId = progress.id, startedAt = report.startedAt,
+            executionId = progress.id, startedAt = report.startedAt, attempt = runAttemptCount,
         ))
     }
 

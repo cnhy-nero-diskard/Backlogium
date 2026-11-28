@@ -250,6 +250,7 @@ class SteamSyncWorker @AssistedInject constructor(
             setProgress(operationData(
                 workId, accountGeneration ?: 0L, phase, counts,
                 executionId = executionId, startedAt = executionStartedAt,
+                attempt = runAttemptCount,
             ))
         }
     }
@@ -271,7 +272,8 @@ class SteamSyncWorker @AssistedInject constructor(
             if (accountChangeMarker.pendingSteamId() != null || accountChangeMarker.generation() != admission.first ||
                 credentials.currentCredentials()?.steamId != admission.second?.steamId
             ) null else operationReports.begin(
-                OperationChannel.STEAM, operationSource, workId, admission.first, retry = runAttemptCount > 0,
+                OperationChannel.STEAM, operationSource, workId, admission.first,
+                retry = runAttemptCount > 0, attempt = runAttemptCount,
             )
         } ?: return setupSkipped("The Steam account changed before the sync could start.")
         executionId = execution.progress.id
@@ -449,6 +451,7 @@ class SteamSyncWorker @AssistedInject constructor(
             setProgress(Data.Builder().putAll(operationData(
                 workId, accountGeneration ?: 0L, operationPhase, operationCounts,
                 executionId = executionId, startedAt = executionStartedAt,
+                attempt = runAttemptCount,
             ))
                 .putString(KEY_POLL_RESULT, POLL_FAILED).putString(KEY_POLL_OPERATION, operationId).build())
             persistOperationReport(OperationStatus.RETRYING)
@@ -671,6 +674,7 @@ class SteamSyncWorker @AssistedInject constructor(
                         workId, generation, startedAt,
                         OperationProgress(id, status, operationPhase, operationCounts, operationUpdated),
                         operationSource,
+                        attempt = runAttemptCount,
                     )
                     if (interrupted) {
                         operationReports.saveInterrupted(OperationChannel.STEAM, report) {
@@ -966,6 +970,7 @@ class SteamSyncWorker @AssistedInject constructor(
         return Result.success(Data.Builder().putAll(operationData(
             workId, accountGeneration ?: 0L, operationPhase, operationCounts,
             failed = true, executionId = executionId, startedAt = executionStartedAt,
+            attempt = runAttemptCount,
         )).putAll(workDataOf(
                 KEY_SETUP_FAILURE to reason,
                 KEY_POLL_RESULT to POLL_NOT_PERFORMED,
@@ -979,6 +984,7 @@ class SteamSyncWorker @AssistedInject constructor(
         return Result.success(Data.Builder().putAll(operationData(
             workId, accountGeneration ?: 0L, operationPhase, operationCounts,
             updated = operationUpdated, executionId = executionId, startedAt = executionStartedAt,
+            attempt = runAttemptCount,
             partial = partial,
         )).putString(KEY_POLL_RESULT, POLL_COMMITTED)
             .putString(KEY_POLL_OPERATION, committedOperationId).build())

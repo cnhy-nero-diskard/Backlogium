@@ -18,6 +18,7 @@ internal const val OP_UPDATED = "operation_updated"
 internal const val OP_FAILURE = "operation_failure"
 internal const val OP_EXECUTION_ID = "operation_execution_id"
 internal const val OP_STARTED_AT = "operation_started_at"
+internal const val OP_ATTEMPT = "operation_attempt"
 internal const val OP_PARTIAL = "operation_partial"
 
 internal fun operationData(
@@ -29,6 +30,7 @@ internal fun operationData(
     failed: Boolean = false,
     executionId: String? = null,
     startedAt: Long? = null,
+    attempt: Int = 0,
     partial: Boolean = false,
 ): Data = Data.Builder()
     .putString(OP_ID, id)
@@ -41,6 +43,7 @@ internal fun operationData(
     .putInt(OP_UPDATED, updated ?: -1)
     .putBoolean(OP_FAILURE, failed)
     .putBoolean(OP_PARTIAL, partial)
+    .putInt(OP_ATTEMPT, attempt)
     .apply {
         executionId?.let { putString(OP_EXECUTION_ID, it) }
         startedAt?.let { putLong(OP_STARTED_AT, it) }
@@ -130,7 +133,11 @@ private fun workOperation(
     val live = operationProgress(info, generation)
     val data = info.operationData()
     val payloadExecutionId = data.getString(OP_EXECUTION_ID)
-    val reportMatchesLive = report != null && (payloadExecutionId == null || payloadExecutionId == report.progress.id)
+    val payloadStartedAt = data.getLong(OP_STARTED_AT, -1L).takeIf { it >= 0L }
+    val reportMatchesLive = report != null && (
+        payloadExecutionId == null || payloadExecutionId == report.progress.id ||
+            (payloadStartedAt != null && report.startedAt > payloadStartedAt)
+        )
     val requestedAt = operationStartedAt(info) ?: operationRequestedAt(info) ?: 0L
 
     fun fromReport(status: OperationStatus) = report?.let {
@@ -144,19 +151,18 @@ private fun workOperation(
         val matchingReport = report?.takeIf { reportMatchesLive }
         if (matchingReport != null) {
             val stored = matchingReport.progress
-            val phase = listOfNotNull(stored.phase, progress.phase).maxByOrNull { it.ordinal }
-            return TimedOperation(
-                stored.copy(
-                    status = progress.status,
-                    phase = phase,
-                    counts = progress.counts ?: stored.counts,
-                    updated = progress.updated ?: stored.updated,
-                    workId = info.id.toString(),
-                ),
-                matchingReport.startedAt,
-            )
+            val liveAttempt = data.getInt(OP_ATTEMPT, -1)
+            val reportStartedLater = payloadStartedAt != null && matchingReport.startedAt > payloadStartedAt
+            val liveHasSnapshot = progress.phase != null || progress.counts != null || progress.updated != null
+            val storedHasSnapshot = stored.phase != null || stored.counts != null || stored.updated != null
+            val reportIsNewer = reportStartedLater || liveAttempt < matchingReport.attempt ||
+                (liveAttempt == matchingReport.attempt &&
+                    (matchingReport.interrupted || (!liveHasSnapshot && storedHasSnapshot)))
+            if (reportIsNewer) {
+                return TimedOperation(stored.copy(status = progress.status, workId = info.id.toString()), matchingReport.startedAt)
+            }
         }
-        return TimedOperation(progress.copy(workId = info.id.toString()), requestedAt)
+        return TimedOperation(progress.copy(workId = info.id.toString()), matchingReport?.startedAt ?: requestedAt)
     }
 
     return when (info.state) {

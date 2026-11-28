@@ -226,14 +226,15 @@ class OperationReportingTest {
         assertEquals(counts, stored.progress.counts)
         assertEquals(4, stored.progress.updated)
         assertEquals(OperationStatus.RUNNING, stored.progress.status)
+        assertTrue(stored.interrupted)
 
-        val newerCounts = OperationCounts(processed = 7, total = 10, failed = 1)
-        val newerWorkProgress = operationData(
-            workId.toString(), 3, OperationPhase.ACHIEVEMENTS, newerCounts, updated = 5,
+        val retainedCounts = OperationCounts(processed = 5, total = 10, failed = 1)
+        val retainedWorkProgress = operationData(
+            workId.toString(), 3, OperationPhase.PREPARING, retainedCounts, updated = 3,
             executionId = begun.progress.id, startedAt = begun.startedAt,
         )
         val waitingWithProgress = WorkInfo(
-            workId, WorkInfo.State.ENQUEUED, setOf("setup-account:3"), progress = newerWorkProgress,
+            workId, WorkInfo.State.ENQUEUED, setOf("setup-account:3"), progress = retainedWorkProgress,
             runAttemptCount = 2, stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
         )
         val waitingWithClearedProgress = WorkInfo(
@@ -241,7 +242,7 @@ class OperationReportingTest {
             runAttemptCount = 2, stopReason = WorkInfo.STOP_REASON_CONSTRAINT_CONNECTIVITY,
         )
         listOf(
-            waitingWithProgress to (newerCounts to 5),
+            waitingWithProgress to (counts to 4),
             waitingWithClearedProgress to (counts to 4),
         ).forEach { (info, expected) ->
             val projected = periodicOperation(info, 3, stored)?.progress
@@ -272,6 +273,68 @@ class OperationReportingTest {
         assertEquals(begun.progress.id, recoveredCancellation?.id)
         assertEquals(OperationPhase.ACHIEVEMENTS, recoveredCancellation?.phase)
         assertEquals(counts, recoveredCancellation?.counts)
+    }
+
+    @Test fun `a later retry attempt or execution resets progress instead of inheriting an old snapshot`() = runTest {
+        val reports = OperationReportStore(RuntimeEnvironment.getApplication())
+        reports.clearForTest()
+        val workId = id.toString()
+        val first = reports.begin(OperationChannel.STEAM, OperationSource.MANUAL, workId, 3, retry = false, attempt = 0)
+        val interruptedCounts = OperationCounts(6, 10)
+        reports.saveInterrupted(
+            OperationChannel.STEAM,
+            first.copy(progress = first.progress.copy(
+                phase = OperationPhase.ACHIEVEMENTS,
+                counts = interruptedCounts,
+                updated = 4,
+            )),
+        ) { true }
+
+        val retry = reports.begin(OperationChannel.STEAM, OperationSource.MANUAL, workId, 3, retry = true, attempt = 1)
+        val oldAttempt = WorkInfo(
+            id,
+            WorkInfo.State.RUNNING,
+            setOf("setup-account:3"),
+            progress = operationData(
+                id.toString(), 3, OperationPhase.ACHIEVEMENTS, interruptedCounts,
+                updated = 4, executionId = retry.progress.id, startedAt = retry.startedAt, attempt = 0,
+            ),
+            runAttemptCount = 1,
+        )
+
+        val reset = oneTimeOperation(oldAttempt, 3, retry)?.progress
+        assertEquals(OperationPhase.PREPARING, reset?.phase)
+        assertNull(reset?.counts)
+        assertNull(reset?.updated)
+
+        val currentCounts = OperationCounts(1, 10)
+        val currentAttempt = WorkInfo(
+            id,
+            WorkInfo.State.RUNNING,
+            setOf("setup-account:3"),
+            progress = operationData(
+                id.toString(), 3, OperationPhase.ACHIEVEMENTS, currentCounts,
+                executionId = retry.progress.id, startedAt = retry.startedAt, attempt = 1,
+            ),
+            runAttemptCount = 1,
+        )
+        assertEquals(currentCounts, oneTimeOperation(currentAttempt, 3, retry)?.progress?.counts)
+
+        val restarted = reports.begin(OperationChannel.STEAM, OperationSource.MANUAL, workId, 3, retry = false, attempt = 0)
+        val oldExecution = WorkInfo(
+            id,
+            WorkInfo.State.RUNNING,
+            setOf("setup-account:3"),
+            progress = operationData(
+                id.toString(), 3, OperationPhase.ACHIEVEMENTS, interruptedCounts,
+                executionId = first.progress.id, startedAt = first.startedAt, attempt = 0,
+            ),
+            runAttemptCount = 0,
+        )
+        val resetExecution = oneTimeOperation(oldExecution, 3, restarted)?.progress
+        assertEquals(restarted.progress.id, resetExecution?.id)
+        assertEquals(OperationPhase.PREPARING, resetExecution?.phase)
+        assertNull(resetExecution?.counts)
     }
 
     @Test fun `cancelled periodic work reconciles its stored running report`() {

@@ -7,6 +7,7 @@ import com.example.backlogium.domain.OperationStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -123,5 +124,29 @@ class OperationReportStoreTest {
         assertEquals(replacement.progress.id, current.progress.id)
         assertEquals(OperationPhase.PREPARING, current.progress.phase)
         assertEquals(null, current.progress.counts)
+    }
+
+    @Test fun `a late interrupted snapshot cannot replace the reset from a later retry attempt`() = runTest {
+        store.clearForTest()
+        val workId = UUID.randomUUID().toString()
+        val first = store.begin(OperationChannel.STEAM, OperationSource.MANUAL,
+            workId, generation = 4, retry = false, attempt = 0)
+        val retry = store.begin(OperationChannel.STEAM, OperationSource.MANUAL,
+            workId, generation = 4, retry = true, attempt = 1)
+
+        store.saveInterrupted(
+            OperationChannel.STEAM,
+            first.copy(progress = first.progress.copy(
+                phase = OperationPhase.ACHIEVEMENTS,
+                counts = OperationCounts(6, 10),
+            )),
+        ) { true }
+
+        val current = store.observe(OperationChannel.STEAM).first().single()
+        assertEquals(retry.progress.id, current.progress.id)
+        assertEquals(1, current.attempt)
+        assertEquals(OperationPhase.PREPARING, current.progress.phase)
+        assertEquals(null, current.progress.counts)
+        assertFalse(current.interrupted)
     }
 }

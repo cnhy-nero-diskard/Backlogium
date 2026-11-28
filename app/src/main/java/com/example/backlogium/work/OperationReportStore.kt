@@ -2,6 +2,7 @@ package com.example.backlogium.work
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -34,6 +35,8 @@ internal data class StoredOperationReport(
     val startedAt: Long,
     val progress: OperationProgress,
     val source: OperationSource = OperationSource.PERIODIC,
+    val attempt: Int = 0,
+    val interrupted: Boolean = false,
 )
 
 /** Keeps one-time and periodic executions independent from WorkManager's sleeping requests. */
@@ -56,6 +59,7 @@ class OperationReportStore @Inject constructor(
         workId: String,
         generation: Long,
         retry: Boolean,
+        attempt: Int = 0,
     ): StoredOperationReport {
         var result: StoredOperationReport? = null
         store.edit { prefs ->
@@ -78,6 +82,7 @@ class OperationReportStore @Inject constructor(
                 startedAt = startedAt,
                 progress = OperationProgress(executionId, OperationStatus.RUNNING, OperationPhase.PREPARING),
                 source = source,
+                attempt = attempt,
             )
             prefs.write(channel, result)
         }
@@ -92,7 +97,7 @@ class OperationReportStore @Inject constructor(
                 }
             if (prior == null || report.generation > prior.generation ||
                 (report.generation == prior.generation &&
-                    ((report.progress.id == prior.progress.id && prior.progress.active) ||
+                    ((report.attempt >= prior.attempt && report.progress.id == prior.progress.id && prior.progress.active) ||
                         report.startedAt > prior.startedAt))
             ) {
                 prefs.write(channel, report)
@@ -105,12 +110,16 @@ class OperationReportStore @Inject constructor(
         report: StoredOperationReport,
         isCurrent: suspend () -> Boolean,
     ) {
-        val snapshot = report.copy(progress = report.progress.copy(status = OperationStatus.RUNNING))
+        val snapshot = report.copy(
+            progress = report.progress.copy(status = OperationStatus.RUNNING),
+            interrupted = true,
+        )
         if (!isCurrent()) return
         store.edit { prefs ->
             val prior = prefs.report(channel, report.source)
             if (prior != null && prior.workId == report.workId && prior.generation == report.generation &&
-                prior.startedAt == report.startedAt && prior.progress.id == report.progress.id && prior.progress.active
+                prior.startedAt == report.startedAt && prior.progress.id == report.progress.id &&
+                prior.attempt == report.attempt && prior.progress.active
             ) {
                 prefs.write(channel, snapshot)
             }
@@ -129,6 +138,8 @@ private fun Preferences.report(channel: OperationChannel, source: OperationSourc
     val status = this[stringPreferencesKey("${prefix}_status")]?.let {
         OperationStatus.entries.firstOrNull { status -> status.name == it }
     } ?: return null
+    val attempt = this[intPreferencesKey("${prefix}_attempt")] ?: 0
+    val interrupted = this[booleanPreferencesKey("${prefix}_interrupted")] ?: false
     val phase = this[stringPreferencesKey("${prefix}_phase")]?.let { name ->
         OperationPhase.entries.firstOrNull { it.name == name }
     }
@@ -148,6 +159,8 @@ private fun Preferences.report(channel: OperationChannel, source: OperationSourc
         OperationProgress(executionId, status, phase, counts,
             (this[intPreferencesKey("${prefix}_updated")] ?: -1).takeIf { it >= 0 }),
         source,
+        attempt,
+        interrupted,
     )
 }
 
@@ -163,6 +176,8 @@ private fun androidx.datastore.preferences.core.MutablePreferences.write(
     this[longPreferencesKey("${prefix}_generation")] = report.generation
     this[longPreferencesKey("${prefix}_started_at")] = report.startedAt
     this[stringPreferencesKey("${prefix}_status")] = progress.status.name
+    this[intPreferencesKey("${prefix}_attempt")] = report.attempt
+    this[booleanPreferencesKey("${prefix}_interrupted")] = report.interrupted
     progress.phase?.let { this[stringPreferencesKey("${prefix}_phase")] = it.name }
         ?: remove(stringPreferencesKey("${prefix}_phase"))
     val counts = progress.counts

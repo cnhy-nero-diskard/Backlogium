@@ -68,14 +68,15 @@ initial snapshots, reconnection, subscription cleanup and legacy progress payloa
   this change. At that checkpoint no post-fix GitHub run had completed; the next
   remote result is recorded below.
 
-## Latest review checkpoint
+## Exact-head review checkpoint and local resolution
 
-- Confirmed the PR branch head is `8583300d73d97b9cad080d4a2a86e8fc01cb1cd8`.
-  CI run [#854](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/46041440149)
-  completed successfully on that exact head, superseding the earlier screenshot
-  failures.
-- The focused operation-reporting, report-store, scheduler, and sync-worker JVM
-  suites passed locally after the interruption-reporting changes:
+- Confirmed the PR head at the review checkpoint was
+  `dfaee38dc2d8905fef548caf0671e158929a215d`. CI run
+  [#855](https://github.com/cnhy-nero-diskard/Backlogium/actions/runs/46044815962)
+  completed successfully on that exact head. This run predates the local review
+  resolution below and is not claimed as remote validation for those edits.
+- Focused operation-reporting, report-store, scheduler, and sync-worker JVM suites
+  passed after the resolution:
   ```sh
   ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest \
     --tests 'com.example.backlogium.work.OperationReportingTest' \
@@ -83,18 +84,17 @@ initial snapshots, reconnection, subscription cleanup and legacy progress payloa
     --tests 'com.example.backlogium.work.SyncSchedulerTest' \
     --tests 'com.example.backlogium.work.SteamSyncLibraryEvidenceWorkerTest' --no-daemon
   ```
-  This includes production Steam and reconciliation worker interruption after
-  measured achievement progress, retained/cleared WorkManager progress, explicit
-  cancellation projection, execution identity fencing, periodic/manual overlap,
-  and removed/replaced work.
-- Full local JVM validation also passed:
+  Coverage includes coherent stored 6/10 versus retained live 5/10, cleared live
+  progress, retry-attempt reset, and exact-ID Setup projection after cancellation
+  and a fresh scheduler subscription.
+- Full local JVM validation passed:
   ```sh
-  ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:testDebugUnitTest :gamification:test --no-daemon
+  ANDROID_HOME=/Users/scans/Library/Android/sdk ./gradlew :app:assembleDebug :app:testDebugUnitTest :gamification:test --no-daemon
   ```
 - `openspec validate issue161-enhancement-sync-progress-and-offline-feedback-minor --strict`
   passed.
-- The review-resolution edits remain uncommitted and unpublished as required. CI
-  #854 predates these local edits and is not claimed as remote validation for them.
+- The review-resolution edits remain uncommitted and unpublished as required; no
+  CI run is claimed for the changed working tree.
 
 ## Existing baseline drift
 

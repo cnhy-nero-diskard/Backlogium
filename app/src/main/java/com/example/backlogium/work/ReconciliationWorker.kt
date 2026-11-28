@@ -65,7 +65,7 @@ class ReconciliationWorker @AssistedInject constructor(
                 if (!isAccountActive(admitted.generation, admitted.credentials?.steamId)) return@withAccountState null
                 val report = operationReports.begin(
                     OperationChannel.ACHIEVEMENTS, operationSource, id.toString(), admitted.generation,
-                    retry = runAttemptCount > 0,
+                    retry = runAttemptCount > 0, attempt = runAttemptCount,
                 )
                 report to diagnostics.begin(
                     trigger = if (inputData.getBoolean(KEY_FORCE, false)) "reconciliation:forced" else "reconciliation:scheduled",
@@ -80,7 +80,7 @@ class ReconciliationWorker @AssistedInject constructor(
         if (creds == null) {
             val data = operationData(
                 id.toString(), admitted.generation, OperationPhase.PREPARING, failed = true,
-                executionId = executionId, startedAt = executionStartedAt,
+                executionId = executionId, startedAt = executionStartedAt, attempt = runAttemptCount,
             )
             saveReport(OperationStatus.FAILED, OperationPhase.PREPARING, null, 0)
             return Result.success(data)
@@ -101,6 +101,7 @@ class ReconciliationWorker @AssistedInject constructor(
                 .putAll(operationData(
                     id.toString(), admitted.generation, OperationPhase.PREPARING,
                     executionId = executionId, startedAt = executionStartedAt,
+                    attempt = runAttemptCount,
                 ))
                 .putBoolean(KEY_RUNNING, true).build())
             val fetched = achievementRepository.fetchReconciliationGames(
@@ -132,6 +133,7 @@ class ReconciliationWorker @AssistedInject constructor(
                             .putAll(operationData(
                                 id.toString(), admitted.generation, OperationPhase.ACHIEVEMENTS,
                                 current, updated, executionId = executionId, startedAt = executionStartedAt,
+                                attempt = runAttemptCount,
                             ))
                             .putBoolean(KEY_RUNNING, true).build())
                     }
@@ -156,6 +158,7 @@ class ReconciliationWorker @AssistedInject constructor(
                 .putAll(operationData(
                     id.toString(), admitted.generation, OperationPhase.ACHIEVEMENTS,
                     finalCounts, updated, executionId = executionId, startedAt = executionStartedAt,
+                    attempt = runAttemptCount,
                     partial = partial,
                 ))
                 .putInt(KEY_REFRESHED, fetched.refreshed).putInt(KEY_TOTAL, fetched.total).build())
@@ -205,6 +208,7 @@ class ReconciliationWorker @AssistedInject constructor(
         operationData(
             id.toString(), expectedGeneration ?: -1L, OperationPhase.PREPARING,
             failed = true, executionId = "denied:${id}", startedAt = System.currentTimeMillis(),
+            attempt = runAttemptCount,
         ),
     )
 
@@ -230,6 +234,7 @@ class ReconciliationWorker @AssistedInject constructor(
                         id.toString(), reportGeneration, startedAt,
                         OperationProgress(reportId, status, phase, counts, updated),
                         operationSource,
+                        attempt = runAttemptCount,
                     )
                     if (interrupted) {
                         operationReports.saveInterrupted(OperationChannel.ACHIEVEMENTS, report) {

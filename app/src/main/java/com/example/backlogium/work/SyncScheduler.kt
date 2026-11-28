@@ -130,8 +130,17 @@ class SyncScheduler @Inject constructor(
     fun operationForWork(workId: String?): Flow<com.example.backlogium.domain.OperationProgress?> {
         val id = workId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
             ?: return kotlinx.coroutines.flow.flowOf(null)
-        return combine(workManager.getWorkInfoByIdFlow(id), accountMarker.activeGeneration) { info, generation ->
-            if (info != null && generation != null) operationProgress(info, generation) else null
+        return combine(
+            workManager.getWorkInfoByIdFlow(id),
+            accountMarker.activeGeneration,
+            operationReports.observe(OperationChannel.STEAM),
+        ) { info, generation, stored ->
+            if (info == null || generation == null) return@combine null
+            val report = stored.firstOrNull {
+                it.workId == info.id.toString() &&
+                    (it.source == OperationSource.MANUAL || it.source == OperationSource.LEGACY)
+            }
+            oneTimeOperation(info, generation, report)?.progress
         }.distinctUntilChanged()
     }
 
