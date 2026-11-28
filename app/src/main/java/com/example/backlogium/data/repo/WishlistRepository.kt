@@ -8,6 +8,7 @@ import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.remote.SteamIconMapper
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.exactExpiryTicks
+import com.example.backlogium.domain.normalizedPriceCurrency
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,8 +36,7 @@ data class WishlistGame(
 /**
  * What is known about a wishlisted game's price, and how sure the app is of it.
  *
- * The four states are distinct because the section has to render them differently and none of
- * them may be shown as a zero, a dash, or a blank — each of which reads as a price.
+ * An observed price keeps its display text even when it lacks the evidence needed to sort it.
  */
 sealed interface WishlistPrice {
 
@@ -52,7 +52,18 @@ sealed interface WishlistPrice {
         val discountPercent: Int,
         val observedAt: Long,
         val current: Boolean,
-    ) : WishlistPrice
+        val finalMinorUnits: Long? = null,
+        val currency: String? = null,
+        val explicitZero: Boolean = false,
+    ) : WishlistPrice {
+        internal val rankablePrice: RankableWishlistPrice?
+            get() {
+                val amount = finalMinorUnits ?: return null
+                if (formatted.isBlank() || amount < 0 || (amount == 0L && !explicitZero)) return null
+                val code = normalizedPriceCurrency(currency) ?: return null
+                return RankableWishlistPrice(code, amount)
+            }
+    }
 
     /**
      * Steam answered, and this app has no price. Free-to-play, unreleased, and not-sold-in-region
@@ -64,6 +75,8 @@ sealed interface WishlistPrice {
     /** No observation has ever been recorded, so the app claims nothing at all. */
     data object NeverObserved : WishlistPrice
 }
+
+internal data class RankableWishlistPrice(val currency: String, val minorUnits: Long)
 
 /**
  * A discount the app is currently sure of: observed inside the freshness window and still running
@@ -305,6 +318,7 @@ class WishlistRepository @Inject constructor(
                         discountPercent = price.discountPercent,
                         formatted = price.formatted,
                         listFormatted = price.listFormatted,
+                        explicitZero = price.explicitZero,
                     )
                     // An observed absence, recorded with its date. Nothing is written for the ids
                     // in `batch.unresolved`: a failed chunk is not an observation.
@@ -351,6 +365,9 @@ class WishlistRepository @Inject constructor(
             discountPercent = discountPercent ?: 0,
             observedAt = observedAt,
             current = now - observedAt <= FRESHNESS_WINDOW_MILLIS,
+            finalMinorUnits = finalMinorUnits,
+            currency = currency,
+            explicitZero = explicitZero,
         )
     }
 

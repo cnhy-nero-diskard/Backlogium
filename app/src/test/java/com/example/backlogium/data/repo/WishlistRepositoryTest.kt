@@ -5,6 +5,7 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
+import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
@@ -22,6 +23,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,7 +53,7 @@ class WishlistRepositoryTest {
     private fun repository(
         steamId: String? = "76561197979911851",
         api: FakeWishlistApi = FakeWishlistApi(),
-        priceApi: FakePriceApi = FakePriceApi { _, _ -> Response.success(JsonObject(emptyMap())) },
+        priceApi: SteamStoreApi = FakePriceApi { _, _ -> Response.success(JsonObject(emptyMap())) },
         time: TimeProvider = clock,
     ) = WishlistRepository(
         wishlistDao = db.wishlistDao(),
@@ -135,11 +137,11 @@ class WishlistRepositoryTest {
 
         val byId = repository.wishlist.first().associateBy { it.appId }
         assertEquals(
-            WishlistPrice.Observed("P2,099.00", null, 0, NOW, current = true),
+            WishlistPrice.Observed("P2,099.00", null, 0, NOW, current = true, finalMinorUnits = 209900, currency = "PHP"),
             byId.getValue(1L).price,
         )
         assertEquals(
-            WishlistPrice.Observed("P2,099.00", null, 0, stale, current = false),
+            WishlistPrice.Observed("P2,099.00", null, 0, stale, current = false, finalMinorUnits = 209900, currency = "PHP"),
             byId.getValue(2L).price,
         )
     }
@@ -171,7 +173,7 @@ class WishlistRepositoryTest {
         )
 
         assertEquals(
-            WishlistPrice.Observed("P849.75", "P3,399.00", 75, NOW, current = true),
+            WishlistPrice.Observed("P849.75", "P3,399.00", 75, NOW, current = true, finalMinorUnits = 209900, currency = "PHP"),
             repository.wishlist.first().single().price,
         )
     }
@@ -207,7 +209,7 @@ class WishlistRepositoryTest {
         val entry = repo.wishlist.first().single()
         assertEquals(292030L, entry.appId)
         assertEquals("The Witcher 3: Wild Hunt", entry.name)
-        assertEquals(WishlistPrice.Observed("P2,099.00", null, 0, NOW, current = true), entry.price)
+        assertEquals(WishlistPrice.Observed("P2,099.00", null, 0, NOW, current = true, finalMinorUnits = 209900, currency = "PHP"), entry.price)
         assertEquals(WishlistAvailability.AVAILABLE, repo.availability.value)
     }
 
@@ -311,9 +313,61 @@ class WishlistRepositoryTest {
         assertEquals(1L, entry.appId)
         // Retained with its original date, never cleared and never re-dated to now.
         assertEquals(
-            WishlistPrice.Observed("P2,099.00", null, 0, observedAt, current = false),
+            WishlistPrice.Observed("P2,099.00", null, 0, observedAt, current = false, finalMinorUnits = 209900, currency = "PHP"),
             entry.price,
         )
+    }
+
+    @Test fun legacyPositiveAndZeroKeepTheirDisplayAndDateButOnlyPositiveRanks() = runBlocking {
+        val observedAt = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
+        db.wishlistDao().upsertItems(listOf(item(appId = 1), item(appId = 2)))
+        db.wishlistDao().insertObservations(
+            listOf(
+                price(appId = 1, at = observedAt).copy(currency = " php "),
+                price(appId = 2, at = observedAt, formatted = "P0.00").copy(finalMinorUnits = 0L),
+            ),
+        )
+
+        val prices = repository.wishlist.first().associate { it.appId to it.price as WishlistPrice.Observed }
+
+        assertEquals(RankableWishlistPrice("PHP", 209900L), prices.getValue(1L).rankablePrice)
+        val zero = prices.getValue(2L)
+        assertEquals("P0.00", zero.formatted)
+        assertEquals(observedAt, zero.observedAt)
+        assertEquals(false, zero.current)
+        assertNull(zero.rankablePrice)
+    }
+
+    @Test fun partialJsonRefreshAppendsOnlyAnswersAndUsesTheirLatestSortEvidence() = runBlocking {
+        val earlier = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
+        val appIds = (1L..5L).toList()
+        db.wishlistDao().upsertItems(appIds.map { item(appId = it) })
+        db.wishlistDao().insertObservations(appIds.map { price(appId = it, at = earlier) })
+        val repo = repository(
+            api = FakeWishlistApi(wishlist = { wishlistJson(NOT_READABLE) }),
+            priceApi = storePriceFixtureApi { PARTIAL_PRICES },
+        )
+
+        assertEquals(WishlistRefresh.REFRESHED, repo.refresh())
+
+        val prices = repo.wishlist.first().associate { it.appId to it.price }
+        val formattedOnly = prices.getValue(1L) as WishlistPrice.Observed
+        assertEquals("Display only", formattedOnly.formatted)
+        assertEquals(NOW, formattedOnly.observedAt)
+        assertEquals(true, formattedOnly.current)
+        assertNull(formattedOnly.finalMinorUnits)
+        assertNull(formattedOnly.rankablePrice)
+        val valid = prices.getValue(2L) as WishlistPrice.Observed
+        assertEquals(NOW, valid.observedAt)
+        assertEquals(RankableWishlistPrice("USD", 900L), valid.rankablePrice)
+        val unresolved = prices.getValue(3L) as WishlistPrice.Observed
+        assertEquals(earlier, unresolved.observedAt)
+        assertEquals(RankableWishlistPrice("PHP", 209900L), unresolved.rankablePrice)
+        assertEquals(WishlistPrice.Unavailable(NOW), prices.getValue(4L))
+        val zero = prices.getValue(5L) as WishlistPrice.Observed
+        assertEquals(true, zero.explicitZero)
+        assertEquals(RankableWishlistPrice("USD", 0L), zero.rankablePrice)
+        assertEquals(9, observationCount())
     }
 
     @Test fun aFailedChunkLeavesOnlyItsOwnPricesAtTheirPreviousValues() = runBlocking {
@@ -340,7 +394,7 @@ class WishlistRepositoryTest {
         assertEquals(NOW, (byId.getValue(1L).price as WishlistPrice.Observed).observedAt)
         // The failed chunk recorded nothing, so this app keeps the price and date it already had.
         assertEquals(
-            WishlistPrice.Observed("P1.00", null, 0, NOW - 5_000, current = true),
+            WishlistPrice.Observed("P1.00", null, 0, NOW - 5_000, current = true, finalMinorUnits = 209900, currency = "PHP"),
             byId.getValue(101L).price,
         )
     }
@@ -406,7 +460,7 @@ class WishlistRepositoryTest {
         assertEquals(true, (states[0].first().price as WishlistPrice.Observed).current)
         assertEquals(listOf(2L, 1L), states[1].map { it.appId })
         assertEquals(
-            WishlistPrice.Observed("P2,099.00", null, 50, NOW, current = false),
+            WishlistPrice.Observed("P2,099.00", null, 50, NOW, current = false, finalMinorUnits = 209900, currency = "PHP"),
             states[1].last().price,
         )
     }
@@ -424,7 +478,7 @@ class WishlistRepositoryTest {
         repo.refresh()
 
         assertEquals(
-            WishlistPrice.Observed("P1.00", null, 0, NOW - 5_000, current = true),
+            WishlistPrice.Observed("P1.00", null, 0, NOW - 5_000, current = true, finalMinorUnits = 209900, currency = "PHP"),
             repo.wishlist.first().single().price,
         )
         assertEquals(1, observationCount())
@@ -562,6 +616,16 @@ class WishlistRepositoryTest {
         const val STORE_ITEMS_WITH_OWNED_ENTRY = """{"response":{"store_items":[{"id":1,"appid":1,"success":1,"visible":true,"name":"Owned game"},{"id":2,"appid":2,"success":1,"visible":true,"name":"Wanted game"}]}}"""
 
         const val PRICED = """{"292030":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}}}"""
+
+        val PARTIAL_PRICES = """
+            {
+              "1":{"success":true,"data":{"price_overview":{"currency":"USD","final":{},"final_formatted":"Display only"}}},
+              "2":{"success":true,"data":{"price_overview":{"currency":" usd ","final":900,"final_formatted":"The new price"}}},
+              "3":{"success":true,"data":{"price_overview":{"currency":"USD","final":0}}},
+              "4":{"success":true,"data":[]},
+              "5":{"success":true,"data":{"price_overview":{"currency":"USD","final":0,"final_formatted":"Zero"}}}
+            }
+        """.trimIndent()
 
         const val EMPTY_OBJECT_DATA = """{"1":{"success":true,"data":{}}}"""
 

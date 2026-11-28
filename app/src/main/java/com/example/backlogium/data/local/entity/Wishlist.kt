@@ -1,5 +1,6 @@
 package com.example.backlogium.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -61,4 +62,6 @@ data class WishlistPriceObservation(
     val formatted: String? = null,
     /** The struck-through list price, present only while a discount is active. */
     val listFormatted: String? = null,
+    /** Legacy zero defaults could mean the amount was absent from the response. */
+    @ColumnInfo(defaultValue = "0") val explicitZero: Boolean = false,
 )

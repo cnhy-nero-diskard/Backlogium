@@ -131,7 +131,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 57,
+    version = 58,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -187,6 +187,14 @@ abstract class BacklogiumDatabase : RoomDatabase() {
 
         val MIGRATION_56_57 = object : Migration(56, 57) {
             override fun migrate(db: SupportSQLiteDatabase) = DeadlineEvidenceSchema.migrateModeBoundaries(db)
+        }
+
+        val MIGRATION_57_58 = object : Migration(57, 58) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE wishlist_price_observations ADD COLUMN explicitZero INTEGER NOT NULL DEFAULT 0",
+                )
+            }
         }
 
         val MIGRATION_53_54 = object : Migration(53, 54) {

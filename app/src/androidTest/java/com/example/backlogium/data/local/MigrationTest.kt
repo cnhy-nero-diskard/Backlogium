@@ -112,7 +112,58 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_54_55,
         BacklogiumDatabase.MIGRATION_55_56,
         BacklogiumDatabase.MIGRATION_56_57,
+        BacklogiumDatabase.MIGRATION_57_58,
     )
+
+    @Test
+    fun v57ToV58PreservesWishlistHistoryWithoutAssumingZeroWasExplicit() {
+        val name = "wishlist-price-provenance-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 57).use { db ->
+                db.execSQL(
+                    "INSERT INTO wishlist_price_observations " +
+                        "(id, appId, observedAt, currency, finalMinorUnits, formatted) VALUES " +
+                        "(1, 42, 100, 'USD', 900, 'Old price'), " +
+                        "(2, 42, 200, 'USD', 800, 'New price'), " +
+                        "(3, 43, 300, 'USD', 0, 'Zero price'), " +
+                        "(4, 44, 400, NULL, NULL, NULL)",
+                )
+            }
+
+            migrationTestHelper.runMigrationsAndValidate(
+                name, 58, true, BacklogiumDatabase.MIGRATION_57_58,
+            ).use { db ->
+                db.query(
+                    "SELECT id, appId, observedAt, currency, finalMinorUnits, formatted, explicitZero " +
+                        "FROM wishlist_price_observations ORDER BY id",
+                ).use { cursor ->
+                    for ((id, amount, display) in listOf(
+                        Triple(1L, 900L, "Old price"),
+                        Triple(2L, 800L, "New price"),
+                        Triple(3L, 0L, "Zero price"),
+                    )) {
+                        assertTrue(cursor.moveToNext())
+                        assertEquals(id, cursor.getLong(0))
+                        assertEquals(if (id == 3L) 43L else 42L, cursor.getLong(1))
+                        assertEquals(id * 100L, cursor.getLong(2))
+                        assertEquals("USD", cursor.getString(3))
+                        assertEquals(amount, cursor.getLong(4))
+                        assertEquals(display, cursor.getString(5))
+                        assertEquals(0, cursor.getInt(6))
+                    }
+                    assertTrue(cursor.moveToNext())
+                    assertEquals(4L, cursor.getLong(0))
+                    assertEquals(400L, cursor.getLong(2))
+                    assertTrue(cursor.isNull(4))
+                    assertTrue(cursor.isNull(5))
+                    assertEquals(0, cursor.getInt(6))
+                    assertFalse(cursor.moveToNext())
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
 
     @Test
     fun v55ToV56AddsDeadlineProvenanceAndSnapshotsOnlyActiveDeadlines() {
@@ -2221,6 +2272,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_54_55,
                 BacklogiumDatabase.MIGRATION_55_56,
                 BacklogiumDatabase.MIGRATION_56_57,
+                BacklogiumDatabase.MIGRATION_57_58,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())
