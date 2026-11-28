@@ -7,7 +7,7 @@ Players checking their wishlist cannot quickly find what they can afford. [Issue
 ## What Changes
 
 - Add price low to high and price high to low alongside the existing deals-first order in the expanded wishlist.
-- Sort by Steam's recorded payable amount within each currency. Keep dated retained prices available offline, and distinguish an explicit zero price from an unavailable amount.
+- Sort by Steam's recorded payable amount within each currency. Keep dated retained prices available offline, and distinguish sortable prices, including explicit zero, from displayable prices with incomplete ranking evidence and unavailable prices.
 - Evaluate sale-deadline sources against storefront, offer identity, support, and request-volume requirements. Ship sorting independently and use the feasibility result to decide whether to propose a countdown follow-up.
 
 ## Capabilities
