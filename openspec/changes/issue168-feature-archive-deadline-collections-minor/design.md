@@ -16,7 +16,7 @@ Resolve the cutoff as the start of the following local date in the goal's saved 
 
 ### Capture deadline evidence before it becomes unrecoverable
 
-Retain effective goal/membership revisions and estimate evidence needed by unarchived deadlines. Reuse date-scoped playtime and supported cumulative observations at the cutoff where coverage is adequate. Preserve provenance and surface missing evidence. Avoid substituting current HLTB values, undated minutes or post-deadline play for the deadline record. Legacy collections may archive with an undetermined outcome.
+Retain effective goal/membership revisions and estimate evidence needed by unarchived deadlines. Reuse date-scoped playtime and supported cumulative observations at the cutoff where coverage is adequate. Keep exact quantities distinct from bounds: a trusted pre-cutoff Steam total is a lower bound, while a later total is an upper bound only when trusted observations are monotonic. Preserve provenance and surface missing evidence. Avoid substituting current HLTB values, undated minutes or post-deadline play as a lower bound or inferring exact remaining minutes from an interval. Legacy collections may archive with an undetermined outcome.
 
 ### Freeze cutoff membership, not current UI visibility
 

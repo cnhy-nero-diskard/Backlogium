@@ -6,12 +6,15 @@ import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.DeadlineEvidenceSchema
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.CollectionMember
+import com.example.backlogium.data.local.entity.DailyPlaytimeSnapshot
 import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.HltbData
 import com.example.backlogium.data.local.entity.HltbDatasetLength
 import com.example.backlogium.data.local.entity.HltbDatasetMapping
 import com.example.backlogium.data.local.entity.HltbDatasetState
 import com.example.backlogium.data.local.entity.HltbMatchStatus
+import com.example.backlogium.data.local.entity.PlayerProfile
+import com.example.backlogium.data.local.entity.RecoverySnapshotClassifications
 import com.example.backlogium.data.local.entity.Session
 import com.example.backlogium.domain.CollectionMembershipState
 import com.example.backlogium.domain.CollectionMode
@@ -78,6 +81,97 @@ class DeadlineArchiveEvidenceTest {
         assertEquals(2, result.members.single().sessionPlay?.sessionCount)
         assertEquals(0L, result.members.single().remainingMinutes)
         assertFalse(DeadlineEvidenceGap.PLAYTIME in result.gaps)
+    }
+
+    @Test
+    fun steamLowerBoundBeforeCutoffProvesMetDespiteIncreasingLaterTotalAndRoundTripsWhenFrozen() = runBlocking {
+        val id = ownedDeadline(appId = 14, estimate = 100)
+        steamSnapshot(14, targetDate, 120, cutoff - 1_000)
+        steamSnapshot(14, "2026-01-02", 150, cutoff + 1_000)
+        time.now = cutoff + 2_000
+
+        val preview = requireNotNull(archives.preview(id))
+        val member = preview.result.members.single()
+        assertEquals(DeadlineOutcome.ESTIMATED_MET, preview.result.outcome)
+        assertNull(member.play)
+        assertEquals(120L, member.playBounds?.lowerBoundMinutes)
+        assertEquals(150L, member.playBounds?.upperBoundMinutes)
+        assertEquals(0L, member.remainingMinutes)
+
+        val frozen = archives.confirm(preview)
+
+        assertEquals(frozen, database.deadlineArchiveDao().archives().single().toDomain())
+        assertEquals(120L, database.deadlineArchiveDao().archives().single().toDomain()
+            .members.single().playBounds?.lowerBoundMinutes)
+    }
+
+    @Test
+    fun steamBoundsStraddlingEstimateStayUndeterminedWithoutInventingRemainingMinutes() = runBlocking {
+        val id = ownedDeadline(appId = 15, estimate = 60)
+        steamSnapshot(15, targetDate, 20, cutoff - 1_000)
+        steamSnapshot(15, "2026-01-02", 80, cutoff + 1_000)
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+        val member = result.members.single()
+
+        assertEquals(DeadlineOutcome.UNDETERMINED, result.outcome)
+        assertNull(member.play)
+        assertEquals(20L, member.playBounds?.lowerBoundMinutes)
+        assertEquals(80L, member.playBounds?.upperBoundMinutes)
+        assertNull(member.remainingMinutes)
+        assertTrue(DeadlineEvidenceGap.PLAYTIME in result.gaps)
+    }
+
+    @Test
+    fun monotonicSteamUpperBoundBelowEstimateProvesShortfallWithoutExactRemainingMinutes() = runBlocking {
+        val id = ownedDeadline(appId = 18, estimate = 60)
+        steamSnapshot(18, targetDate, 20, cutoff - 1_000)
+        steamSnapshot(18, "2026-01-02", 30, cutoff + 1_000)
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+        val member = result.members.single()
+
+        assertEquals(DeadlineOutcome.ESTIMATED_NOT_MET, result.outcome)
+        assertNull(member.play)
+        assertEquals(20L, member.playBounds?.lowerBoundMinutes)
+        assertEquals(30L, member.playBounds?.upperBoundMinutes)
+        assertNull(member.remainingMinutes)
+        assertFalse(DeadlineEvidenceGap.PLAYTIME in result.gaps)
+    }
+
+    @Test
+    fun steamPreCutoffLowerBoundCanProveMetWithoutLaterObservation() = runBlocking {
+        val id = ownedDeadline(appId = 16, estimate = 100)
+        steamSnapshot(16, targetDate, 120, cutoff - 1_000)
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+        val member = result.members.single()
+
+        assertEquals(DeadlineOutcome.ESTIMATED_MET, result.outcome)
+        assertEquals(120L, member.playBounds?.lowerBoundMinutes)
+        assertNull(member.playBounds?.upperBoundMinutes)
+        assertNull(member.play)
+    }
+
+    @Test
+    fun steamRegressionAfterCutoffDoesNotBecomeAnUpperBoundOrProveShortfall() = runBlocking {
+        val id = ownedDeadline(appId = 17, estimate = 30)
+        steamSnapshot(17, targetDate, 20, cutoff - 1_000)
+        steamSnapshot(
+            17, "2026-01-02", 10, cutoff + 1_000,
+            classification = RecoverySnapshotClassifications.REGRESSION,
+        )
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertEquals(DeadlineOutcome.UNDETERMINED, result.outcome)
+        assertEquals(20L, result.members.single().playBounds?.lowerBoundMinutes)
+        assertNull(result.members.single().playBounds?.upperBoundMinutes)
+        assertNull(result.members.single().play)
     }
 
     @Test
@@ -344,6 +438,29 @@ class DeadlineArchiveEvidenceTest {
         database.gameDao().upsert(sharedGame(appId, manualSharedMinutes))
         database.hltbDataDao().upsert(estimate(appId, estimate))
         return deadlineCollectionWithMember(appId)
+    }
+
+    private suspend fun ownedDeadline(appId: Long, estimate: Int): Long {
+        database.playerProfileDao().upsert(PlayerProfile(steamId = "123"))
+        database.gameDao().upsert(Game(
+            appId = appId, name = "Owned $appId", iconUrl = "", playtimeForever = 0,
+            playtime2Weeks = 0, lastPlaytime = 0, source = GameSource.STEAM_OWNED,
+        ))
+        database.hltbDataDao().upsert(estimate(appId, estimate))
+        return deadlineCollectionWithMember(appId)
+    }
+
+    private suspend fun steamSnapshot(
+        appId: Long,
+        date: String,
+        minutes: Long,
+        observedAt: Long,
+        classification: String = RecoverySnapshotClassifications.TRUSTED,
+    ) {
+        database.playtimeRecoveryDao().upsertSnapshotRow(DailyPlaytimeSnapshot(
+            account = "123", appId = appId, date = date, zone = "UTC",
+            absoluteMinutes = minutes, observedAt = observedAt, classification = classification,
+        ))
     }
 
     private suspend fun deadlineCollectionWithMember(appId: Long): Long =

@@ -15,7 +15,7 @@ import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.DeadlineArchive
 import com.example.backlogium.domain.DeadlineArchivedMember
 import com.example.backlogium.domain.DeadlineCollectionIdentity
-import com.example.backlogium.domain.DeadlinePlayEvidence
+import com.example.backlogium.domain.DeadlinePlayBounds
 import com.example.backlogium.domain.deadlineCutoff
 import com.example.backlogium.ui.collections.FinishDeadlineDialog
 import com.example.backlogium.ui.theme.BacklogiumTheme
@@ -42,8 +42,10 @@ class DeadlineArchiveScreenshotTest {
             "Asia/Manila", CollectionTimeBasis.MAIN_STORY, cutoff, cutoff + 20,
             cutoff - 100, true,
             listOf(DeadlineArchivedMember(
-                10, "Private game", false, cutoff - 20, 90,
-                DeadlinePlayEvidence(30, cutoff - 10, cutoff + 10), 2, null,
+                appId = 10, name = "Private game", hiddenAtCutoff = false,
+                membershipObservedAt = cutoff - 20, estimateMinutes = 90,
+                play = null, recordedSessions = 2, recordedTrophies = null,
+                playBounds = DeadlinePlayBounds(30, 45, cutoff - 10, cutoff + 10),
             )),
         )
         var confirmed = false
@@ -60,6 +62,8 @@ class DeadlineArchiveScreenshotTest {
             }
         }
         compose.onNodeWithText("Estimated goal not met").assertIsDisplayed()
+        compose.onNodeWithText("Trusted Steam lower bound · ≥ 30 min").assertIsDisplayed()
+        compose.onNodeWithText("Trusted Steam upper bound · ≤ 45 min").assertExists()
         compose.onNodeWithText("Hidden game").assertIsDisplayed()
         compose.onNodeWithText("Private game").assertDoesNotExist()
         compose.onNode(isDialog()).captureRoboImage("collections/archive-preview/dark/narrow.png")

@@ -153,11 +153,17 @@ private fun DeadlineMemberEvidence(member: DeadlineArchivedMember, hidden: Set<L
                 null -> "Visibility at cutoff unavailable"
             })
             Text("Selected estimate · ${minutes(member.estimateMinutes)}")
-            Text("Credited playtime · ${minutes(member.play?.creditedMinutes)}")
+            member.playBounds?.let { bounds ->
+                Text("Trusted Steam lower bound · ≥ ${minutes(bounds.lowerBoundMinutes)}")
+                bounds.upperBoundMinutes?.let { Text("Trusted Steam upper bound · ≤ ${minutes(it)}") }
+            }
+            Text("Exact cutoff playtime · ${minutes(member.play?.creditedMinutes)}")
             Text("Remaining estimate · ${minutes(member.remainingMinutes)}")
             Text("Recorded sessions · ${member.recordedSessions ?: "Unavailable"}")
             Text("Recorded trophies · ${member.recordedTrophies ?: "Unavailable"}")
-            if (member.play != null) Text("Playtime supported by Steam readings on both sides of the cutoff.")
+            if (member.play != null) {
+                Text("Exact quantity supported by trusted Steam readings on both sides of the cutoff.")
+            }
             member.sessionPlay?.let {
                 Text("Dated closed-session play lower bound · ${minutes(it.creditedMinutes)} (${it.sessionCount} sessions)")
                 Text("This lower bound proves completion only when it reaches the selected estimate.")

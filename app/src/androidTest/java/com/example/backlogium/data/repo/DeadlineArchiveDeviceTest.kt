@@ -29,6 +29,8 @@ import com.example.backlogium.domain.CollectionMode
 import com.example.backlogium.domain.CollectionSort
 import com.example.backlogium.domain.DeadlineEvidenceGap
 import com.example.backlogium.domain.DeadlineOutcome
+import com.example.backlogium.domain.DeadlinePlayEvidence
+import com.example.backlogium.domain.DeadlineSessionPlayEvidence
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.deadlineCutoff
@@ -226,6 +228,79 @@ class DeadlineArchiveDeviceTest {
     }
 
     @Test
+    fun steamCutoffBoundsRoundTripAndContradictoryEvidenceIsRejectedBeforeRestoreWrites() = runBlocking {
+        val id = create()
+        setupMember(id, 50, amount = 120, laterAmount = 150, estimate = 100)
+        backdate()
+        now = cutoff + 2_000
+        val frozen = archives.confirm(requireNotNull(archives.preview(id)))
+        val exported = decode(export())
+        assertEquals(DeadlineOutcome.ESTIMATED_MET, frozen.outcome)
+        assertEquals(120L, frozen.members.single().playBounds?.lowerBoundMinutes)
+        assertEquals(150L, frozen.members.single().playBounds?.upperBoundMinutes)
+        assertNull(frozen.members.single().play)
+        assertEquals(listOf(frozen), exported.deadlineArchives)
+
+        val destination = newDatabase()
+        try {
+            val merge = mergeEngine(destination)
+            merge.mergeRawWithLockHeld(exported)
+            assertEquals(
+                frozen,
+                destination.deadlineArchiveDao().archives().single().toDomain(),
+            )
+
+            val member = frozen.members.single()
+            val contradictoryEvidence = frozen.copy(
+                members = listOf(member.copy(
+                    play = DeadlinePlayEvidence(30, cutoff - 1_000, cutoff + 1_000),
+                    playBounds = null,
+                    sessionPlay = DeadlineSessionPlayEvidence(90, 1, cutoff - 5_000, cutoff - 1_000),
+                    recordedSessions = 1,
+                )),
+                outcome = DeadlineOutcome.ESTIMATED_NOT_MET,
+            )
+            val boundsAndSession = frozen.copy(members = listOf(member.copy(
+                sessionPlay = DeadlineSessionPlayEvidence(30, 1, cutoff - 5_000, cutoff - 1_000),
+                recordedSessions = 1,
+            )))
+            val excessSessionCount = frozen.copy(members = listOf(member.copy(
+                play = null,
+                playBounds = null,
+                sessionPlay = DeadlineSessionPlayEvidence(30, 2, cutoff - 5_000, cutoff - 1_000),
+                recordedSessions = 1,
+            )), outcome = DeadlineOutcome.UNDETERMINED)
+            val missingSessionCount = frozen.copy(members = listOf(member.copy(
+                play = null,
+                playBounds = null,
+                sessionPlay = DeadlineSessionPlayEvidence(30, 1, cutoff - 5_000, cutoff - 1_000),
+                recordedSessions = null,
+            )), outcome = DeadlineOutcome.UNDETERMINED)
+            val zeroLengthSession = frozen.copy(members = listOf(member.copy(
+                play = null,
+                playBounds = null,
+                sessionPlay = DeadlineSessionPlayEvidence(30, 1, cutoff - 1_000, cutoff - 1_000),
+                recordedSessions = 1,
+            )), outcome = DeadlineOutcome.UNDETERMINED)
+
+            listOf(
+                contradictoryEvidence, boundsAndSession, excessSessionCount, missingSessionCount, zeroLengthSession,
+            ).forEach { badArchive ->
+                val badFile = decodeUnchecked(exported.copy(
+                    games = exported.games + BackupGame(999, "Must not restore", false, 0),
+                    deadlineArchives = listOf(badArchive),
+                ))
+                assertTrue(BackupValidator.validate(badFile) is BackupValidationResult.Invalid)
+                assertTrue(runCatching { merge.mergeRawWithLockHeld(badFile) }.isFailure)
+                assertNull(destination.gameDao().getById(999))
+                assertEquals(1, destination.deadlineArchiveDao().archives().size)
+            }
+        } finally {
+            destination.close()
+        }
+    }
+
+    @Test
     fun backupRestoreCrossingCutoffMarksItsDeadlineEvidenceAmbiguous() = runBlocking {
         val destination = newDatabase()
         try {
@@ -295,14 +370,18 @@ class DeadlineArchiveDeviceTest {
     ).buildExport()
 
     private fun decode(file: BackupFile): BackupFile {
+        val decoded = decodeUnchecked(file)
+        val validation = BackupValidator.validate(decoded)
+        assertTrue(validation.toString(), validation is BackupValidationResult.Valid)
+        return decoded
+    }
+
+    private fun decodeUnchecked(file: BackupFile): BackupFile {
         val storage = File.createTempFile("deadline-archive", ".json", context.cacheDir)
         try {
             val json = Json { ignoreUnknownKeys = true }
             storage.writeText(json.encodeToString(file))
-            val decoded = requireNotNull(BackupVersionedDecoder.decode(json, storage))
-            val validation = BackupValidator.validate(decoded)
-            assertTrue(validation.toString(), validation is BackupValidationResult.Valid)
-            return decoded
+            return requireNotNull(BackupVersionedDecoder.decode(json, storage))
         } finally {
             storage.delete()
         }
@@ -346,7 +425,13 @@ class DeadlineArchiveDeviceTest {
         targetDate = target, createdAt = cutoff - 10_000, deadlineZone = zone.id,
     ))
 
-    private suspend fun setupMember(id: Long, appId: Long, amount: Long, estimate: Int? = 60) {
+    private suspend fun setupMember(
+        id: Long,
+        appId: Long,
+        amount: Long,
+        laterAmount: Long = amount,
+        estimate: Int? = 60,
+    ) {
         db.playerProfileDao().upsert(PlayerProfile(steamId = "123"))
         db.gameDao().upsert(Game(appId, "Game $appId", "", 100, 0, 100))
         db.hltbDataDao().upsert(HltbData(appId, completionistMinutes = estimate, fetchedAt = cutoff - 10,
@@ -355,7 +440,7 @@ class DeadlineArchiveDeviceTest {
         db.playtimeRecoveryDao().upsertSnapshotRow(DailyPlaytimeSnapshot("123", appId, target,
             zone.id, amount, cutoff - 1_000))
         db.playtimeRecoveryDao().upsertSnapshotRow(DailyPlaytimeSnapshot("123", appId, "2026-03-09",
-            zone.id, amount, cutoff + 1_000))
+            zone.id, laterAmount, cutoff + 1_000))
     }
 
     // The SQLite triggers use the actual write clock; place setup writes before a fixed historical cutoff.

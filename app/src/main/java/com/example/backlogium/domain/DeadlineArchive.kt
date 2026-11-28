@@ -24,6 +24,15 @@ data class DeadlinePlayEvidence(
     val observedAfter: Long,
 )
 
+/** Trusted Steam cumulative readings bound the cutoff quantity without claiming it is exact. */
+@Serializable
+data class DeadlinePlayBounds(
+    val lowerBoundMinutes: Long,
+    val upperBoundMinutes: Long? = null,
+    val observedBefore: Long,
+    val observedAfter: Long? = null,
+)
+
 /** A conservative lower bound from canonical, dated, closed sessions before the cutoff. */
 @Serializable
 data class DeadlineSessionPlayEvidence(
@@ -44,11 +53,13 @@ data class DeadlineArchivedMember(
     val recordedSessions: Int?,
     val recordedTrophies: Int?,
     val sessionPlay: DeadlineSessionPlayEvidence? = null,
+    val playBounds: DeadlinePlayBounds? = null,
 ) {
     val remainingMinutes: Long?
         get() = estimateMinutes?.let { estimate ->
             when {
                 play != null -> (estimate - play.creditedMinutes).coerceAtLeast(0)
+                playBounds?.lowerBoundMinutes?.let { it >= estimate } == true -> 0L
                 sessionPlay?.creditedMinutes?.let { it >= estimate } == true -> 0L
                 else -> null
             }
@@ -87,8 +98,7 @@ data class DeadlineArchive(
             if (evaluatedMembers.any { it.estimateMinutes == null }) add(DeadlineEvidenceGap.ESTIMATE)
             if (evaluatedMembers.any { member ->
                     val estimate = member.estimateMinutes
-                    estimate != null && member.play == null &&
-                        (member.sessionPlay?.creditedMinutes ?: 0L) < estimate
+                    estimate != null && !member.provesMet(estimate) && !member.provesShortfall(estimate)
                 }
             ) add(DeadlineEvidenceGap.PLAYTIME)
             if (cutoffAmbiguous) add(DeadlineEvidenceGap.CUTOFF_AMBIGUITY)
@@ -107,17 +117,23 @@ internal fun assessDeadline(
     }
     val evaluated = members.filter { it.hiddenAtCutoff == false }
     return when {
-        evaluated.any { member ->
-            member.estimateMinutes != null && member.play?.creditedMinutes?.let { it < member.estimateMinutes } == true
-        } -> DeadlineOutcome.ESTIMATED_NOT_MET
+        evaluated.any { member -> member.estimateMinutes?.let(member::provesShortfall) == true } ->
+            DeadlineOutcome.ESTIMATED_NOT_MET
         evaluated.isNotEmpty() && evaluated.all { member ->
-            val estimate = member.estimateMinutes?.toLong() ?: return@all false
-            (member.play?.creditedMinutes ?: -1L) >= estimate ||
-                (member.sessionPlay?.creditedMinutes ?: -1L) >= estimate
+            member.estimateMinutes?.let(member::provesMet) == true
         } -> DeadlineOutcome.ESTIMATED_MET
         else -> DeadlineOutcome.UNDETERMINED
     }
 }
+
+private fun DeadlineArchivedMember.provesMet(estimate: Int): Boolean =
+    play?.creditedMinutes?.let { it >= estimate } == true ||
+        playBounds?.lowerBoundMinutes?.let { it >= estimate } == true ||
+        sessionPlay?.creditedMinutes?.let { it >= estimate } == true
+
+private fun DeadlineArchivedMember.provesShortfall(estimate: Int): Boolean =
+    play?.creditedMinutes?.let { it < estimate } == true ||
+        playBounds?.upperBoundMinutes?.let { it < estimate } == true
 
 fun deadlineCutoff(targetDate: String, zone: String): Long =
     LocalDate.parse(targetDate).plusDays(1).atStartOfDay(ZoneId.of(zone)).toInstant().toEpochMilli()

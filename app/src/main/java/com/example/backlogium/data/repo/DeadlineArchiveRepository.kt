@@ -16,6 +16,7 @@ import com.example.backlogium.domain.CollectionTimeBasis
 import com.example.backlogium.domain.DeadlineArchive
 import com.example.backlogium.domain.DeadlineArchivedMember
 import com.example.backlogium.domain.DeadlineCollectionIdentity
+import com.example.backlogium.domain.DeadlinePlayBounds
 import com.example.backlogium.domain.DeadlinePlayEvidence
 import com.example.backlogium.domain.DeadlineSessionPlayEvidence
 import com.example.backlogium.domain.GameSource
@@ -40,6 +41,11 @@ data class DeadlineArchivePreview internal constructor(
 )
 
 class DeadlinePreviewExpired : IllegalStateException("The collection changed. Review its archive preview again.")
+
+private data class SteamPlayCutoffEvidence(
+    val exact: DeadlinePlayEvidence?,
+    val bounds: DeadlinePlayBounds?,
+)
 
 @Singleton
 class DeadlineArchiveRepository @Inject constructor(
@@ -119,7 +125,7 @@ class DeadlineArchiveRepository @Inject constructor(
     ): DeadlineArchivedMember {
         val appId = requireNotNull(revision.appId)
         val source = revision.gameSource?.let { runCatching { GameSource.valueOf(it) }.getOrNull() }
-        val play = if (source == GameSource.STEAM_OWNED) steamPlayEvidence(appId, cutoff, now) else null
+        val steamPlay = if (source == GameSource.STEAM_OWNED) steamPlayEvidence(appId, cutoff, now) else null
         val sessionPlay = if (source == GameSource.FAMILY_SHARED) sessionPlayEvidence(appId, cutoff) else null
         return DeadlineArchivedMember(
             appId = appId,
@@ -132,26 +138,44 @@ class DeadlineArchiveRepository @Inject constructor(
                 CollectionTimeBasis.COMPLETIONIST -> revision.completionist
                 CollectionTimeBasis.ALL_STYLES -> revision.allStyles
             }?.takeIf { it > 0 },
-            play = play,
-            recordedSessions = dao.recordedSessions(appId, cutoff).takeIf { it > 0 || play?.creditedMinutes == 0L },
+            play = steamPlay?.exact,
+            recordedSessions = dao.recordedSessions(appId, cutoff)
+                .takeIf { it > 0 || steamPlay?.exact?.creditedMinutes == 0L },
             recordedTrophies = dao.recordedTrophies(appId, cutoff)
                 .takeIf { it > 0 || dao.hasDatedTrophyCoverage(appId, cutoff) },
             sessionPlay = sessionPlay,
+            playBounds = steamPlay?.bounds,
         )
     }
 
-    private suspend fun steamPlayEvidence(appId: Long, cutoff: Long, now: Long): DeadlinePlayEvidence? {
+    private suspend fun steamPlayEvidence(appId: Long, cutoff: Long, now: Long): SteamPlayCutoffEvidence? {
         val before = dao.before(appId, cutoff)
         val after = dao.after(appId, cutoff, now)
-        // An unchanged Steam total on both sides establishes the cumulative value at the boundary.
-        // A changed or missing reading leaves the cutoff quantity unresolved.
-        return if (before != null && after != null &&
-            before.classification == RecoverySnapshotClassifications.TRUSTED &&
-            after.classification == RecoverySnapshotClassifications.TRUSTED &&
+        if (before?.classification != RecoverySnapshotClassifications.TRUSTED) return null
+        if (after?.classification == RecoverySnapshotClassifications.TRUSTED &&
             before.absoluteMinutes == after.absoluteMinutes
         ) {
-            DeadlinePlayEvidence(before.absoluteMinutes, before.observedAt, after.observedAt)
-        } else null
+            return SteamPlayCutoffEvidence(
+                exact = DeadlinePlayEvidence(before.absoluteMinutes, before.observedAt, after.observedAt),
+                bounds = null,
+            )
+        }
+
+        // A pre-cutoff trusted total is a lower bound; a later total is an upper bound only
+        // when both trusted readings are monotonic. Later play never raises the lower bound.
+        val monotonicAfter = after?.takeIf {
+            it.classification == RecoverySnapshotClassifications.TRUSTED &&
+                it.absoluteMinutes >= before.absoluteMinutes
+        }
+        return SteamPlayCutoffEvidence(
+            exact = null,
+            bounds = DeadlinePlayBounds(
+                lowerBoundMinutes = before.absoluteMinutes,
+                upperBoundMinutes = monotonicAfter?.absoluteMinutes,
+                observedBefore = before.observedAt,
+                observedAfter = monotonicAfter?.observedAt,
+            ),
+        )
     }
 
     private suspend fun sessionPlayEvidence(appId: Long, cutoff: Long): DeadlineSessionPlayEvidence? {

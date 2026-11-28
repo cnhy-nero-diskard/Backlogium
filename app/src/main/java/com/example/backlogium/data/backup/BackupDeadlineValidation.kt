@@ -54,15 +54,27 @@ internal fun deadlineArchiveProblems(file: BackupFile): List<BackupValidationPro
                     (member.estimateMinutes ?: 1) <= 0 ||
                     (member.recordedSessions ?: 0) < 0 ||
                     (member.recordedTrophies ?: 0) < 0 ||
-                     member.play?.let { play ->
-                         play.creditedMinutes < 0 || play.observedBefore !in 1 until archive.cutoff ||
-                             play.observedAfter !in archive.cutoff..archive.finalizedAt
+                    member.play?.let { play ->
+                        play.creditedMinutes < 0 || play.observedBefore !in 1 until archive.cutoff ||
+                            play.observedAfter !in archive.cutoff..archive.finalizedAt
+                    } == true || member.playBounds?.let { bounds ->
+                        bounds.lowerBoundMinutes < 0 || bounds.observedBefore !in 1 until archive.cutoff ||
+                            (bounds.upperBoundMinutes == null) != (bounds.observedAfter == null) ||
+                            bounds.upperBoundMinutes?.let { upper ->
+                                upper < bounds.lowerBoundMinutes ||
+                                    bounds.observedAfter?.let {
+                                        it !in archive.cutoff..archive.finalizedAt
+                                    } != false
+                            } == true
                     } == true || member.sessionPlay?.let { play ->
                         play.creditedMinutes <= 0 || play.sessionCount <= 0 || play.firstSessionAt < 0 ||
-                            play.firstSessionAt >= archive.cutoff || play.lastSessionEndAt < play.firstSessionAt ||
-                            play.lastSessionEndAt > archive.cutoff
-                    } == true
-             }
+                            play.firstSessionAt >= archive.cutoff || play.lastSessionEndAt <= play.firstSessionAt ||
+                            play.lastSessionEndAt > archive.cutoff || member.recordedSessions == null ||
+                            play.sessionCount > member.recordedSessions
+                    } == true ||
+                    (member.play != null && (member.playBounds != null || member.sessionPlay != null)) ||
+                    (member.playBounds != null && member.sessionPlay != null)
+            }
         ) problem("invalid member evidence")
         if (archive.outcome != assessDeadline(
                 archive.goalObservedAt, archive.membershipKnown, archive.members, archive.cutoffAmbiguous,
