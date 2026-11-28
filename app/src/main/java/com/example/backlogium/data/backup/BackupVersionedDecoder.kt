@@ -27,6 +27,7 @@ internal object BackupVersionedDecoder {
         var preferencesSeen = false
         var recoverySeen = false
         var recoveryIsObject = false
+        var archivesSeen = false
         reader.beginObject()
         while (reader.hasNext()) when (reader.nextName()) {
             "formatVersion" -> {
@@ -59,6 +60,11 @@ internal object BackupVersionedDecoder {
                 preferencesSeen = true
                 inspectPreferences(reader)
             }
+            "deadlineArchives" -> {
+                require(!archivesSeen && reader.peek() == JsonToken.BEGIN_ARRAY)
+                archivesSeen = true
+                reader.skipValue()
+            }
             "recovery" -> {
                 require(!recoverySeen)
                 recoverySeen = true
@@ -70,7 +76,8 @@ internal object BackupVersionedDecoder {
         reader.endObject()
         require(reader.peek() == JsonToken.END_DOCUMENT)
         val resolved = version ?: 1
-        require(resolved in 1..3)
+        require(resolved in 1..BackupFile.CURRENT_FORMAT_VERSION)
+        require(archivesSeen == (resolved >= 4))
         require(if (resolved == 1) !hasContribution else !missingContribution)
         require(if (resolved < 3) !recoverySeen else (recoverySeen && recoveryIsObject))
         return resolved

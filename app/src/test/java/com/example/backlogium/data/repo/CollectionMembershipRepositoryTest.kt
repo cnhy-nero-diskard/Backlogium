@@ -44,7 +44,7 @@ class CollectionMembershipRepositoryTest {
         (1L..3L).forEach { db.gameDao().upsert(Game(it, "Game $it", "", 0, 0, 0)) }
         id = db.collectionDao().insert(Collection(name = "Queue", mode = CollectionMode.ORDERED_QUEUE,
             sort = CollectionSort.MANUAL_SEQUENCE, createdAt = 1))
-        shortcuts = CollectionMembershipRepository(db, identity)
+        shortcuts = CollectionMembershipRepository(db, identity, RoomDatabaseTransactionScope(db, time))
         editor = CollectionRepository(db.collectionDao(), fakeHiddenGamesRepository(hidden = setOf(2)),
             time, RoomDatabaseTransactionScope(db))
     }

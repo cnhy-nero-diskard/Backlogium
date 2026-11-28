@@ -142,6 +142,26 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startAt ASC")
     suspend fun getAll(): List<Session>
 
+    /** Positive, closed session rows whose complete recorded interval is before a deadline cutoff. */
+    @Query("""
+        SELECT * FROM sessions
+        WHERE appId = :appId AND minutes > 0 AND open = 0 AND endAt IS NOT NULL
+          AND startAt < :cutoff AND endAt <= :cutoff AND endAt > startAt
+        ORDER BY startAt, endAt, id
+    """)
+    suspend fun closedSessionsBefore(appId: Long, cutoff: Long): List<Session>
+
+    /** Active funded shares on sessions wholly before the cutoff, for canonical lower-bound evidence. */
+    @Query("""
+        SELECT * FROM recovery_timed_placements
+        WHERE account = (SELECT steamId FROM player_profile WHERE id = 0)
+          AND superseded = 0 AND sessionId IN (
+            SELECT id FROM sessions WHERE appId = :appId AND minutes > 0 AND open = 0
+              AND endAt IS NOT NULL AND startAt < :cutoff AND endAt <= :cutoff AND endAt > startAt
+          )
+    """)
+    suspend fun timedPlacementsForClosedSessionsBefore(appId: Long, cutoff: Long): List<TimedContributionPlacement>
+
     /** Targeted host-session lookup for recovery backup projection; callers chunk below SQLite's bind limit. */
     @Query("SELECT * FROM sessions WHERE id IN (:sessionIds)")
     suspend fun sessionsByIds(sessionIds: List<Long>): List<Session>

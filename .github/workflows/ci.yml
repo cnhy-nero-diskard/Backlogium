@@ -72,6 +72,7 @@ jobs:
         run: >-
           ./gradlew :app:verifyRoborazziDebug
           --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest
+          --tests com.example.backlogium.ui.screenshot.DeadlineArchiveScreenshotTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest
           --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest
           --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest

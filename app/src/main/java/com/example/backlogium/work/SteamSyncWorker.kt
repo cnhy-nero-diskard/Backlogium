@@ -7,7 +7,7 @@ import com.example.backlogium.domain.OperationStatus
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
-import androidx.room.withTransaction
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import androidx.work.Data
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -592,7 +592,7 @@ class SteamSyncWorker @AssistedInject constructor(
                     }
                     accountChangeMarker.withAccountState {
                         if (!isAccountActive(steamId)) return@withAccountState null
-                        database.withTransaction {
+                        RoomDatabaseTransactionScope(database, time).runDeadlineEvidence {
                             commitRawPoll(
                                 games = games,
                                 observedGameCount = observedGameCount,

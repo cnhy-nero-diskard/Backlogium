@@ -32,4 +32,6 @@ data class Collection(
     val createdAt: Long,
     val description: String? = null,
     val displayOrder: Int = 0,
+    val deadlineZone: String? = null,
+    val originId: Long? = null,
 )

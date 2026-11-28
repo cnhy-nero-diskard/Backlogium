@@ -62,6 +62,7 @@ object BackupValidator {
     fun validate(file: BackupFile): BackupValidationResult {
         val problems = mutableListOf<BackupValidationProblem>()
         problems += preferenceProblems(file)
+        problems += deadlineArchiveProblems(file)
         if (file.formatVersion !in 1..BackupFile.CURRENT_FORMAT_VERSION) {
             problems += BackupValidationProblem("file", 0, "unsupported formatVersion ${file.formatVersion}")
         }
@@ -79,7 +80,7 @@ object BackupValidator {
                 "v${file.formatVersion} cannot contain recovery sections",
             )
         }
-        if (file.formatVersion == 3) {
+        if (file.formatVersion >= 3) {
             BackupRecoveryValidator.validate(file, problems)
         }
         val gameAppIds = file.games.mapTo(mutableSetOf()) { it.appId }

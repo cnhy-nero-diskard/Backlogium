@@ -2,6 +2,10 @@ package com.example.backlogium.data.backup
 
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
+import com.example.backlogium.data.local.dao.DeadlineArchiveDao
+import com.example.backlogium.data.repo.deadlineIdentity
+import com.example.backlogium.data.repo.toDomain
+import com.example.backlogium.data.repo.toRow
 import com.example.backlogium.data.local.dao.ExcludedSharedGameDao
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
@@ -97,6 +101,7 @@ class BackupMergeEngine @Inject constructor(
     private val dailyProgressBackfill: DailyProgressBackfillUseCase? = null,
     /** Drains bounded compact-recipe slices before restored derived state is recomputed. */
     private val unknownTimeMaterializer: UnknownTimeMaterializer? = null,
+    private val deadlineArchiveDao: DeadlineArchiveDao? = null,
 ) {
     /**
      * [config] is the app's currently active [RuleConfig] — never the file's own `ruleConfig`,
@@ -133,6 +138,7 @@ class BackupMergeEngine @Inject constructor(
      */
     internal suspend fun mergeRawWithLockHeld(file: BackupFile): RecoveryMergeSummary {
         require(BackupValidator.preferenceProblems(file).isEmpty()) { "Invalid game preferences" }
+        require(deadlineArchiveProblems(file).isEmpty()) { "Invalid deadline archive or collection identity" }
         val importedLongestStreak = file.playerProfile.longestStreak
         val importedBackfilled = file.playerProfile.playtimeBackfilled
 
@@ -144,7 +150,22 @@ class BackupMergeEngine @Inject constructor(
         // threads — so the transaction cannot deadlock or be left holding a connection open.
         val sessionIdByKey = mutableMapOf<RecoverySessionKey, Long>()
         var plan: RecoveryMergePlan? = null
-        transaction.run {
+        transaction.runDeadlineEvidence {
+            val incomingArchives = file.deadlineArchives.orEmpty()
+            val localArchives = if (incomingArchives.isNotEmpty() || file.collections.isNotEmpty()) {
+                deadlineArchiveDao?.archives().orEmpty().map { it.toDomain() }.associateBy { it.identity }
+            } else emptyMap()
+            incomingArchives.forEach { archive ->
+                val stored = localArchives[archive.identity]
+                if (stored != null && stored != archive) throw BackupDeadlineConflict(stored.name)
+            }
+            val localCollections = if (file.collections.isNotEmpty() || incomingArchives.isNotEmpty()) {
+                collectionDao.getAll().associateBy { it.deadlineIdentity() }
+            } else emptyMap()
+            incomingArchives.forEach { archive ->
+                if (archive.identity !in localArchives) requireNotNull(deadlineArchiveDao).insert(archive.toRow())
+                localCollections[archive.identity]?.let { collectionDao.delete(it.id) }
+            }
             // Snapshot local recovery only after the raw Room transaction begins. A concurrent
             // Steam commit is serialized by Room and this prevents planning against a stale graph
             // captured before that commit.
@@ -183,8 +204,17 @@ class BackupMergeEngine @Inject constructor(
             if (activeAccount != null && file.identity.steamId64 == activeAccount) {
                 file.achievementCompletions.forEach { mergeAchievementCompletion(it.appId, it.completedAt) }
             }
-            file.collections.forEach { mergeCollection(it) }
-            file.collectionMembers.forEach { mergeCollectionMember(it) }
+            val remappedCollections = mutableMapOf<Long, Long?>()
+            file.collections.forEach { collection ->
+                val identity = collection.deadlineIdentity()
+                remappedCollections[collection.id] = if (identity in localArchives) {
+                    null
+                } else mergeCollection(collection, localCollections[identity])
+            }
+            file.collectionMembers.forEach { member ->
+                require(remappedCollections.containsKey(member.collectionId)) { "Missing backup collection" }
+                remappedCollections[member.collectionId]?.let { mergeCollectionMember(member, it) }
+            }
             // Applied before the recompute below, so the restored XP already excludes the games the
             // file records as hidden rather than briefly counting them and then correcting.
             mergeHiddenGames(file.hiddenGames)
@@ -622,14 +652,7 @@ class BackupMergeEngine @Inject constructor(
         }
     }
 
-    /**
-     * Merge one collection by its id (PK upsert): a row with the same id is overwritten, a new
-     * one is inserted — never a blind replace, never double-adding a member. Mode/sort/timeBasis
-     * parse tolerantly, falling back to the parse-able mode's default sort — the same audited
-     * exception as [mergeHltbData]'s `matchStatus`: forward-compatible enum tolerance, not a rule
-     * the preflight validator duplicates.
-     */
-    private suspend fun mergeCollection(backupCollection: BackupCollection) {
+    private suspend fun mergeCollection(backupCollection: BackupCollection, existing: Collection?): Long {
         val mode = runCatching { CollectionMode.valueOf(backupCollection.mode) }
             .getOrDefault(CollectionMode.BASIC)
         val sort = runCatching { CollectionSort.valueOf(backupCollection.sort) }
@@ -639,24 +662,29 @@ class BackupMergeEngine @Inject constructor(
         val accent = CollectionAccent.parse(backupCollection.accent)
         val timeBasis = runCatching { CollectionTimeBasis.valueOf(backupCollection.timeBasis) }
             .getOrDefault(CollectionTimeBasis.COMPLETIONIST)
-        val existing = collectionDao.getById(backupCollection.id)
         val displayOrder = backupCollection.displayOrder
             ?: existing?.displayOrder
             ?: (collectionDao.getAll().maxOfOrNull { it.displayOrder }?.plus(1) ?: 0)
-        collectionDao.upsert(
-            Collection(
-                id = backupCollection.id,
-                name = backupCollection.name,
-                mode = mode,
-                sort = sort,
-                targetDate = backupCollection.targetDate,
-                accent = accent,
-                timeBasis = timeBasis,
-                createdAt = backupCollection.createdAt,
-                description = backupCollection.description,
-                displayOrder = displayOrder,
-            ),
+        val availableId = existing?.id ?: backupCollection.id.takeIf { collectionDao.getById(it) == null }
+        val collection = Collection(
+            id = availableId ?: 0L,
+            name = backupCollection.name,
+            mode = mode,
+            sort = sort,
+            targetDate = backupCollection.targetDate,
+            accent = accent,
+            timeBasis = timeBasis,
+            createdAt = backupCollection.createdAt,
+            description = backupCollection.description,
+            displayOrder = displayOrder,
+            deadlineZone = if (mode == CollectionMode.DEADLINE_GOAL) {
+                backupCollection.deadlineZone ?: existing?.deadlineZone ?: time.zone().id
+            } else null,
+            originId = backupCollection.deadlineIdentity().originId.takeUnless { it == availableId },
         )
+        if (availableId == null) return collectionDao.insert(collection)
+        collectionDao.upsert(collection)
+        return availableId
     }
 
     /**
@@ -679,10 +707,10 @@ class BackupMergeEngine @Inject constructor(
         hiddenGameDao.upsertAll(rows)
     }
 
-    private suspend fun mergeCollectionMember(backupMember: BackupCollectionMember) {
+    private suspend fun mergeCollectionMember(backupMember: BackupCollectionMember, collectionId: Long) {
         collectionDao.upsertMember(
             CollectionMember(
-                collectionId = backupMember.collectionId,
+                collectionId = collectionId,
                 appId = backupMember.appId,
                 orderIndex = backupMember.orderIndex,
                 done = backupMember.done,

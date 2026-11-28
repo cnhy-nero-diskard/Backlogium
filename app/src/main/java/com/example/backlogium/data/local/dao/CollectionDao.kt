@@ -32,6 +32,9 @@ interface CollectionDao {
     @Query("SELECT * FROM collections WHERE id = :id")
     suspend fun getById(id: Long): Collection?
 
+    @Query("SELECT * FROM collections WHERE id = :id")
+    fun observeById(id: Long): Flow<Collection?>
+
     @Insert
     suspend fun insert(collection: Collection): Long
 
@@ -46,7 +49,8 @@ interface CollectionDao {
     suspend fun upsertMember(member: CollectionMember)
 
     @Query(
-        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis, description = :description " +
+        "UPDATE collections SET name = :name, mode = :mode, sort = :sort, targetDate = :targetDate, accent = :accent, timeBasis = :timeBasis, description = :description, " +
+            "deadlineZone = :deadlineZone " +
             "WHERE id = :id",
     )
     suspend fun updateDetails(
@@ -58,6 +62,7 @@ interface CollectionDao {
         accent: CollectionAccent?,
         timeBasis: CollectionTimeBasis,
         description: String?,
+        deadlineZone: String? = null,
     )
 
     @Query(
@@ -123,6 +128,7 @@ interface CollectionDao {
      */
     @Transaction
     suspend fun addMember(collectionId: Long, appId: Long) {
+        check(getById(collectionId) != null) { "Collection no longer exists" }
         val orderIndex = getMembers(collectionId).size
         insertMember(CollectionMember(collectionId = collectionId, appId = appId, orderIndex = orderIndex))
     }

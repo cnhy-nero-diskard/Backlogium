@@ -131,6 +131,7 @@ class CollectionRepository @Inject constructor(
                 accent = accent,
                 timeBasis = timeBasis,
                 createdAt = time.nowMillis(),
+                deadlineZone = time.zone().id.takeIf { mode == CollectionMode.DEADLINE_GOAL },
                 description = description,
                 displayOrder = collectionDao.getAll().maxOfOrNull { it.displayOrder }?.plus(1) ?: 0,
             ),
@@ -145,19 +146,20 @@ class CollectionRepository @Inject constructor(
         accent: CollectionAccent?,
         timeBasis: CollectionTimeBasis,
         description: String?,
-    ) = collectionDao.updateDetails(
-        id,
-        name,
-        mode,
-        sort.resolveForMode(mode),
-        targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
-        accent,
-        timeBasis,
-        description,
-    )
+    ) = transaction.runDeadlineEvidence {
+        val current = collectionDao.getById(id) ?: return@runDeadlineEvidence
+        val zone = if (mode == CollectionMode.DEADLINE_GOAL) {
+            current.deadlineZone?.takeIf { current.targetDate == targetDate } ?: time.zone().id
+        } else null
+        collectionDao.updateDetails(
+            id, name, mode, sort.resolveForMode(mode),
+            targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
+            accent, timeBasis, description, zone,
+        )
+    }
 
     /** Commit the buffered collection fields and membership reconciliation as one unit. */
-    suspend fun save(draft: CollectionSaveDraft): Long = transaction.run {
+    suspend fun save(draft: CollectionSaveDraft): Long = transaction.runDeadlineEvidence {
         if (draft.id != 0L) {
             check(collectionDao.getById(draft.id) != null) { "Collection no longer exists. Reopen the editor." }
             draft.membershipBaseline?.let { baseline ->
@@ -244,10 +246,11 @@ class CollectionRepository @Inject constructor(
     suspend fun delete(id: Long) = collectionDao.delete(id)
 
     /** Append a game to a collection; a no-op when the game is already a member. */
-    suspend fun addMember(collectionId: Long, appId: Long) = collectionDao.addMember(collectionId, appId)
+    suspend fun addMember(collectionId: Long, appId: Long) =
+        transaction.runDeadlineEvidence { collectionDao.addMember(collectionId, appId) }
 
     suspend fun removeMember(collectionId: Long, appId: Long) =
-        collectionDao.removeMember(collectionId, appId)
+        transaction.runDeadlineEvidence { collectionDao.removeMember(collectionId, appId) }
 
     /** Persist or clear one member's manual done mark (ordered-queue collections). */
     suspend fun setMemberDone(collectionId: Long, appId: Long, done: Boolean) =

@@ -1,0 +1,17 @@
+# Tasks
+
+## 1. Deadline evidence and state transition
+
+- [x] 1.1 Persist the zone, timestamped membership and hidden-visibility revisions, explicit deadline-mode exits, complete re-entry membership baselines, and supported deadline evidence for goal, estimates and play, with migration coverage for legacy active collections.
+- [x] 1.2 Derive estimated met, estimated not met, and undetermined from cutoff evidence. Verify exact Steam readings, pre-cutoff lower bounds, monotonic upper bounds, missing later readings, straddling estimates, regressions/corrections, date and zone boundaries, incomplete history, empty membership (including legacy/restored collections), all-unknown and mixed known/unknown estimates, two cutoff members with one shortfall followed by hiding/removal before finalization, hidden-at-cutoff versus hidden-after-cutoff, unhide after archive, post-cutoff changes, repeated mode conversions, removal while BASIC, empty re-entry, same-date re-entry after cutoff, and mode-change batches crossing cutoff.
+- [x] 1.3 Persist one immutable archive atomically with removal from active queries. Verify stale preview, concurrent edits, repeat finalization, account reset and frozen outcomes.
+
+## 2. Archive experience and backup
+
+- [x] 2.1 Add the final preview, confirmation and read-only archive. Verify cancel, expiry, active Home and Library exclusions, and accessibility of outcome details.
+- [x] 2.2 Add backup export and validated restoration with released-schema compatibility. Verify unchanged old backups, repeat restore, independent collection ID collisions, stale active copies, exact and bounded cutoff evidence/outcome round-trip, contradictory evidence combinations, session count/interval invariants, and real decoder/validator/restore rejection without mutation.
+- [x] 2.3 Expose archived outcomes through a read-only domain projection and verify future consumers can access frozen goal and member metrics without live game rows.
+
+## 3. Integration
+
+- [x] 3.1 Exercise archive to backup and restored archive on a targeted device or emulator. Verify active collections and unrelated backups still work and refresh affected baselines.

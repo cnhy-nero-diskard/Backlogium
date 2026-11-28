@@ -355,6 +355,7 @@
     <string name="settings_backup_imported_recovery_warning">Backup imported with %1$d recovery warning(s). %2$s</string>
     <string name="settings_backup_snapshot_deleted">Snapshot deleted.</string>
     <string name="settings_backup_snapshot_unavailable">That snapshot is no longer available.</string>
+    <string name="settings_backup_deadline_conflict">The backup conflicts with the saved archive for %1$s. No changes were imported.</string>
     <string name="settings_backup_operation_failed">Backup operation did not finish. Check the selected file and available storage, then try again.</string>
     <string name="settings_backup_rejected">Backup rejected — %1$s</string>
     <string name="settings_backup_validation_problem">%1$s[%2$d]: %3$s</string>

@@ -30,6 +30,7 @@ class AccountRoomReset @Inject constructor(
             // whatever the new account happens to own under the same app ids.
             database.hiddenGameDao().deleteAll()
             database.collectionDao().deleteAll()
+            database.deadlineArchiveDao().deleteAll()
             database.dailyProgressDao().deleteAll()
             database.diagnosticsDao().deleteAll()
             database.libraryPollCommitDao().clear()

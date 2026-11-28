@@ -79,8 +79,9 @@ class BackupVersionedDecoderTest {
 
     @Test fun preferencesRequireExactTypesAndUniquePositiveKeysInAllSupportedVersions() {
         for (version in 1..BackupFile.CURRENT_FORMAT_VERSION) {
-            val base = if (version == 3) requireNotNull(decode(v3Text(withRecovery = true))) else legacy
+            val base = if (version >= 3) requireNotNull(decode(v3Text(withRecovery = true))) else legacy
             val file = base.copy(formatVersion = version, sessions = emptyList(),
+                deadlineArchives = if (version >= 4) emptyList() else null,
                 gamePreferences = listOf(BackupGamePreference(440, false)))
             val encoded = json.encodeToString(BackupFile.serializer(), file)
             assertEquals(file, decode(encoded))

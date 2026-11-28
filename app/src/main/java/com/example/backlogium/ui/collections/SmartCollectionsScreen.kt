@@ -55,6 +55,7 @@ fun CollectionsScreen(
     onOpenSmartCollection: (SmartCollectionId) -> Unit,
     onPlanGap: () -> Unit = {},
     viewModel: SmartCollectionsViewModel = hiltViewModel(),
+    onOpenArchives: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showVisibilityDialog by rememberSaveable { mutableStateOf(false) }
@@ -104,6 +105,8 @@ fun CollectionsScreen(
                     )
                 }
             }
+
+            item { TextButton(onClick = onOpenArchives) { Text("Archived collections") } }
 
             if (state.visibleSmartCollections.isNotEmpty()) {
                 item { SmartCollectionsSectionHeader() }

@@ -34,6 +34,7 @@ import com.example.backlogium.ui.analytics.AnalyticsScreen
 import com.example.backlogium.domain.SmartCollectionId
 import com.example.backlogium.ui.collections.CollectionScreen
 import com.example.backlogium.ui.collections.CollectionsScreen
+import com.example.backlogium.ui.collections.DeadlineArchiveScreen
 import com.example.backlogium.ui.collections.SmartCollectionDetailScreen
 import com.example.backlogium.ui.components.ProfileHeader
 import com.example.backlogium.ui.diagnostics.DiagnosticsScreen
@@ -381,7 +382,23 @@ internal fun BacklogiumAppRoot(
                             navController.navigate(smartCollectionRoute(id))
                         },
                         onPlanGap = { navController.navigate(ROUTE_GAP_PLAN) },
+                        onOpenArchives = { navController.navigate("collection-archives") },
                     )
+                }
+                composable("collection-archives") {
+                    DeadlineArchiveScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpen = { navController.navigate("collection-archives/${it.originId}/${it.createdAt}") },
+                    )
+                }
+                composable(
+                    "collection-archives/{archiveOriginId}/{archiveCreatedAt}",
+                    arguments = listOf(
+                        navArgument("archiveOriginId") { type = NavType.LongType },
+                        navArgument("archiveCreatedAt") { type = NavType.LongType },
+                    ),
+                ) {
+                    DeadlineArchiveScreen(onBack = { navController.popBackStack() }, onOpen = {})
                 }
                 composable(ROUTE_GAP_PLAN) {
                     GapPlanScreen(
@@ -419,7 +436,14 @@ internal fun BacklogiumAppRoot(
                     route = ROUTE_COLLECTION,
                     arguments = listOf(navArgument("collectionId") { type = NavType.LongType }),
                 ) {
-                    CollectionScreen(onDone = { navController.popBackStack() })
+                    CollectionScreen(
+                        onDone = { navController.popBackStack() },
+                        onArchived = { identity ->
+                            navController.navigate("collection-archives/${identity.originId}/${identity.createdAt}") {
+                                popUpTo(ROUTE_COLLECTION) { inclusive = true }
+                            }
+                        },
+                    )
                 }
             }
             }
