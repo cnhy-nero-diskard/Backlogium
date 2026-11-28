@@ -134,9 +134,15 @@ fun CollectionScreen(
     onOpenGameDetail: ((Long) -> Unit)? = null,
     viewModel: CollectionViewModel = hiltViewModel(),
     memberActions: CollectionMemberActionsViewModel = hiltViewModel(),
+    onArchived: (com.example.backlogium.domain.DeadlineCollectionIdentity) -> Unit = { onDone() },
+    archiveViewModel: DeadlineArchiveViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val removal by memberActions.state.collectAsStateWithLifecycle()
+    val eligible by archiveViewModel.eligible.collectAsStateWithLifecycle()
+    val finish by archiveViewModel.finish.collectAsStateWithLifecycle()
+    val hidden by archiveViewModel.hiddenAppIds.collectAsStateWithLifecycle(initialValue = null)
+    LaunchedEffect(finish.finished) { finish.finished?.let(onArchived) }
     LaunchedEffect(viewModel.collectionId) { memberActions.open(viewModel.collectionId) }
     LaunchedEffect(removal.committed) { if (removal.committed > 0) viewModel.refreshEditor() }
     var showEditor by rememberSaveable { mutableStateOf(viewModel.collectionId == 0L) }
@@ -208,6 +214,16 @@ fun CollectionScreen(
                                 },
                             )
                         }
+                        if (showingOverview && eligible) {
+                            DropdownMenuItem(
+                                text = { Text("Finish and archive") },
+                                enabled = !finish.busy,
+                                onClick = {
+                                    showActions = false
+                                    archiveViewModel.openPreview()
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Delete collection") },
                             onClick = {
@@ -220,6 +236,9 @@ fun CollectionScreen(
             }
         }
 
+        finish.error?.let {
+            Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
+        }
         if (showingOverview && state.saveError == R.string.collection_delete_failed) {
             Text(stringResource(R.string.collection_delete_failed), Modifier.padding(horizontal = 16.dp),
                 color = MaterialTheme.colorScheme.error)
@@ -264,6 +283,9 @@ fun CollectionScreen(
         }
     }
 
+    finish.preview?.let {
+        FinishDeadlineDialog(it.result, hidden, finish.busy, archiveViewModel::confirm, archiveViewModel::dismissPreview)
+    }
     if (showDeleteConfirmation) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmation = false },

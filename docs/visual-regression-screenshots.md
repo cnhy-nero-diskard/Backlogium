@@ -31,6 +31,7 @@ alter the goldens:
 .\gradlew.bat :app:compileDebugUnitTestKotlin --no-daemon
 .\gradlew.bat :app:recordRoborazziDebug `
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
+  --tests com.example.backlogium.ui.screenshot.DeadlineArchiveScreenshotTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest `
@@ -51,6 +52,7 @@ screen, state, theme, and viewport:
 - `alternatives/analytics/{core-large,calendar-large}/dark/narrow.png` covers core facts and exact-date calendar navigation at 1.5× text size.
 - `alternatives/analytics/advanced-{genre,clock,achievements,records}-large/dark/narrow.png` covers advanced values, evidence scopes and expandable records at 1.5× text size; `advanced-clock-values/dark/narrow.png` shows the full matrix at default text size.
 - `spike/dark-standard/theme-card.png` is the toolchain compatibility spike.
+- `collections/archive-preview/dark/narrow.png` covers the deadline result, hidden member evidence and permanent archive confirmation.
 - `detail/<state>/<theme>/<viewport>.png` covers owned, shared-overlay, missing-data, and achievement states.
 - `setup/<state>/<theme>/<viewport>.png` covers waiting, backoff, failure/recovery, and the optional history decision (ready, not ready, error). Every state has its own isolated composition, with actionable controls asserted before capture.
 
@@ -68,6 +70,7 @@ classes used by CI:
 .\gradlew.bat :app:compileDebugUnitTestKotlin --offline --no-daemon
 .\gradlew.bat :app:verifyRoborazziDebug `
   --tests com.example.backlogium.ui.screenshot.RoborazziSpikeTest `
+  --tests com.example.backlogium.ui.screenshot.DeadlineArchiveScreenshotTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotNarrowTest `
   --tests com.example.backlogium.ui.screenshot.MainScreenScreenshotStandardTest `
   --tests com.example.backlogium.ui.screenshot.GameDetailScreenshotNarrowTest `

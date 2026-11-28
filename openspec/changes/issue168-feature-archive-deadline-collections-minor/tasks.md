@@ -8,9 +8,9 @@
 
 ## 2. Archive experience and backup
 
-- [ ] 2.1 Add the final preview, confirmation and read-only archive. Verify cancel, expiry, active Home and Library exclusions, and accessibility of outcome details.
+- [x] 2.1 Add the final preview, confirmation and read-only archive. Verify cancel, expiry, active Home and Library exclusions, and accessibility of outcome details.
 - [ ] 2.2 Add backup export and validated restoration with released-schema compatibility. Verify unchanged old backups, repeat restore, independent collection ID collisions, stale active copies, frozen cutoff membership/visibility/evidence/outcome round-trip, and invalid input rollback.
-- [ ] 2.3 Expose archived outcomes through a read-only domain projection and verify future consumers can access frozen goal and member metrics without live game rows.
+- [x] 2.3 Expose archived outcomes through a read-only domain projection and verify future consumers can access frozen goal and member metrics without live game rows.
 
 ## 3. Integration
 

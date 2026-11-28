@@ -137,6 +137,8 @@ internal fun DeadlineArchive.toRow() = DeadlineArchiveRow(
 )
 
 private fun Collection.cutoff(): Long? {
-    if (mode != CollectionMode.DEADLINE_GOAL || targetDate == null || deadlineZone == null) return null
-    return runCatching { deadlineCutoff(targetDate, deadlineZone) }.getOrNull()
+    if (mode != CollectionMode.DEADLINE_GOAL) return null
+    val date = targetDate ?: return null
+    val zone = deadlineZone ?: return null
+    return runCatching { deadlineCutoff(date, zone) }.getOrNull()
 }
