@@ -98,10 +98,33 @@ current version, rather than silently continuing to validate a stale target.
 - **THEN** that omission is detectable, because the test asserts against the current version
   rather than a hard-coded older one
 
+#### Scenario: Verification runs before a migration-relevant change merges
+- **WHEN** a pull request changes the schema, migration behavior or registration, a
+  migration test input, the app or shared Gradle configuration, or the CI workflow or
+  routing that controls migration verification
+- **THEN** CI runs the migration suite automatically and the required CI result depends on
+  its success
+
+#### Scenario: An unrelated pull request skips the migration emulator
+- **WHEN** a pull request changes only inputs outside those migration and verification
+  paths
+- **THEN** CI skips the Room migration emulator job
+
+#### Scenario: Instrumentation sources retain compile coverage
+- **WHEN** a pull request changes an unrelated source under `app/src/androidTest/`
+- **THEN** CI selects the migration emulator job so Gradle compiles the complete
+  instrumentation test APK, while the runner continues to execute only `MigrationTest`
+
+#### Scenario: Production API changes retain instrumentation compile coverage
+- **WHEN** a pull request changes production code or shared Gradle inputs selected
+  for the Android unit tests job, without changing an `app/src/androidTest/` source
+- **THEN** that job assembles the complete instrumentation APK with
+  `:app:assembleDebugAndroidTest` without starting an emulator, so incompatible
+  production API changes fail before merge
+
 #### Scenario: Verification runs on every change
-- **WHEN** a change is proposed to the repository
-- **THEN** the migration tests execute automatically, so a data-losing migration cannot
-  merge on the strength of unit tests that only ever see a freshly created database
+- **WHEN** a commit is pushed to `master`
+- **THEN** CI runs the migration suite automatically regardless of which paths changed
 
 #### Scenario: Versions predating schema recording
 - **WHEN** no recorded schema exists for a version because it was released before schemas
