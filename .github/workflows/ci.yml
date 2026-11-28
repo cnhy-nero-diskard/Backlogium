@@ -206,3 +206,17 @@ jobs:
       - name: Run tests
         run: npm test
         working-directory: functions
+
+  result:
+    name: CI result
+    if: ${{ always() }}
+    needs: [test, visual-regression, lint, instrumented, scripts, functions]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required job outcomes
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e 'length == 6 and all(.[]; .result == "success")' <<< "$NEEDS"

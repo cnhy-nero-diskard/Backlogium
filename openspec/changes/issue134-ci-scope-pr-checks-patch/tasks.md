@@ -2,7 +2,7 @@
 
 ## 1. Introduce the stable CI result
 
-- [ ] 1.1 Add the always-evaluated `CI result` to the current unconditional workflow with all existing job names intact. Verify success when all six jobs pass and rejection when a required dependency fails, is cancelled, or is unexpectedly skipped.
+- [x] 1.1 Add the always-evaluated `CI result` to the current unconditional workflow with all existing job names intact. Verify success when all six jobs pass and rejection when a required dependency fails, is cancelled, or is unexpectedly skipped.
 - [ ] 1.2 Land the result job and confirm successful PR and `master` check runs. Update the `master` ruleset to require `CI result` and the existing release-note check, and enable up-to-date required status checks while preserving bypass actors and other enforcement settings. Verify the effective contexts, confirm an out-of-date PR cannot merge until it is updated and CI refreshes, and refresh an affected PR before starting stage 2.
 
 ## 2. Apply PR routing
