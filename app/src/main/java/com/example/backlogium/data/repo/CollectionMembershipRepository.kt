@@ -1,6 +1,6 @@
 package com.example.backlogium.data.repo
 
-import androidx.room.withTransaction
+import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.domain.CollectionPicker
 import com.example.backlogium.domain.CollectionPickerTarget
@@ -14,6 +14,7 @@ import javax.inject.Singleton
 class CollectionMembershipRepository @Inject constructor(
     private val database: BacklogiumDatabase,
     private val identity: AccountDataWriteGuard,
+    private val transaction: DatabaseTransactionScope,
 ) {
     suspend fun accountIdentity(): String = identity.capture()
     fun picker(appId: Long): Flow<CollectionPicker> = combine(
@@ -26,7 +27,7 @@ class CollectionMembershipRepository @Inject constructor(
         })
     }
 
-    suspend fun add(collectionId: Long, appId: Long, steamId: String): Boolean = database.withTransaction {
+    suspend fun add(collectionId: Long, appId: Long, steamId: String): Boolean = transaction.runDeadlineEvidence {
         checkTarget(collectionId, appId, steamId)
         val dao = database.collectionDao()
         if (dao.getMembers(collectionId).any { it.appId == appId }) false else {
@@ -35,7 +36,7 @@ class CollectionMembershipRepository @Inject constructor(
         }
     }
 
-    suspend fun remove(collectionId: Long, appId: Long, steamId: String): Boolean = database.withTransaction {
+    suspend fun remove(collectionId: Long, appId: Long, steamId: String): Boolean = transaction.runDeadlineEvidence {
         checkTarget(collectionId, appId, steamId)
         val dao = database.collectionDao()
         if (dao.getMembers(collectionId).none { it.appId == appId }) false else {

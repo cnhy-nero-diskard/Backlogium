@@ -14,7 +14,7 @@ enum class DeadlineOutcome { ESTIMATED_MET, ESTIMATED_NOT_MET, UNDETERMINED }
 @Serializable
 enum class DeadlineEvidenceGap {
     GOAL_HISTORY, MEMBERSHIP_HISTORY, VISIBILITY_HISTORY, EMPTY_MEMBERSHIP, ALL_MEMBERS_HIDDEN,
-    ESTIMATE, PLAYTIME,
+    ESTIMATE, PLAYTIME, CUTOFF_AMBIGUITY,
 }
 
 @Serializable
@@ -22,6 +22,15 @@ data class DeadlinePlayEvidence(
     val creditedMinutes: Long,
     val observedBefore: Long,
     val observedAfter: Long,
+)
+
+/** A conservative lower bound from canonical, dated, closed sessions before the cutoff. */
+@Serializable
+data class DeadlineSessionPlayEvidence(
+    val creditedMinutes: Long,
+    val sessionCount: Int,
+    val firstSessionAt: Long,
+    val lastSessionEndAt: Long,
 )
 
 @Serializable
@@ -34,10 +43,15 @@ data class DeadlineArchivedMember(
     val play: DeadlinePlayEvidence?,
     val recordedSessions: Int?,
     val recordedTrophies: Int?,
+    val sessionPlay: DeadlineSessionPlayEvidence? = null,
 ) {
     val remainingMinutes: Long?
         get() = estimateMinutes?.let { estimate ->
-            play?.let { (estimate - it.creditedMinutes).coerceAtLeast(0) }
+            when {
+                play != null -> (estimate - play.creditedMinutes).coerceAtLeast(0)
+                sessionPlay?.creditedMinutes?.let { it >= estimate } == true -> 0L
+                else -> null
+            }
         }
 }
 
@@ -53,7 +67,10 @@ data class DeadlineArchive(
     val goalObservedAt: Long?,
     val membershipKnown: Boolean,
     val members: List<DeadlineArchivedMember>,
-    @Required val outcome: DeadlineOutcome = assessDeadline(goalObservedAt, membershipKnown, members),
+    val cutoffAmbiguous: Boolean = false,
+    @Required val outcome: DeadlineOutcome = assessDeadline(
+        goalObservedAt, membershipKnown, members, cutoffAmbiguous,
+    ),
 ) {
     val evaluatedMembers: List<DeadlineArchivedMember>
         get() = members.filter { it.hiddenAtCutoff == false }
@@ -68,7 +85,13 @@ data class DeadlineArchive(
                 add(DeadlineEvidenceGap.ALL_MEMBERS_HIDDEN)
             }
             if (evaluatedMembers.any { it.estimateMinutes == null }) add(DeadlineEvidenceGap.ESTIMATE)
-            if (evaluatedMembers.any { it.play == null }) add(DeadlineEvidenceGap.PLAYTIME)
+            if (evaluatedMembers.any { member ->
+                    val estimate = member.estimateMinutes
+                    estimate != null && member.play == null &&
+                        (member.sessionPlay?.creditedMinutes ?: 0L) < estimate
+                }
+            ) add(DeadlineEvidenceGap.PLAYTIME)
+            if (cutoffAmbiguous) add(DeadlineEvidenceGap.CUTOFF_AMBIGUITY)
         }
 
 }
@@ -77,14 +100,21 @@ internal fun assessDeadline(
     goalObservedAt: Long?,
     membershipKnown: Boolean,
     members: List<DeadlineArchivedMember>,
+    cutoffAmbiguous: Boolean = false,
 ): DeadlineOutcome {
-    if (goalObservedAt == null || !membershipKnown || members.any { it.hiddenAtCutoff == null }) {
+    if (cutoffAmbiguous || goalObservedAt == null || !membershipKnown || members.any { it.hiddenAtCutoff == null }) {
         return DeadlineOutcome.UNDETERMINED
     }
     val evaluated = members.filter { it.hiddenAtCutoff == false }
     return when {
-        evaluated.any { (it.remainingMinutes ?: 0) > 0 } -> DeadlineOutcome.ESTIMATED_NOT_MET
-        evaluated.isNotEmpty() && evaluated.all { it.remainingMinutes == 0L } -> DeadlineOutcome.ESTIMATED_MET
+        evaluated.any { member ->
+            member.estimateMinutes != null && member.play?.creditedMinutes?.let { it < member.estimateMinutes } == true
+        } -> DeadlineOutcome.ESTIMATED_NOT_MET
+        evaluated.isNotEmpty() && evaluated.all { member ->
+            val estimate = member.estimateMinutes?.toLong() ?: return@all false
+            (member.play?.creditedMinutes ?: -1L) >= estimate ||
+                (member.sessionPlay?.creditedMinutes ?: -1L) >= estimate
+        } -> DeadlineOutcome.ESTIMATED_MET
         else -> DeadlineOutcome.UNDETERMINED
     }
 }

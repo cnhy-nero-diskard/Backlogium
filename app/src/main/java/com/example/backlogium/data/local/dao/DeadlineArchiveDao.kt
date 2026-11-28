@@ -6,12 +6,39 @@ import androidx.room.Query
 import com.example.backlogium.data.local.entity.DailyPlaytimeSnapshot
 import com.example.backlogium.data.local.entity.DeadlineArchiveRow
 import com.example.backlogium.data.local.entity.DeadlineRevision
+import com.example.backlogium.data.local.entity.DeadlineRevisionBatch
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface DeadlineArchiveDao {
+    @Query("SELECT * FROM deadline_revision_batch WHERE id = 0")
+    suspend fun activeBatch(): DeadlineRevisionBatch?
+
+    @Insert
+    suspend fun beginBatch(batch: DeadlineRevisionBatch)
+
+    @Query("UPDATE deadline_revision_batch SET depth = depth + 1 WHERE id = 0")
+    suspend fun nestBatch()
+
+    @Query("UPDATE deadline_revision_batch SET depth = depth - 1 WHERE id = 0")
+    suspend fun leaveBatch()
+
+    @Query("UPDATE deadline_revisions SET effectiveAt = :completedAt, batchCompletedAt = :completedAt WHERE batchId = :batchId")
+    suspend fun completeBatch(batchId: String, completedAt: Long)
+
+    @Query("DELETE FROM deadline_revision_batch WHERE id = 0")
+    suspend fun clearBatch()
+
     @Query("SELECT * FROM deadline_revisions WHERE collectionId = :id ORDER BY effectiveAt, id")
     suspend fun revisions(id: Long): List<DeadlineRevision>
+
+    @Query("""
+        SELECT EXISTS(SELECT 1 FROM deadline_revisions
+            WHERE collectionId = :id AND batchStartedAt IS NOT NULL AND batchCompletedAt IS NOT NULL
+              AND MIN(batchStartedAt, batchCompletedAt) < :cutoff
+              AND MAX(batchStartedAt, batchCompletedAt) >= :cutoff)
+    """)
+    suspend fun hasAmbiguousBatch(id: Long, cutoff: Long): Boolean
 
     @Query("SELECT * FROM deadline_archives")
     fun observeArchives(): Flow<List<DeadlineArchiveRow>>

@@ -133,6 +133,7 @@ private fun DeadlineResultSummary(archive: DeadlineArchive) {
             DeadlineEvidenceGap.ALL_MEMBERS_HIDDEN -> "All members were hidden at the cutoff."
             DeadlineEvidenceGap.ESTIMATE -> "Some selected estimates were unavailable."
             DeadlineEvidenceGap.PLAYTIME -> "Some credited playtime could not be established at the cutoff."
+            DeadlineEvidenceGap.CUTOFF_AMBIGUITY -> "A collection update crossed the cutoff, so its committed state is uncertain."
         })
     }
 }
@@ -157,6 +158,10 @@ private fun DeadlineMemberEvidence(member: DeadlineArchivedMember, hidden: Set<L
             Text("Recorded sessions · ${member.recordedSessions ?: "Unavailable"}")
             Text("Recorded trophies · ${member.recordedTrophies ?: "Unavailable"}")
             if (member.play != null) Text("Playtime supported by Steam readings on both sides of the cutoff.")
+            member.sessionPlay?.let {
+                Text("Dated closed-session play lower bound · ${minutes(it.creditedMinutes)} (${it.sessionCount} sessions)")
+                Text("This lower bound proves completion only when it reaches the selected estimate.")
+            }
         }
     }
 }

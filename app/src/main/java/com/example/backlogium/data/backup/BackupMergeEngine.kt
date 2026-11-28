@@ -150,7 +150,7 @@ class BackupMergeEngine @Inject constructor(
         // threads — so the transaction cannot deadlock or be left holding a connection open.
         val sessionIdByKey = mutableMapOf<RecoverySessionKey, Long>()
         var plan: RecoveryMergePlan? = null
-        transaction.run {
+        transaction.runDeadlineEvidence {
             val incomingArchives = file.deadlineArchives.orEmpty()
             val localArchives = if (incomingArchives.isNotEmpty() || file.collections.isNotEmpty()) {
                 deadlineArchiveDao?.archives().orEmpty().map { it.toDomain() }.associateBy { it.identity }

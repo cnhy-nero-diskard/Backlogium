@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.backlogium.data.backup.BackupCollection
+import com.example.backlogium.data.backup.BackupCollectionMember
 import com.example.backlogium.data.backup.BackupDeadlineConflict
 import com.example.backlogium.data.backup.BackupExportMapper
 import com.example.backlogium.data.backup.BackupFile
@@ -12,6 +13,7 @@ import com.example.backlogium.data.backup.BackupMergeEngine
 import com.example.backlogium.data.backup.BackupValidationResult
 import com.example.backlogium.data.backup.BackupValidator
 import com.example.backlogium.data.backup.BackupVersionedDecoder
+import com.example.backlogium.data.backup.DatabaseTransactionScope
 import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.DeadlineEvidenceSchema
@@ -31,6 +33,8 @@ import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.TimeProvider
 import com.example.backlogium.domain.deadlineCutoff
 import java.io.File
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Proxy
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.async
@@ -59,7 +63,9 @@ class DeadlineArchiveDeviceTest {
         override fun today() = LocalDate.parse(target)
     }
     private val collections = db.collectionDao()
-    private val archives = DeadlineArchiveRepository(db.deadlineArchiveDao(), collections, RoomDatabaseTransactionScope(db), time)
+    private val archives = DeadlineArchiveRepository(
+        db.deadlineArchiveDao(), collections, db.sessionDao(), RoomDatabaseTransactionScope(db), time,
+    )
 
     @After
     fun close() = db.close()
@@ -86,7 +92,7 @@ class DeadlineArchiveDeviceTest {
         val picker = CollectionMembershipRepository(db, object : AccountDataWriteGuard {
             override suspend fun capture(): String = "123"
             override suspend fun check(steamId: String) = Unit
-        })
+        }, RoomDatabaseTransactionScope(db, time))
         assertEquals(id, picker.picker(10).first().targets.single().id)
         val first = async { archives.confirm(preview) }
         val other = async { archives.confirm(preview) }
@@ -191,7 +197,8 @@ class DeadlineArchiveDeviceTest {
             assertEquals(2, destinationCollections.getMembers(restoredActive.id).size)
             assertEquals(zone.id, restoredActive.deadlineZone)
             val elapsed = DeadlineArchiveRepository(
-                destination.deadlineArchiveDao(), destinationCollections, RoomDatabaseTransactionScope(destination), time,
+                destination.deadlineArchiveDao(), destinationCollections, destination.sessionDao(),
+                RoomDatabaseTransactionScope(destination), time,
             )
             assertTrue(requireNotNull(elapsed.preview(restoredActive.id)).result.gaps
                 .contains(DeadlineEvidenceGap.MEMBERSHIP_HISTORY))
@@ -213,6 +220,43 @@ class DeadlineArchiveDeviceTest {
             assertTrue(runCatching { merge.mergeRawWithLockHeld(conflict) }.exceptionOrNull() is BackupDeadlineConflict)
             assertNull(destination.gameDao().getById(999))
             assertEquals(listOf(frozen), elapsed.archives.first())
+        } finally {
+            destination.close()
+        }
+    }
+
+    @Test
+    fun backupRestoreCrossingCutoffMarksItsDeadlineEvidenceAmbiguous() = runBlocking {
+        val destination = newDatabase()
+        try {
+            val file = decode(export().copy(
+                formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
+                deadlineArchives = emptyList(),
+                games = listOf(BackupGame(40, "Shared", isGoal = false, backfillMinutes = 0,
+                    source = "FAMILY_SHARED", manualSharedMinutes = 0)),
+                collections = listOf(BackupCollection(
+                    id = 100, name = "Restored", mode = "DEADLINE_GOAL", sort = "COMPLETION_FRACTION",
+                    targetDate = target, createdAt = cutoff - 10_000,
+                    timeBasis = "MAIN_STORY", deadlineZone = zone.id,
+                )),
+                collectionMembers = listOf(BackupCollectionMember(100, 40, 0)),
+            ))
+            now = cutoff - 10_000
+            val merge = mergeEngine(
+                destination,
+                collectionDao = collectionDaoAdvancingTimeAfterMemberUpsert(destination.collectionDao()),
+            )
+
+            merge.mergeRawWithLockHeld(file)
+
+            val restored = destination.collectionDao().getAll().single()
+            val elapsed = DeadlineArchiveRepository(
+                destination.deadlineArchiveDao(), destination.collectionDao(), destination.sessionDao(),
+                RoomDatabaseTransactionScope(destination, time), time,
+            )
+            val preview = requireNotNull(elapsed.preview(restored.id))
+            assertTrue(preview.result.cutoffAmbiguous)
+            assertEquals(DeadlineOutcome.UNDETERMINED, preview.result.outcome)
         } finally {
             destination.close()
         }
@@ -264,19 +308,38 @@ class DeadlineArchiveDeviceTest {
         }
     }
 
-    private fun mergeEngine(destination: BacklogiumDatabase) = BackupMergeEngine(
+    private fun mergeEngine(
+        destination: BacklogiumDatabase,
+        collectionDao: com.example.backlogium.data.local.dao.CollectionDao = destination.collectionDao(),
+        transaction: DatabaseTransactionScope = RoomDatabaseTransactionScope(destination, time),
+    ) = BackupMergeEngine(
         gameDao = destination.gameDao(), sessionDao = destination.sessionDao(),
         dailyProgressDao = destination.dailyProgressDao(), hltbDataDao = destination.hltbDataDao(),
         achievementDao = destination.achievementDao(), gameAchievementSyncDao = destination.gameAchievementSyncDao(),
-        playerProfileDao = destination.playerProfileDao(), collectionDao = destination.collectionDao(),
+        playerProfileDao = destination.playerProfileDao(), collectionDao = collectionDao,
         excludedSharedGameDao = destination.excludedSharedGameDao(), hiddenGameDao = destination.hiddenGameDao(),
         gamificationUpdater = GamificationUpdater(
             destination.sessionDao(), destination.dailyProgressDao(), destination.playerProfileDao(),
             destination.hltbDataDao(), destination.achievementDao(), destination.gameDao(), destination.hiddenGameDao(),
         ),
-        time = time, transaction = RoomDatabaseTransactionScope(destination),
+        time = time, transaction = transaction,
         gamePreferenceDao = destination.gamePreferenceDao(), deadlineArchiveDao = destination.deadlineArchiveDao(),
     )
+
+    private fun collectionDaoAdvancingTimeAfterMemberUpsert(
+        delegate: com.example.backlogium.data.local.dao.CollectionDao,
+    ): com.example.backlogium.data.local.dao.CollectionDao = Proxy.newProxyInstance(
+        delegate.javaClass.classLoader,
+        arrayOf(com.example.backlogium.data.local.dao.CollectionDao::class.java),
+    ) { _, method, args ->
+        try {
+            val result = method.invoke(delegate, *(args ?: emptyArray()))
+            if (method.name == "upsertMember") now = cutoff + 1_000
+            result
+        } catch (error: InvocationTargetException) {
+            throw error.targetException
+        }
+    } as com.example.backlogium.data.local.dao.CollectionDao
 
     private suspend fun create(): Long = collections.insert(Collection(
         name = "Deadline", mode = CollectionMode.DEADLINE_GOAL, sort = CollectionSort.COMPLETION_FRACTION,

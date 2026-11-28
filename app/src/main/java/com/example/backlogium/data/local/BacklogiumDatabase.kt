@@ -107,6 +107,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         Collection::class,
         CollectionMember::class,
         com.example.backlogium.data.local.entity.DeadlineRevision::class,
+        com.example.backlogium.data.local.entity.DeadlineRevisionBatch::class,
         com.example.backlogium.data.local.entity.DeadlineArchiveRow::class,
         GameGenreCache::class,
         SteamAssetManifest::class,
@@ -130,7 +131,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 55,
+    version = 56,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -178,6 +179,10 @@ abstract class BacklogiumDatabase : RoomDatabase() {
 
         val MIGRATION_54_55 = object : Migration(54, 55) {
             override fun migrate(db: SupportSQLiteDatabase) = DeadlineEvidenceSchema.migrate(db)
+        }
+
+        val MIGRATION_55_56 = object : Migration(55, 56) {
+            override fun migrate(db: SupportSQLiteDatabase) = DeadlineEvidenceSchema.migrateTransactionBoundaries(db)
         }
 
         val MIGRATION_53_54 = object : Migration(53, 54) {

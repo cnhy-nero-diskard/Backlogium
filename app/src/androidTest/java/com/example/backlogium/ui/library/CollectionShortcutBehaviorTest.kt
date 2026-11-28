@@ -15,6 +15,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.backlogium.data.backup.RoomDatabaseTransactionScope
 import com.example.backlogium.data.local.BacklogiumDatabase
 import com.example.backlogium.data.local.entity.Collection
 import com.example.backlogium.data.local.entity.Game
@@ -60,7 +61,7 @@ class CollectionShortcutBehaviorTest {
         db.gameDao().upsert(Game(10, "Portal", "", 1, 0, 1))
         collectionId = db.collectionDao().insert(Collection(name = "Weekend", mode = CollectionMode.ORDERED_QUEUE,
             sort = CollectionSort.MANUAL_SEQUENCE, createdAt = 1))
-        memberships = CollectionMembershipRepository(db, identity)
+        memberships = CollectionMembershipRepository(db, identity, RoomDatabaseTransactionScope(db))
     }
     @After fun close() { scope.cancel(); db.close() }
 

@@ -54,13 +54,20 @@ internal fun deadlineArchiveProblems(file: BackupFile): List<BackupValidationPro
                     (member.estimateMinutes ?: 1) <= 0 ||
                     (member.recordedSessions ?: 0) < 0 ||
                     (member.recordedTrophies ?: 0) < 0 ||
-                    member.play?.let { play ->
-                        play.creditedMinutes < 0 || play.observedBefore !in 1 until archive.cutoff ||
-                            play.observedAfter !in archive.cutoff..archive.finalizedAt
+                     member.play?.let { play ->
+                         play.creditedMinutes < 0 || play.observedBefore !in 1 until archive.cutoff ||
+                             play.observedAfter !in archive.cutoff..archive.finalizedAt
+                    } == true || member.sessionPlay?.let { play ->
+                        play.creditedMinutes <= 0 || play.sessionCount <= 0 || play.firstSessionAt < 0 ||
+                            play.firstSessionAt >= archive.cutoff || play.lastSessionEndAt < play.firstSessionAt ||
+                            play.lastSessionEndAt > archive.cutoff
                     } == true
-            }
+             }
         ) problem("invalid member evidence")
-        if (archive.outcome != assessDeadline(archive.goalObservedAt, archive.membershipKnown, archive.members)) {
+        if (archive.outcome != assessDeadline(
+                archive.goalObservedAt, archive.membershipKnown, archive.members, archive.cutoffAmbiguous,
+            )
+        ) {
             problem("outcome conflicts with the frozen evidence")
         }
     }

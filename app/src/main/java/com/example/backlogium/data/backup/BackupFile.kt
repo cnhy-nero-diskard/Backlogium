@@ -235,8 +235,11 @@ data class BackupDayXp(val date: String, val cumulativeXp: Long)
 
 /**
  * One custom collection (add-custom-collections), carried in the backup so a restore keeps the
- * player's groups. [mode]/[sort] are stored as their enum names (matching the Room converters);
- * [targetDate] is the ISO deadline, null outside deadline mode.
+ * player's groups. Active goal/membership revision history is local-only and is not exported, so a
+ * restored unarchived deadline can legitimately lack cutoff evidence and finalize as undetermined;
+ * immutable [DeadlineArchive] records do carry their frozen evidence. [mode]/[sort] are stored as
+ * their enum names (matching the Room converters); [targetDate] is the ISO deadline, null outside
+ * deadline mode.
  */
 @Serializable
 data class BackupCollection(

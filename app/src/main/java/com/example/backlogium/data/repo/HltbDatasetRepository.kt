@@ -240,7 +240,7 @@ class HltbDatasetRepository @Inject constructor(
         }
     }
 
-    private suspend fun applyVerified(dataset: HltbDataset): HltbDatasetApplySummary = transaction.run {
+    private suspend fun applyVerified(dataset: HltbDataset): HltbDatasetApplySummary = transaction.runDeadlineEvidence {
         val existingRows = hltbDataDao.getAll()
         val existingByAppId = existingRows.associateBy(HltbData::appId)
         val libraryAppIds = libraryCatalog.appIds()

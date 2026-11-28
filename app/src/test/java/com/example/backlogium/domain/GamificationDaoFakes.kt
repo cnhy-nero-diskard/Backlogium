@@ -64,6 +64,11 @@ internal class FakeSessionDao(private val sessions: List<Session>) : SessionDao 
         flowOf(sessions.filter { it.startAt >= cutoff && !it.open })
     override fun observeAllOpenSessions(): Flow<List<Session>> = flowOf(sessions.filter { it.open })
     override suspend fun getAll(): List<Session> = sessions
+    override suspend fun closedSessionsBefore(appId: Long, cutoff: Long): List<Session> = emptyList()
+    override suspend fun timedPlacementsForClosedSessionsBefore(
+        appId: Long,
+        cutoff: Long,
+    ): List<com.example.backlogium.data.local.entity.TimedContributionPlacement> = emptyList()
     override suspend fun sessionsByIds(sessionIds: List<Long>): List<Session> =
         sessions.filter { it.id in sessionIds.toSet() }
     override suspend fun sessionsBetweenSnapshot(startInclusive: Long, endExclusive: Long): List<Session> =

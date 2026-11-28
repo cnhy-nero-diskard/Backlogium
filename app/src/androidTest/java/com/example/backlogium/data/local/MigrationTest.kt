@@ -110,7 +110,47 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_52_53,
         BacklogiumDatabase.MIGRATION_53_54,
         BacklogiumDatabase.MIGRATION_54_55,
+        BacklogiumDatabase.MIGRATION_55_56,
     )
+
+    @Test
+    fun v55ToV56AddsDeadlineProvenanceAndSnapshotsOnlyActiveDeadlines() {
+        val name = "deadline-provenance-migration-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 55).use { db ->
+                db.execSQL(
+                    "INSERT INTO games (appId,name,iconUrl,playtimeForever,playtime2Weeks,lastPlaytime," +
+                        "isGoal,targetMinutes,lastSyncedAt,backfillMinutes,source,manualSharedMinutes) " +
+                        "VALUES (42,'Shared','',0,0,0,0,NULL,1,0,'FAMILY_SHARED',0)",
+                )
+                db.execSQL(
+                    "INSERT INTO collections (id,name,mode,sort,timeBasis,createdAt,displayOrder,deadlineZone) " +
+                        "VALUES (7,'Deadline','DEADLINE_GOAL','COMPLETION_FRACTION','MAIN_STORY',1,0,'UTC'), " +
+                        "(8,'Basic','BASIC','NAME','COMPLETIONIST',1,1,NULL)",
+                )
+                db.execSQL("INSERT INTO collection_members VALUES (7,42,0,0),(8,42,0,0)")
+            }
+
+            migrationTestHelper.runMigrationsAndValidate(
+                name, 56, true, BacklogiumDatabase.MIGRATION_55_56,
+            ).use { db ->
+                db.query(
+                    "SELECT collectionId,gameSource,batchId,batchStartedAt,batchCompletedAt " +
+                        "FROM deadline_revisions WHERE appId = 42",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(7L, cursor.getLong(0))
+                    assertEquals("FAMILY_SHARED", cursor.getString(1))
+                    assertTrue(cursor.isNull(2))
+                    assertTrue(cursor.isNull(3))
+                    assertTrue(cursor.isNull(4))
+                    assertFalse(cursor.moveToNext())
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
 
     @Test
     fun v54ToV55StartsDeadlineEvidenceWithoutBackdatingLegacyMembers() {
@@ -2118,6 +2158,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_52_53,
                 BacklogiumDatabase.MIGRATION_53_54,
                 BacklogiumDatabase.MIGRATION_54_55,
+                BacklogiumDatabase.MIGRATION_55_56,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())

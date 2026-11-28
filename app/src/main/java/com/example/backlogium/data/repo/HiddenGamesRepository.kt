@@ -1,5 +1,7 @@
 package com.example.backlogium.data.repo
 
+import com.example.backlogium.data.backup.DatabaseTransactionScope
+import com.example.backlogium.data.backup.PassThroughTransactionScope
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GameGenreCacheDao
 import com.example.backlogium.data.local.dao.HiddenGameDao
@@ -57,6 +59,7 @@ class HiddenGamesRepository @Inject constructor(
     private val gameDao: GameDao,
     private val storeCacheDao: GameGenreCacheDao,
     private val time: TimeProvider,
+    private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
 ) {
     /** Every hidden app id, as the exclusion joins consume it. */
     val hiddenAppIds: Flow<Set<Long>> =
@@ -102,16 +105,18 @@ class HiddenGamesRepository @Inject constructor(
     /** Hide [appIds]. Re-hiding an already hidden game refreshes nothing the player can see. */
     suspend fun hide(appIds: Collection<Long>, fromBulkAction: Boolean = false) {
         if (appIds.isEmpty()) return
-        val now = time.nowMillis()
-        hiddenGameDao.upsertAll(
-            appIds.distinct().map { HiddenGame(appId = it, hiddenAt = now, fromBulkAction = fromBulkAction) },
-        )
+        transaction.runDeadlineEvidence {
+            val now = time.nowMillis()
+            hiddenGameDao.upsertAll(
+                appIds.distinct().map { HiddenGame(appId = it, hiddenAt = now, fromBulkAction = fromBulkAction) },
+            )
+        }
     }
 
     /** Unhide [appIds]. Nothing else is written: the game's own rows were never removed. */
     suspend fun unhide(appIds: Collection<Long>) {
         if (appIds.isEmpty()) return
-        hiddenGameDao.delete(appIds.distinct())
+        transaction.runDeadlineEvidence { hiddenGameDao.delete(appIds.distinct()) }
     }
 
     suspend fun unhideAll() = hiddenGameDao.deleteAll()
