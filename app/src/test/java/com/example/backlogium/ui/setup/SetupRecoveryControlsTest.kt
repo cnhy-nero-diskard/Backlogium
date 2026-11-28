@@ -105,6 +105,20 @@ class SetupRecoveryControlsTest {
     }
 
     @Test
+    fun committedPartialStageOffersRetry() {
+        var retried: String? = null
+        val rows = setupStagesUi(listOf(fakeStage("sync")), emptySet(), SetupRunState(
+            loaded = true, finished = true, outcomes = mapOf("sync" to SetupOutcome.Partial)))
+        compose.setContent { BacklogiumTheme {
+            SetupChecklist(SetupUiState(loading = false, stages = rows, finished = true),
+                onToggle = { _, _ -> }, onRetry = { retried = it }, showRetry = true)
+        } }
+
+        compose.onNodeWithText("Retry").assertIsEnabled().performClick()
+        assertEquals("sync", retried)
+    }
+
+    @Test
     fun continueRemainsEnabledDuringBackoff() {
         var continued = false
         val rows = setupStagesUi(listOf(fakeStage("sync")), emptySet(), SetupRunState(

@@ -16,6 +16,7 @@ class SetupOutcomeTest {
         val outcomes = listOf(
             SetupOutcome.NeverRun,
             SetupOutcome.Succeeded,
+            SetupOutcome.Partial,
             SetupOutcome.Skipped,
             SetupOutcome.Failed("couldn't reach Steam"),
         )

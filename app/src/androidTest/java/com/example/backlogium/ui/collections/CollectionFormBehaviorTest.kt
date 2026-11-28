@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.junit4.createComposeRule
+import com.example.backlogium.R
 import com.example.backlogium.data.repo.LibraryGame
 import com.example.backlogium.ui.theme.BacklogiumTheme
 import androidx.compose.runtime.mutableStateOf
@@ -101,6 +102,28 @@ class CollectionFormBehaviorTest {
         composeRule.waitForIdle()
 
         assertEquals(0, saveCalls)
+    }
+
+    @Test
+    fun deleteFailureInEditorOffersDeleteRetry() {
+        var deleteRetries = 0
+        var refreshes = 0
+        composeRule.setContent {
+            BacklogiumTheme {
+                CollectionFormContent(
+                    state = formState().copy(saveError = R.string.collection_delete_failed),
+                    actions = CollectionFormActions(
+                        onRetryDelete = { deleteRetries++ },
+                        onRefresh = { refreshes++ },
+                    ),
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Retry deletion").assertIsDisplayed().performClick()
+
+        assertEquals(1, deleteRetries)
+        assertEquals(0, refreshes)
     }
 
     @Test

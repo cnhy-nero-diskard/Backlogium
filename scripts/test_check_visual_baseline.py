@@ -55,6 +55,7 @@ class PathClassificationTest(unittest.TestCase):
             "app/src/main/java/com/example/backlogium/ui/setup/SetupChecklist.kt",
             "app/src/main/java/com/example/backlogium/ui/onboarding/HistoryImportStep.kt",
             "app/src/test/java/com/example/backlogium/ui/screenshot/SetupRecoveryScreenshotTest.kt",
+            "app/src/test/java/com/example/backlogium/ui/screenshot/SyncFeedbackScreenshotTest.kt",
         ):
             self.assertTrue(is_fixture_input(path), path)
 

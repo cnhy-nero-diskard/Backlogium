@@ -62,8 +62,8 @@ class HistoryImportViewModel @Inject constructor(
                 action()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
-                state.update { it.copy(error = error.message ?: "History import didn't finish. Try again.") }
+            } catch (_: Exception) {
+                state.update { it.copy(error = "History import didn't finish. Try again.") }
             } finally {
                 state.update { it.copy(importing = false) }
             }

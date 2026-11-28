@@ -128,7 +128,7 @@ import com.example.backlogium.data.local.entity.SyncRun
         PlaytimeRecoveryJournal::class,
         LocalTimingEvidence::class,
     ],
-    version = 53,
+    version = 54,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -170,6 +170,19 @@ abstract class BacklogiumDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE game_achievement_sync ADD COLUMN completedAt INTEGER")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_game_achievement_sync_completedAt ON game_achievement_sync(completedAt)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_achievements_unlockedAt ON achievements(unlockedAt)")
+            }
+        }
+
+        val MIGRATION_53_54 = object : Migration(53, 54) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN accountGeneration INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN executionId TEXT")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN executionStartedAt INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN achievementProcessed INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN achievementTotal INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN achievementSkipped INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN achievementFailed INTEGER")
+                db.execSQL("ALTER TABLE library_poll_commits ADD COLUMN achievementUpdated INTEGER")
             }
         }
 

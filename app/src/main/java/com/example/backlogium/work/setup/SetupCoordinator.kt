@@ -43,6 +43,7 @@ data class SetupRunState(
     val finished: Boolean = false,
     val pending: Set<String> = emptySet(),
     val stageProgress: Map<String, SetupStageProgress> = emptyMap(),
+    val workIds: Map<String, String> = emptyMap(),
 )
 
 @Singleton
@@ -289,6 +290,7 @@ class SetupCoordinator @Inject constructor(
                     outcomes = ids.associateWith { journal.stages[it]?.outcome ?: SetupOutcome.NeverRun },
                     selected = journal.selected.intersect(ids.toSet()),
                     pending = pending,
+                    workIds = journal.stages.mapNotNull { (id, record) -> record.workId?.let { id to it } }.toMap(),
                     stageProgress = state.stageProgress.filterKeys { it in pending },
                     currentStageId = foregroundStage,
                     progress = state.stageProgress[foregroundStage]?.takeIf { foregroundStage in pending },

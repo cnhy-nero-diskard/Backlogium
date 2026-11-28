@@ -1,5 +1,8 @@
 package com.example.backlogium.ui.collections
 
+import com.example.backlogium.R
+import androidx.annotation.StringRes
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -90,7 +93,7 @@ data class CollectionUiState(
     val done: Boolean = false,
     /** True while save is in flight; guards against double taps and disables controls. */
     val saving: Boolean = false,
-    val saveError: String? = null,
+    @get:StringRes val saveError: Int? = null,
 ) {
     /** Library games not already members — the add-games control's pool. */
     val addableGames: List<LibraryGame>
@@ -141,7 +144,7 @@ class CollectionViewModel @Inject constructor(
     private val _loaded = MutableStateFlow(collectionId == 0L)
     private val _done = MutableStateFlow(false)
     private val _saving = MutableStateFlow(false)
-    private val _saveError = MutableStateFlow<String?>(null)
+    private val _saveError = MutableStateFlow<Int?>(null)
     private var membershipBaseline: List<CollectionMembershipState>? = null
 
     init {
@@ -518,8 +521,8 @@ class CollectionViewModel @Inject constructor(
                 throw cancelled
             } catch (failure: Exception) {
                 _saveError.value = if (failure is com.example.backlogium.domain.CollectionEditConflict) {
-                    "Collection membership changed. Refresh to load the latest collection, then retry your edits."
-                } else "Could not save the collection. Retry or refresh."
+                    R.string.collection_membership_conflict
+                } else R.string.collection_save_failed
             } finally {
                 _saving.value = false
             }
@@ -528,10 +531,20 @@ class CollectionViewModel @Inject constructor(
 
     /** Delete the collection; memberships cascade via the FK. */
     fun delete() {
-        if (collectionId == 0L) return
+        if (collectionId == 0L || _saving.value) return
+        _saving.value = true
+        _saveError.value = null
         viewModelScope.launch {
-            collectionRepository.delete(collectionId)
-            _done.value = true
+            try {
+                collectionRepository.delete(collectionId)
+                _done.value = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _saveError.value = R.string.collection_delete_failed
+            } finally {
+                _saving.value = false
+            }
         }
     }
 }

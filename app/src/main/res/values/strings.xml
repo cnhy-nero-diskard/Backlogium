@@ -250,7 +250,7 @@
     <string name="settings_history_title">Steam history</string>
     <string name="settings_history_imported">History imported</string>
     <string name="settings_history_imported_description">Past playtime already counts toward your XP.</string>
-    <string name="settings_history_operation_failed">History update did not finish: %1$s</string>
+    <string name="settings_history_operation_failed">History update did not finish. Try the history action below again.</string>
     <string name="settings_history_reset">Reset import</string>
     <string name="settings_history_unimported_description">Count your pre-install Steam playtime toward XP. One-time only.</string>
     <string name="settings_history_import">Import Steam history</string>
@@ -355,7 +355,7 @@
     <string name="settings_backup_imported_recovery_warning">Backup imported with %1$d recovery warning(s). %2$s</string>
     <string name="settings_backup_snapshot_deleted">Snapshot deleted.</string>
     <string name="settings_backup_snapshot_unavailable">That snapshot is no longer available.</string>
-    <string name="settings_backup_operation_failed">Backup operation failed: %1$s</string>
+    <string name="settings_backup_operation_failed">Backup operation did not finish. Check the selected file and available storage, then try again.</string>
     <string name="settings_backup_rejected">Backup rejected — %1$s</string>
     <string name="settings_backup_validation_problem">%1$s[%2$d]: %3$s</string>
     <string name="settings_backup_validation_separator">; </string>
@@ -996,4 +996,27 @@
     <string name="analytics_record_return_missing">No return supported by positive dates separated by at least 30 full quiet dates.</string>
     <string name="analytics_record_rarest">Rarest dated unlock: %1$s · %2$s · %3$s%% retained rarity · %4$s</string>
     <string name="analytics_record_rarest_missing">Rarest dated unlock unavailable: no dated unlock with retained rarity.</string>
+    <string name="operation_steam">Steam sync</string>
+    <string name="operation_achievements">Achievement refresh</string>
+    <string name="operation_status">%1$s — %2$s</string>
+    <string name="operation_preparing">Preparing</string>
+    <string name="operation_fetching_library">Fetching library</string>
+    <string name="operation_fetching_achievements">Refreshing achievements</string>
+    <string name="operation_saving">Saving library and progress</string>
+    <string name="operation_queued">Queued; waiting for background work</string>
+    <string name="operation_retrying">Waiting to retry automatically</string>
+    <string name="operation_cancelled">Cancelled; you can try again</string>
+    <string name="operation_succeeded">Completed</string>
+    <string name="operation_partial">Completed with some failures; you can try again</string>
+    <string name="operation_failed">Could not complete; try again or check your Steam account</string>
+    <string name="operation_counts">%1$d / %2$d processed · %3$d skipped · %4$d failed</string>
+    <string name="operation_updated">%1$d games changed</string>
+    <string name="offline_status">Offline · Your saved library and local changes are still available</string>
+    <string name="history_import_failed">History import didn\'t finish. Try again.</string>
+    <string name="collection_membership_conflict">Collection membership changed. Refresh to load the latest collection, then retry your edits.</string>
+    <string name="collection_save_failed">Could not save the collection. Retry or refresh.</string>
+    <string name="collection_delete_failed">Could not delete the collection. Your collection is still available.</string>
+    <string name="collection_retry_delete">Retry deletion</string>
+    <string name="hltb_broader_search_failed">HowLongToBeat search did not finish. Try again or enter a game link.</string>
+    <string name="operation_waiting">Waiting for required device conditions</string>
 </resources>

@@ -76,6 +76,7 @@ class SyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
     @ApplicationScope private val applicationScope: CoroutineScope,
     private val accountMarker: AccountChangeMarkerStore = AccountChangeMarkerStore(context),
+    private val operationReports: OperationReportStore = OperationReportStore(context),
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
 
@@ -96,6 +97,59 @@ class SyncScheduler @Inject constructor(
             .setRequiredNetworkType(NetworkType.UNMETERED)
             .setRequiresCharging(true)
             .build()
+
+    private fun operation(
+        oneTimeName: String,
+        periodicName: String,
+        channel: OperationChannel,
+    ): Flow<com.example.backlogium.domain.OperationProgress?> = combine(
+        workManager.getWorkInfosForUniqueWorkFlow(oneTimeName),
+        workManager.getWorkInfosForUniqueWorkFlow(periodicName),
+        accountMarker.activeGeneration,
+        operationReports.observe(channel),
+    ) { oneTime, periodic, generation, stored ->
+        generation?.let { activeGeneration ->
+            val periodicInfo = periodic.firstOrNull()
+            val candidates = oneTime.mapNotNull { info ->
+                val report = stored.firstOrNull {
+                    it.workId == info.id.toString() &&
+                        (it.source == OperationSource.MANUAL || it.source == OperationSource.LEGACY)
+                }
+                oneTimeOperation(info, activeGeneration, report)
+            } + listOfNotNull(periodicInfo?.let { info ->
+                val report = stored.firstOrNull {
+                    it.workId == info.id.toString() &&
+                        (it.source == OperationSource.PERIODIC || it.source == OperationSource.LEGACY)
+                }
+                periodicOperation(info, activeGeneration, report)
+            })
+            latestOperation(candidates)
+        }
+    }.distinctUntilChanged()
+
+    fun operationForWork(workId: String?): Flow<com.example.backlogium.domain.OperationProgress?> {
+        val id = workId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+            ?: return kotlinx.coroutines.flow.flowOf(null)
+        return combine(
+            workManager.getWorkInfoByIdFlow(id),
+            accountMarker.activeGeneration,
+            operationReports.observe(OperationChannel.STEAM),
+        ) { info, generation, stored ->
+            if (info == null || generation == null) return@combine null
+            val report = stored.firstOrNull {
+                it.workId == info.id.toString() &&
+                    (it.source == OperationSource.MANUAL || it.source == OperationSource.LEGACY)
+            }
+            oneTimeOperation(info, generation, report)?.progress
+        }.distinctUntilChanged()
+    }
+
+    val steamOperation = operation(
+        SteamSyncWorker.ONE_TIME_NAME, SteamSyncWorker.UNIQUE_PERIODIC_NAME, OperationChannel.STEAM,
+    )
+    val achievementOperation = operation(
+        ReconciliationWorker.ONE_TIME_NAME, ReconciliationWorker.PERIODIC_NAME, OperationChannel.ACHIEVEMENTS,
+    )
 
     /**
      * Emits true while a reconciliation pass is enqueued or running — the manual/forced one-time
@@ -199,6 +253,7 @@ class SyncScheduler @Inject constructor(
         admitSetupWork(SteamSyncWorker.ONE_TIME_NAME, generation) {
         OneTimeWorkRequestBuilder<SteamSyncWorker>()
             .setId(id)
+            .addTag("operation-requested:${System.currentTimeMillis()}")
             .addTag(setupAccountTag(it))
             .setConstraints(networkConstraints)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -377,22 +432,30 @@ class SyncScheduler @Inject constructor(
      * Suspends only to read that state — `getWorkInfosForUniqueWorkFlow` never blocks a thread.
      */
     suspend fun reconcileNow(force: Boolean = false) {
-        val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
-            .setConstraints(if (force) networkConstraints else reconciliationConstraints)
-            .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force))
-        val policy = if (force) {
-            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            builder.addTag(forcedTag)
-            val forcedRunAlreadyInFlight = workManager
-                .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME)
-                .first()
-                .any { it.state.isInFlight() && forcedTag in it.tags }
-            if (forcedRunAlreadyInFlight) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
-        } else {
-            ExistingWorkPolicy.KEEP
-        }
+        accountMarker.withAccountState {
+            val generation = accountMarker.generation()
+            check(accountMarker.pendingSteamId() == null) {
+                "An account change is in progress. Retry the achievement refresh when it finishes."
+            }
+            val builder = OneTimeWorkRequestBuilder<ReconciliationWorker>()
+                .addTag(setupAccountTag(generation))
+                .addTag("operation-requested:${System.currentTimeMillis()}")
+                .setConstraints(if (force) networkConstraints else reconciliationConstraints)
+                .setInputData(workDataOf(ReconciliationWorker.KEY_FORCE to force, OP_ACCOUNT to generation))
+            val policy = if (force) {
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                builder.addTag(forcedTag)
+                val forcedRunAlreadyInFlight = workManager
+                    .getWorkInfosForUniqueWorkFlow(ReconciliationWorker.ONE_TIME_NAME)
+                    .first()
+                    .any { it.state.isInFlight() && forcedTag in it.tags }
+                if (forcedRunAlreadyInFlight) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
+            } else {
+                ExistingWorkPolicy.KEEP
+            }
 
-        workManager.enqueueUniqueWork(ReconciliationWorker.ONE_TIME_NAME, policy, builder.build())
+            workManager.enqueueUniqueWork(ReconciliationWorker.ONE_TIME_NAME, policy, builder.build()).await()
+        }
     }
 
     private fun WorkInfo.State.isInFlight() = this == WorkInfo.State.ENQUEUED || this == WorkInfo.State.RUNNING

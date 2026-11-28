@@ -11,6 +11,9 @@ sealed interface SetupOutcome {
 
     data object Succeeded : SetupOutcome
 
+    /** The operation committed usable results but also reported incomplete item work. */
+    data object Partial : SetupOutcome
+
     data object Cancelled : SetupOutcome
 
     data object RecoveryRequired : SetupOutcome
@@ -31,6 +34,7 @@ private const val ENCODED_FAILED_PREFIX = "failed:"
 fun encodeSetupOutcome(outcome: SetupOutcome): String = when (outcome) {
     SetupOutcome.NeverRun -> ENCODED_NEVER_RUN
     SetupOutcome.Succeeded -> ENCODED_SUCCEEDED
+    SetupOutcome.Partial -> "partial"
     SetupOutcome.Cancelled -> "cancelled"
     SetupOutcome.RecoveryRequired -> "recovery_required"
     SetupOutcome.Skipped -> ENCODED_SKIPPED
@@ -44,6 +48,7 @@ fun encodeSetupOutcome(outcome: SetupOutcome): String = when (outcome) {
 fun decodeSetupOutcome(encoded: String?): SetupOutcome = when {
     encoded == null -> SetupOutcome.NeverRun
     encoded == ENCODED_SUCCEEDED -> SetupOutcome.Succeeded
+    encoded == "partial" -> SetupOutcome.Partial
     encoded == "cancelled" -> SetupOutcome.Cancelled
     encoded == "recovery_required" -> SetupOutcome.RecoveryRequired
     encoded == ENCODED_SKIPPED -> SetupOutcome.Skipped

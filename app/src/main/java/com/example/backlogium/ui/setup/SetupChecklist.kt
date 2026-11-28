@@ -120,9 +120,13 @@ private fun StageRow(
             }
 
             if (stage.running) RunningProgress(stage)
+            else stage.operation?.let {
+                com.example.backlogium.ui.components.OperationStatusRow(stage.title, it)
+            }
 
             val reason = when (val outcome = stage.outcome) {
                 is SetupOutcome.Failed -> outcome.reason
+                SetupOutcome.Partial -> "The library was saved, but some achievement updates did not finish."
                 SetupOutcome.Cancelled -> "Cancelled before it finished."
                 SetupOutcome.RecoveryRequired -> "The previous request could not be found. Retry this step."
                 else -> null
@@ -144,16 +148,17 @@ private fun StageRow(
     }
 }
 
-/**
- * Determinate where the underlying work publishes a total, indeterminate where it does not. The
- * library sync publishes none, so it deliberately shows a bar with no figure rather than a `0 / 0`
- * that reads as stalled.
- */
+/** Only enumerated work uses a determinate bar; unknown duration stays indeterminate. */
 @Composable
 private fun RunningProgress(stage: SetupStageUi) {
-    Text(text = stage.activityLabel(), style = MaterialTheme.typography.bodySmall)
     val progress = stage.progress
-    if (progress != null) {
+    val operation = stage.operation
+    if (operation != null) {
+        com.example.backlogium.ui.components.OperationStatusRow(stage.title, operation)
+        return
+    }
+    Text(text = stage.activityLabel(), style = MaterialTheme.typography.bodySmall)
+    if (progress != null && progress.isDeterminate) {
         Text(
             text = "${progress.processed} / ${progress.total}" +
                 if (progress.label.isNotBlank()) " — ${progress.label}" else "",
@@ -179,6 +184,13 @@ private fun OutcomeBadge(stage: SetupStageUi) {
             TablerIcons.CircleCheck,
             contentDescription = "Done",
             tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+
+        SetupOutcome.Partial -> Icon(
+            TablerIcons.AlertCircle,
+            contentDescription = "Partially complete",
+            tint = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.size(20.dp),
         )
 

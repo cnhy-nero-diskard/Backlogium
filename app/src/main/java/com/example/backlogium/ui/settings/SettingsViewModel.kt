@@ -246,6 +246,8 @@ data class SettingsUiState(
     val lastSyncError: String? = null,
     val isSyncing: Boolean = false,
     val isReconciling: Boolean = false,
+    val steamOperation: com.example.backlogium.domain.OperationProgress? = null,
+    val achievementOperation: com.example.backlogium.domain.OperationProgress? = null,
     val genreEnrichmentStatus: GenreEnrichmentStatus = GenreEnrichmentStatus.IDLE,
     val steamAssetStatus: SteamAssetDownloadStatus = SteamAssetDownloadStatus.IDLE,
     val steamAssetProgress: SteamAssetDownloadProgress? = null,
@@ -261,6 +263,7 @@ data class SettingsUiState(
     val historyImported: Boolean = false,
     val historyReadiness: HistoryImportReadiness = HistoryImportReadiness.NEEDS_SYNC,
     val isImportingHistory: Boolean = false,
+    val historyError: Boolean = false,
     /** The persisted rules — what "discard" returns to and what a change is measured against. */
     val savedConfig: RuleConfig = RuleConfig(),
     val draft: RuleDraft = RuleDraft.from(RuleConfig()),
@@ -360,6 +363,7 @@ class SettingsViewModel @Inject constructor(
     private val previewing = MutableStateFlow(false)
     private val confirmation = MutableStateFlow<RuleChangeConfirmation?>(null)
     private val isImportingHistory = MutableStateFlow(false)
+    private val historyError = MutableStateFlow(false)
 
     private val backupBusy = MutableStateFlow(false)
     private val backupMessage = MutableStateFlow<SettingsText?>(null)
@@ -493,6 +497,10 @@ class SettingsViewModel @Inject constructor(
         },
     ) { state, transferApplied ->
         state.copy(cloudPresenceTransferApplied = transferApplied)
+    }.combine(syncScheduler.steamOperation) { state, operation ->
+        state.copy(steamOperation = operation)
+    }.combine(syncScheduler.achievementOperation) { state, operation ->
+        state.copy(achievementOperation = operation)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
     }.combine(profileRepository.historyImportReadiness) { state, readiness ->
@@ -615,6 +623,8 @@ class SettingsViewModel @Inject constructor(
             hltbContributionMessage = hltb.contribution.message,
             hltbContributionSeverity = hltb.contribution.severity,
         )
+    }.combine(historyError) { state, failed ->
+        state.copy(historyError = failed)
     }.combine(cloudState) { state, cloud ->
         state.copy(
             cloudEndpoint = cloud.endpoint,
@@ -1523,14 +1533,14 @@ class SettingsViewModel @Inject constructor(
     private fun runHistoryOp(op: suspend () -> Unit) {
         if (isImportingHistory.value) return
         isImportingHistory.value = true
+        historyError.value = false
         viewModelScope.launch {
             try {
                 op()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
-                _toastMessages.tryEmit(SettingsText(R.string.settings_history_operation_failed,
-                    listOf(error.message ?: "Try again.")))
+            } catch (_: Exception) {
+                historyError.value = true
             } finally {
                 isImportingHistory.update { false }
             }
@@ -1657,12 +1667,15 @@ class SettingsViewModel @Inject constructor(
     // Serialize export/import/restore behind one in-flight flag, mirroring runHistoryOp.
     private fun runBackupOp(op: suspend () -> Unit) {
         if (backupBusy.value) return
+        backupBusy.value = true
+        backupMessage.value = null
         viewModelScope.launch {
-            backupBusy.update { true }
             try {
                 op()
-            } catch (e: Exception) {
-                backupMessage.value = SettingsText(R.string.settings_backup_operation_failed, listOf(e.message))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                backupMessage.value = SettingsText(R.string.settings_backup_operation_failed)
             } finally {
                 backupBusy.update { false }
             }

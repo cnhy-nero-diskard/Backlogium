@@ -801,3 +801,10 @@ Settings SHALL provide independent preferences for new games, broken streaks, da
 #### Scenario: Upgrading with existing shared-admission alerts
 - **WHEN** the player upgrades from a version with the Family Shared notification channel
 - **THEN** the channel keeps its existing system settings and owned-game alerts start off
+
+### Requirement: Sync cards show their own progress and results
+Settings SHALL render Steam sync and achievement refresh progress in their respective operation rows or cards. In-flight and terminal summaries SHALL refer to the associated operation and provide relevant existing recovery actions.
+
+#### Scenario: Steam and achievements overlap
+- **WHEN** one Steam poll and one eligible achievement refresh are pending
+- **THEN** each card shows its own phase and outcomes and only applicable actions

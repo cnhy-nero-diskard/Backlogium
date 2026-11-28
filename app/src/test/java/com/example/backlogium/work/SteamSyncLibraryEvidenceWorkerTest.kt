@@ -29,6 +29,8 @@ import com.example.backlogium.domain.FakeSettingsRepository
 import com.example.backlogium.domain.GamificationRecoveryDerivedCompute
 import com.example.backlogium.domain.GamificationUpdater
 import com.example.backlogium.domain.GameSource
+import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationStatus
 import com.example.backlogium.domain.PlaytimeObservationCommitter
 import com.example.backlogium.data.repo.PlaytimeRecoveryCommitAdapter
 import com.example.backlogium.domain.RecoveryDailyCreditCoordinator
@@ -46,11 +48,14 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.fail
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -66,6 +71,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
         .allowMainThreadQueries().build()
     private val commits = db.libraryPollCommitDao()
     private val marker = AccountChangeMarkerStore(context)
+    private val operationReports = OperationReportStore(context)
     private var configured = true
     private val credentials = object : CredentialsProvider {
         override suspend fun currentCredentials() =
@@ -102,6 +108,12 @@ class SteamSyncLibraryEvidenceWorkerTest {
     )
     private val dailyCredit = RecoveryDailyCreditCoordinator(db.dailyProgressDao())
     private var ownedGames: suspend () -> OwnedGamesResponse = { OwnedGamesResponse(OwnedGamesResult(0)) }
+    private var failPlayerAchievements = false
+    private var cancelledPlayerAchievementRequest: Int? = null
+    private var playerAchievementRequests = 0
+    private var playerAchievements = listOf(
+        com.example.backlogium.data.remote.dto.PlayerAchievementDto("ACH_1", achieved = 1, unlocktime = 5L),
+    )
     private val unusedApi = Proxy.newProxyInstance(SteamApi::class.java.classLoader, arrayOf(SteamApi::class.java)) {
         _, method, _ -> throw IOException("No fixture for ${method.name}")
     } as SteamApi
@@ -113,6 +125,40 @@ class SteamSyncLibraryEvidenceWorkerTest {
             includePlayedFreeGames: Int,
             scope: SyncRunRecorder.RunScope?,
         ) = ownedGames()
+
+        override suspend fun getPlayerAchievements(
+            key: String,
+            steamId: String,
+            appId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ): com.example.backlogium.data.remote.dto.PlayerAchievementsResponse {
+            if (playerAchievementRequests++ == cancelledPlayerAchievementRequest) {
+                throw CancellationException("fixture constraint stop")
+            }
+            if (failPlayerAchievements) throw IOException("fixture achievement failure")
+            return com.example.backlogium.data.remote.dto.PlayerAchievementsResponse(
+                com.example.backlogium.data.remote.dto.PlayerAchievementsResult(
+                    success = true, achievements = playerAchievements,
+                ),
+            )
+        }
+
+        override suspend fun getSchemaForGame(
+            key: String,
+            appId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ) = com.example.backlogium.data.remote.dto.GameSchemaResponse(
+            com.example.backlogium.data.remote.dto.GameSchemaResult(
+                com.example.backlogium.data.remote.dto.AvailableGameStatsDto(
+                    achievements = listOf(com.example.backlogium.data.remote.dto.AchievementSchemaDto(name = "ACH_1")),
+                ),
+            ),
+        )
+
+        override suspend fun getGlobalAchievementPercentages(
+            gameId: Long,
+            scope: SyncRunRecorder.RunScope?,
+        ) = com.example.backlogium.data.remote.dto.GlobalAchievementPercentagesResponse()
     }
 
     @After
@@ -144,6 +190,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
 
     @Test
     fun confirmedEmptyCommitsAndUnreadableRefreshHasItsOwnOutcome() = runTest {
+        operationReports.clearForTest()
         ownedGames = { OwnedGamesResponse() }
         val unreadable = worker()
         assertEquals(SteamSyncWorker.POLL_NOT_PERFORMED, output(unreadable).getString(SteamSyncWorker.KEY_POLL_RESULT))
@@ -151,8 +198,12 @@ class SteamSyncLibraryEvidenceWorkerTest {
 
         ownedGames = { OwnedGamesResponse(OwnedGamesResult(0)) }
         val empty = worker()
-        assertEquals(SteamSyncWorker.POLL_COMMITTED, output(empty).getString(SteamSyncWorker.KEY_POLL_RESULT))
+        val emptyOutput = output(empty)
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, emptyOutput.getString(SteamSyncWorker.KEY_POLL_RESULT))
+        assertEquals(com.example.backlogium.domain.OperationCounts(0, 0), emptyOutput.operationCounts())
         assertEquals(0, commits.get(empty.id.toString(), ACCOUNT)?.gameCount)
+        assertEquals(0, commits.get(empty.id.toString(), ACCOUNT)?.achievementTotal)
+        assertEquals(0, emptyOutput.getInt(OP_UPDATED, -1))
         assertTrue(db.gameDao().getAll().isEmpty())
 
         ownedGames = { throw IOException("fixture connection loss") }
@@ -160,6 +211,112 @@ class SteamSyncLibraryEvidenceWorkerTest {
         assertEquals(Result.retry(), failed.doWork())
         assertNull(commits.get(failed.id.toString(), ACCOUNT))
         assertTrue(commits.hasBaseline(ACCOUNT))
+    }
+
+    @Test
+    fun committedInlineAchievementEvidenceIsMeasuredAndRecoveredWithoutInventedCounts() = runTest {
+        operationReports.clearForTest()
+        ownedGames = {
+            OwnedGamesResponse(OwnedGamesResult(1, listOf(
+                OwnedGameDto(10, "Fixture", playtimeForever = 100, playtime2Weeks = 10),
+            )))
+        }
+        val sql = db.openHelper.writableDatabase
+        sql.execSQL("CREATE TRIGGER fixture_finalization_interrupt BEFORE UPDATE ON library_poll_commits " +
+            "BEGIN SELECT RAISE(ABORT, 'fixture finalization interruption'); END")
+
+        val first = worker()
+        assertEquals(Result.retry(), first.doWork())
+        val receipt = commits.get(first.id.toString(), ACCOUNT)!!
+        assertEquals(1, receipt.achievementProcessed)
+        assertEquals(1, receipt.achievementTotal)
+        assertEquals(0, receipt.achievementSkipped)
+        assertEquals(0, receipt.achievementFailed)
+        assertEquals(1, receipt.achievementUpdated)
+        sql.execSQL("DROP TRIGGER fixture_finalization_interrupt")
+
+        val recovered = output(worker(id = first.id))
+        assertEquals(SteamSyncWorker.POLL_COMMITTED, recovered.getString(SteamSyncWorker.KEY_POLL_RESULT))
+        assertEquals(com.example.backlogium.domain.OperationCounts(1, 1), recovered.operationCounts())
+        assertEquals(1, recovered.getInt(OP_UPDATED, -1))
+
+        val unchanged = output(worker())
+        assertEquals(com.example.backlogium.domain.OperationCounts(1, 1), unchanged.operationCounts())
+        assertEquals("unchanged fetched content is not reported as changed", 0, unchanged.getInt(OP_UPDATED, -1))
+    }
+
+    @Test
+    fun partialInlineFailureIsRetainedInThePollReceiptAndNotReplacedByLibrarySize() = runTest {
+        operationReports.clearForTest()
+        failPlayerAchievements = true
+        ownedGames = {
+            OwnedGamesResponse(OwnedGamesResult(1, listOf(
+                OwnedGameDto(10, "Fixture", playtimeForever = 100, playtime2Weeks = 10),
+            )))
+        }
+
+        val first = worker()
+        val output = output(first)
+        val receipt = commits.get(first.id.toString(), ACCOUNT)!!
+
+        assertEquals(com.example.backlogium.domain.OperationCounts(1, 1, failed = 1), output.operationCounts())
+        assertEquals(0, output.getInt(OP_UPDATED, -1))
+        assertEquals(1, receipt.achievementFailed)
+        assertEquals(0, receipt.achievementUpdated)
+        val info = androidx.work.WorkInfo(
+            first.id, androidx.work.WorkInfo.State.SUCCEEDED,
+            setOf("setup-account:${marker.generation()}"), output,
+        )
+        assertEquals(com.example.backlogium.domain.OperationStatus.PARTIAL,
+            operationProgress(info, marker.generation())?.status)
+    }
+
+    @Test
+    fun constraintInterruptedSteamAndReconciliationWorkersPersistTheirMeasuredSnapshots() = runTest {
+        operationReports.clearForTest()
+        playerAchievementRequests = 0
+        cancelledPlayerAchievementRequest = 5
+        ownedGames = {
+            OwnedGamesResponse(OwnedGamesResult(10, (10L..19L).map { appId ->
+                OwnedGameDto(appId, "Fixture $appId", playtimeForever = 100, playtime2Weeks = 10)
+            }))
+        }
+        val steam = worker()
+        try {
+            steam.doWork()
+            fail("the configured achievement request must interrupt the poll")
+        } catch (_: CancellationException) {
+            // WorkManager also uses cancellation when constraints stop a running worker.
+        }
+
+        val steamReport = operationReports.observe(OperationChannel.STEAM).first().single()
+        assertEquals(OperationSource.MANUAL, steamReport.source)
+        assertEquals(steam.id.toString(), steamReport.workId)
+        assertEquals(OperationStatus.RUNNING, steamReport.progress.status)
+        assertEquals(OperationPhase.ACHIEVEMENTS, steamReport.progress.phase)
+        assertEquals(com.example.backlogium.domain.OperationCounts(5, 10), steamReport.progress.counts)
+
+        operationReports.clearForTest()
+        db.gameDao().upsertAll((20L..29L).map { appId ->
+            Game(appId = appId, name = "Cold $appId", iconUrl = "", playtimeForever = 100,
+                playtime2Weeks = 0, lastPlaytime = 0)
+        })
+        playerAchievementRequests = 0
+        val reconciliation = reconciliationWorker()
+        try {
+            reconciliation.doWork()
+            fail("the configured achievement request must interrupt reconciliation")
+        } catch (_: CancellationException) {
+            // Do not turn a constraint interruption into a terminal cancellation report.
+        }
+
+        val reconciliationReport = operationReports.observe(OperationChannel.ACHIEVEMENTS).first().single()
+        assertEquals(OperationSource.PERIODIC, reconciliationReport.source)
+        assertEquals(reconciliation.id.toString(), reconciliationReport.workId)
+        assertEquals(OperationStatus.RUNNING, reconciliationReport.progress.status)
+        assertEquals(OperationPhase.ACHIEVEMENTS, reconciliationReport.progress.phase)
+        assertEquals(com.example.backlogium.domain.OperationCounts(5, 10), reconciliationReport.progress.counts)
+        assertEquals(5, reconciliationReport.progress.updated)
     }
 
     @Test
@@ -356,10 +513,7 @@ class SteamSyncLibraryEvidenceWorkerTest {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
                 SteamSyncWorker(
                     appContext, workerParameters, api, settings, credentials, db, games, hidden, sessions, profile,
-                    differ, updater, AchievementRepository(
-                        api, db.achievementDao(), db.gameAchievementSyncDao(), games,
-                        HiddenGamesRepository(hidden, games, db.gameGenreCacheDao(), time), time,
-                    ),
+                    differ, updater, achievementRepository(),
                     { error("Backup snapshot is outside the poll fixture") },
                     GenreEnrichmentScheduler(context), ReviewEnrichmentScheduler(context),
                     PresenceServiceStarter(context, testSettings, PresenceDecisionRecorder(db.diagnosticsDao(), time),
@@ -386,6 +540,24 @@ class SteamSyncLibraryEvidenceWorkerTest {
                 )
         }).build()
     }
+
+    private fun achievementRepository(): AchievementRepository {
+        val games = db.gameDao()
+        val hidden = db.hiddenGameDao()
+        return AchievementRepository(
+            api, db.achievementDao(), db.gameAchievementSyncDao(), games,
+            HiddenGamesRepository(hidden, games, db.gameGenreCacheDao(), time), time,
+        )
+    }
+
+    private fun reconciliationWorker(id: UUID = UUID.randomUUID()): ReconciliationWorker =
+        TestListenableWorkerBuilder<ReconciliationWorker>(context).setId(id).setWorkerFactory(object : WorkerFactory() {
+            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
+                ReconciliationWorker(
+                    appContext, workerParameters, credentials, db, achievementRepository(),
+                    SyncRunRecorder(db.diagnosticsDao(), time), sync, marker, operationReports,
+                )
+        }).build()
 
     private companion object {
         const val ACCOUNT = "fixture-account"

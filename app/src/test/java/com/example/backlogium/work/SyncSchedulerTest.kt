@@ -1,17 +1,38 @@
 package com.example.backlogium.work
 
+import android.content.Context
 import androidx.work.Configuration
+import androidx.work.CoroutineWorker
+import androidx.work.Data
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.await
 import androidx.work.impl.WorkManagerImpl
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import com.example.backlogium.data.credentials.AccountChangeMarkerStore
+import com.example.backlogium.domain.OperationCounts
+import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationProgress
+import com.example.backlogium.domain.OperationStatus
+import com.example.backlogium.ui.setup.setupStagesUi
+import com.example.backlogium.work.setup.SetupRunState
+import com.example.backlogium.work.setup.SetupStageRegistry
+import com.example.backlogium.work.setup.fakeStage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -24,6 +45,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * Covers the enqueue path itself — work names, [androidx.work.ExistingWorkPolicy]/
@@ -47,6 +70,7 @@ class SyncSchedulerTest {
     private lateinit var workManager: WorkManager
     private lateinit var scheduler: SyncScheduler
     private lateinit var schedulerScope: CoroutineScope
+    private lateinit var operationReports: OperationReportStore
 
     @Before
     fun setUp() {
@@ -56,8 +80,10 @@ class SyncSchedulerTest {
             .build()
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         workManager = WorkManager.getInstance(context)
+        operationReports = OperationReportStore(context)
+        runBlocking { operationReports.clearForTest() }
         schedulerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        scheduler = SyncScheduler(context, schedulerScope)
+        scheduler = SyncScheduler(context, schedulerScope, operationReports = operationReports)
     }
 
     @After
@@ -131,6 +157,17 @@ class SyncSchedulerTest {
         val constraints = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single().constraints
         assertFalse(constraints.requiresCharging())
         assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `reconciliation request captures the same account generation in payload and tag`() = runTest {
+        scheduler.reconcileNow(force = true)
+
+        val info = workInfosFor(ReconciliationWorker.ONE_TIME_NAME).single()
+        val payloadGeneration = inputFor(ReconciliationWorker.ONE_TIME_NAME).getLong(OP_ACCOUNT, -1L)
+        val tagGeneration = info.tags.first { it.startsWith("setup-account:") }.substringAfter(":").toLong()
+
+        assertEquals(tagGeneration, payloadGeneration)
     }
 
     /**
@@ -275,10 +312,308 @@ class SyncSchedulerTest {
         assertEquals(1, workInfosFor(SteamSyncWorker.ONE_TIME_NAME).size)
     }
 
+    @Test
+    fun `operation views independently reattach to overlapping queued jobs`() = runTest {
+        scheduler.syncNow()
+        scheduler.reconcileNow(force = true)
+        val steam = scheduler.steamOperation.first { it != null }!!
+        val achievements = scheduler.achievementOperation.first { it != null }!!
+        assertNotEquals(steam.id, achievements.id)
+        assertEquals(com.example.backlogium.domain.OperationStatus.QUEUED, steam.status)
+        assertEquals(com.example.backlogium.domain.OperationStatus.QUEUED, achievements.status)
+        val recreated = SyncScheduler(RuntimeEnvironment.getApplication(), schedulerScope)
+        assertEquals(steam.id, recreated.steamOperation.first { it != null }?.id)
+        assertEquals(achievements.id, recreated.achievementOperation.first { it != null }?.id)
+    }
+
+    @Test
+    fun `overlapping scheduled retry remains primary over a completed manual sync`() = runTest {
+        OverlapOperationWorker.reset()
+        val generation = AccountChangeMarkerStore(RuntimeEnvironment.getApplication()).activeGeneration.first()!!
+        val periodic = PeriodicWorkRequestBuilder<OverlapOperationWorker>(15, TimeUnit.MINUTES)
+            .addTag("setup-account:$generation")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                OverlapOperationWorker.ROLE to OverlapOperationWorker.PERIODIC,
+            ))
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            SteamSyncWorker.UNIQUE_PERIODIC_NAME, ExistingPeriodicWorkPolicy.KEEP, periodic,
+        ).await()
+        WorkManagerTestInitHelper.getTestDriver(RuntimeEnvironment.getApplication())!!
+            .setPeriodDelayMet(periodic.id)
+        val periodicExecutionId = OverlapOperationWorker.periodicStarted.await()
+
+        val manual = OneTimeWorkRequestBuilder<OverlapOperationWorker>()
+            .addTag("setup-account:$generation")
+            .addTag("operation-requested:200")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                OverlapOperationWorker.ROLE to OverlapOperationWorker.MANUAL,
+            ))
+            .build()
+        workManager.enqueueUniqueWork(SteamSyncWorker.ONE_TIME_NAME, ExistingWorkPolicy.KEEP, manual).await()
+        OverlapOperationWorker.manualStarted.await()
+        assertEquals(WorkInfo.State.RUNNING,
+            workManager.getWorkInfoByIdFlow(manual.id).first { it?.state == WorkInfo.State.RUNNING }?.state)
+        OverlapOperationWorker.manualGate.complete(Unit)
+        workManager.getWorkInfoByIdFlow(manual.id).first { it?.state == WorkInfo.State.SUCCEEDED }
+        assertEquals(WorkInfo.State.RUNNING,
+            workManager.getWorkInfoByIdFlow(periodic.id).first { it?.state == WorkInfo.State.RUNNING }?.state)
+
+        val inFlight = scheduler.steamOperation.first {
+            it?.id == periodicExecutionId && it.status == OperationStatus.RUNNING
+        }!!
+        assertEquals(2, inFlight.counts?.processed)
+        assertEquals(8, inFlight.counts?.total)
+        assertTrue("the still-running scheduled operation keeps the sync action disabled",
+            scheduler.syncInProgress.first())
+
+        OverlapOperationWorker.periodicFirstAttemptGate.complete(Unit)
+        val backingOff = workManager.getWorkInfoByIdFlow(periodic.id).first {
+            it?.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0
+        }!!
+        assertEquals(WorkInfo.State.ENQUEUED, backingOff.state)
+        val retry = scheduler.steamOperation.first { it?.status == OperationStatus.RETRYING }!!
+        assertEquals(periodicExecutionId, retry.id)
+        assertEquals(2, retry.counts?.processed)
+
+        WorkManagerTestInitHelper.getTestDriver(RuntimeEnvironment.getApplication())!!
+            .setInitialDelayMet(periodic.id)
+        OverlapOperationWorker.retryStarted.await()
+        val retried = scheduler.steamOperation.first {
+            it?.id == periodicExecutionId && it.status == OperationStatus.RUNNING && it.counts?.processed == 4
+        }!!
+        assertEquals(8, retried.counts?.total)
+        OverlapOperationWorker.periodicRetryGate.complete(Unit)
+        OverlapOperationWorker.periodicFinished.await()
+        workManager.getWorkInfoByIdFlow(periodic.id).first {
+            it?.state == WorkInfo.State.ENQUEUED && it.runAttemptCount == 0
+        }
+
+        val terminal = scheduler.steamOperation.first { it?.status == OperationStatus.SUCCEEDED }!!
+        assertEquals("the later-started manual result is selected only after all active work ends",
+            OverlapOperationWorker.manualExecutionId, terminal.id)
+        assertEquals(5, terminal.counts?.processed)
+    }
+
+    @Test
+    fun `setup correlates execution progress to its exact WorkManager request`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val generation = AccountChangeMarkerStore(context).activeGeneration.first()!!
+        HeldOperationProgressWorker.gate = CompletableDeferred()
+        val request = OneTimeWorkRequestBuilder<HeldOperationProgressWorker>()
+            .addTag("setup-account:$generation")
+            .setInputData(workDataOf(
+                OP_ACCOUNT to generation,
+                HeldOperationProgressWorker.EXECUTION_ID to "$generation:execution",
+            ))
+            .build()
+        workManager.enqueue(request).await()
+
+        try {
+            val operation = scheduler.operationForWork(request.id.toString())
+                .first { it?.status == OperationStatus.RUNNING }!!
+            val stageId = SetupStageRegistry.STAGE_LIBRARY_SYNC
+            val row = setupStagesUi(
+                stages = listOf(fakeStage(stageId)),
+                selection = setOf(stageId),
+                run = SetupRunState(
+                    loaded = true,
+                    running = true,
+                    pending = setOf(stageId),
+                    workIds = mapOf(stageId to request.id.toString()),
+                ),
+                libraryOperation = operation,
+            ).single()
+
+            assertEquals("$generation:execution", row.operation?.id)
+            assertEquals(request.id.toString(), row.operation?.workId)
+        } finally {
+            HeldOperationProgressWorker.gate.complete(Unit)
+            workManager.getWorkInfoByIdFlow(request.id).first { it?.state?.isFinished == true }
+        }
+    }
+
+    @Test
+    fun `setup recovers its exact interrupted report with retained or cleared WorkManager progress`() = runTest {
+        val context = RuntimeEnvironment.getApplication()
+        val generation = AccountChangeMarkerStore(context).activeGeneration.first()!!
+        val stageId = SetupStageRegistry.STAGE_LIBRARY_SYNC
+
+        listOf(false, true).forEach { clearProgress ->
+            HeldOperationProgressWorker.gate = CompletableDeferred()
+            HeldOperationProgressWorker.progressReady = CompletableDeferred()
+            val request = OneTimeWorkRequestBuilder<HeldOperationProgressWorker>()
+                .addTag("setup-account:$generation")
+                .setInputData(workDataOf(
+                    OP_ACCOUNT to generation,
+                    HeldOperationProgressWorker.EXECUTION_ID to "$generation:execution",
+                    HeldOperationProgressWorker.CLEAR_PROGRESS to clearProgress,
+                ))
+                .build()
+            workManager.enqueue(request).await()
+
+            try {
+                HeldOperationProgressWorker.progressReady.await()
+                val counts = OperationCounts(6, 10)
+                val executionId = "$generation:execution"
+                val begun = StoredOperationReport(
+                    workId = request.id.toString(),
+                    generation = generation,
+                    startedAt = 1234L,
+                    progress = OperationProgress(executionId, OperationStatus.RUNNING, OperationPhase.PREPARING),
+                    source = OperationSource.MANUAL,
+                    attempt = 0,
+                )
+                operationReports.save(OperationChannel.STEAM, begun)
+                operationReports.saveInterrupted(
+                    OperationChannel.STEAM,
+                    begun.copy(progress = OperationProgress(
+                        executionId, OperationStatus.RUNNING, OperationPhase.ACHIEVEMENTS, counts, updated = 4,
+                    )),
+                ) { true }
+                workManager.cancelWorkById(request.id).await()
+                val interruptedInfo = workManager.getWorkInfoByIdFlow(request.id).first {
+                    it?.state == WorkInfo.State.CANCELLED
+                }!!
+                assertEquals(
+                    if (clearProgress) -1 else 5,
+                    interruptedInfo.progress.getInt(OP_PROCESSED, -1),
+                )
+
+                val operation = scheduler.operationForWork(request.id.toString()).first {
+                    it?.status == OperationStatus.CANCELLED
+                }!!
+                val row = setupStagesUi(
+                    stages = listOf(fakeStage(stageId)),
+                    selection = setOf(stageId),
+                    run = SetupRunState(
+                        loaded = true,
+                        running = true,
+                        pending = setOf(stageId),
+                        workIds = mapOf(stageId to request.id.toString()),
+                    ),
+                    libraryOperation = operation,
+                ).single()
+
+                assertEquals(if (clearProgress) "cleared" else "retained", counts, row.operation?.counts)
+                assertEquals(OperationPhase.ACHIEVEMENTS, row.operation?.phase)
+                assertEquals(4, row.operation?.updated)
+                assertEquals(request.id.toString(), row.operation?.workId)
+                assertEquals(OperationStatus.CANCELLED, row.operation?.status)
+                assertEquals(null, scheduler.operationForWork(UUID.randomUUID().toString()).first())
+            } finally {
+                HeldOperationProgressWorker.gate.complete(Unit)
+            }
+        }
+    }
+
     private fun workInfosFor(name: String): List<WorkInfo> = workManager.getWorkInfosForUniqueWork(name).get()
 
     private fun inputFor(name: String) = WorkManagerImpl.getInstance()!!
         .workDatabase.workSpecDao()
         .getWorkSpec(workInfosFor(name).single().id.toString())!!
         .input
+}
+
+class HeldOperationProgressWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        setProgress(operationData(
+            id = id.toString(),
+            generation = inputData.getLong(OP_ACCOUNT, 0L),
+            phase = OperationPhase.ACHIEVEMENTS,
+            counts = OperationCounts(5, 10),
+            executionId = inputData.getString(EXECUTION_ID),
+            startedAt = 1234L,
+        ))
+        if (inputData.getBoolean(CLEAR_PROGRESS, false)) setProgress(Data.EMPTY)
+        progressReady.complete(Unit)
+        gate.await()
+        return Result.success()
+    }
+
+    companion object {
+        const val EXECUTION_ID = "execution_id"
+        const val CLEAR_PROGRESS = "clear_progress"
+        var gate = CompletableDeferred<Unit>()
+        var progressReady = CompletableDeferred<Unit>()
+    }
+}
+
+class OverlapOperationWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val role = inputData.getString(ROLE) ?: error("Missing operation role")
+        val source = if (role == PERIODIC) OperationSource.PERIODIC else OperationSource.MANUAL
+        val generation = inputData.getLong(OP_ACCOUNT, 0L)
+        val store = OperationReportStore(applicationContext)
+        val report = store.begin(
+            OperationChannel.STEAM, source, id.toString(), generation,
+            retry = runAttemptCount > 0, attempt = runAttemptCount,
+        )
+        val counts = when {
+            role == MANUAL -> OperationCounts(5, 5)
+            runAttemptCount == 0 -> OperationCounts(2, 8)
+            else -> OperationCounts(4, 8)
+        }
+        val progress = report.progress.copy(
+            phase = OperationPhase.ACHIEVEMENTS,
+            counts = counts,
+        )
+        setProgress(operationData(
+            id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
+            executionId = progress.id, startedAt = report.startedAt, attempt = runAttemptCount,
+        ))
+
+        if (role == MANUAL) {
+            manualExecutionId = progress.id
+            manualStarted.complete(progress.id)
+            manualGate.await()
+        } else if (runAttemptCount == 0) {
+            periodicStarted.complete(progress.id)
+            periodicFirstAttemptGate.await()
+            store.save(OperationChannel.STEAM, report.copy(
+                progress = progress.copy(status = OperationStatus.RETRYING),
+            ))
+            return Result.retry()
+        } else {
+            retryStarted.complete(progress.id)
+            periodicRetryGate.await()
+        }
+
+        store.save(OperationChannel.STEAM, report.copy(
+            progress = progress.copy(status = OperationStatus.SUCCEEDED),
+        ))
+        if (role == PERIODIC) periodicFinished.complete(Unit)
+        return Result.success(operationData(
+            id.toString(), generation, OperationPhase.ACHIEVEMENTS, counts,
+            executionId = progress.id, startedAt = report.startedAt, attempt = runAttemptCount,
+        ))
+    }
+
+    companion object {
+        const val ROLE = "overlap_role"
+        const val PERIODIC = "periodic"
+        const val MANUAL = "manual"
+
+        lateinit var periodicStarted: CompletableDeferred<String>
+        lateinit var manualStarted: CompletableDeferred<String>
+        lateinit var retryStarted: CompletableDeferred<String>
+        lateinit var periodicFinished: CompletableDeferred<Unit>
+        lateinit var periodicFirstAttemptGate: CompletableDeferred<Unit>
+        lateinit var manualGate: CompletableDeferred<Unit>
+        lateinit var periodicRetryGate: CompletableDeferred<Unit>
+        var manualExecutionId: String? = null
+
+        fun reset() {
+            periodicStarted = CompletableDeferred()
+            manualStarted = CompletableDeferred()
+            retryStarted = CompletableDeferred()
+            periodicFinished = CompletableDeferred()
+            periodicFirstAttemptGate = CompletableDeferred()
+            manualGate = CompletableDeferred()
+            periodicRetryGate = CompletableDeferred()
+            manualExecutionId = null
+        }
+    }
 }

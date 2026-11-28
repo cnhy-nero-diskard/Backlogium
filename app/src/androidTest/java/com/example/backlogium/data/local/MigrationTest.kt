@@ -22,8 +22,8 @@ import org.junit.runner.RunWith
  * creates the right columns while dropping the user's rows.
  *
  * The original raw-v1 chain and the populated pre-#182 v13 chain reach the current schema.
- * The v13 path checks enriched representative rows, while v42 fixtures exercise the final
- * additive recovery hop. Per-hop tests remain the precise regression checks; neither chain
+ * The v13 path checks enriched representative rows, while v42 fixtures exercise the recovery
+ * migration. Per-hop tests remain the precise regression checks; neither chain
  * replaces them.
  */
 @RunWith(AndroidJUnit4::class)
@@ -108,6 +108,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_50_51,
         BacklogiumDatabase.MIGRATION_51_52,
         BacklogiumDatabase.MIGRATION_52_53,
+        BacklogiumDatabase.MIGRATION_53_54,
     )
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
@@ -142,6 +143,43 @@ class MigrationTest {
                 }
             }
         } finally { context.deleteDatabase(name) }
+    }
+
+    @Test
+    fun v53ToV54_preservesLegacyCommitAndLeavesNewExecutionEvidenceNull() {
+        val name = "migration-v53-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 53).use { db ->
+                db.execSQL(
+                    "INSERT INTO library_poll_commits " +
+                        "(operationId, workId, steamId, committedAt, gameCount, finalized) " +
+                        "VALUES ('legacy-poll', 'legacy-work', 'fixture-account', 100, 2, 0)",
+                )
+            }
+
+            migrationTestHelper.runMigrationsAndValidate(
+                name, 54, true, BacklogiumDatabase.MIGRATION_53_54,
+            ).use { db ->
+                db.query(
+                    "SELECT operationId, workId, steamId, committedAt, gameCount, finalized, " +
+                        "accountGeneration, executionId, executionStartedAt, achievementProcessed, " +
+                        "achievementTotal, achievementSkipped, achievementFailed, achievementUpdated " +
+                        "FROM library_poll_commits WHERE operationId = 'legacy-poll'",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("legacy-poll", cursor.getString(0))
+                    assertEquals("legacy-work", cursor.getString(1))
+                    assertEquals("fixture-account", cursor.getString(2))
+                    assertEquals(100L, cursor.getLong(3))
+                    assertEquals(2, cursor.getInt(4))
+                    assertEquals(0, cursor.getInt(5))
+                    for (column in 6..13) assertTrue(cursor.isNull(column))
+                    assertFalse(cursor.moveToNext())
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
     }
 
     @Test fun v51ToV52KeepsAdmissionIdentityAndStartsWithoutHistoricalNotifications() {
@@ -2012,7 +2050,7 @@ class MigrationTest {
     }
 
     @Test
-    fun v48ToV49StartsWithNoAdmissionBacklogAndKeepsTheLibrary() {
+    fun v48ToCurrentStartsWithNoAdmissionBacklogAndKeepsTheLibrary() {
         val databaseName = "migration-v48-${System.nanoTime()}"
         try {
             migrationTestHelper.createDatabase(databaseName, 48).use { db ->
@@ -2029,6 +2067,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_50_51,
                 BacklogiumDatabase.MIGRATION_51_52,
                 BacklogiumDatabase.MIGRATION_52_53,
+                BacklogiumDatabase.MIGRATION_53_54,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())

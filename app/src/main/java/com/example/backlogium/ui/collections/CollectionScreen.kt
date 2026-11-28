@@ -62,6 +62,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.example.backlogium.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
@@ -183,7 +185,7 @@ fun CollectionScreen(
             )
             if (!state.isNew) {
                 Box {
-                    IconButton(onClick = { showActions = true }) {
+                    IconButton(onClick = { showActions = true }, enabled = !state.saving) {
                         Icon(
                             imageVector = if (showingOverview) {
                                 TablerIcons.DotsVertical
@@ -218,6 +220,13 @@ fun CollectionScreen(
             }
         }
 
+        if (showingOverview && state.saveError == R.string.collection_delete_failed) {
+            Text(stringResource(R.string.collection_delete_failed), Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = viewModel::delete, enabled = !state.saving) {
+                Text(stringResource(R.string.collection_retry_delete))
+            }
+        }
         if (state.loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -1120,6 +1129,7 @@ data class CollectionFormActions(
     val onAddGame: (Long) -> Unit = {},
     val onSave: () -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onRetryDelete: () -> Unit = {},
 )
 
 /** The management form: name, mode, sort, deadline, members, add-games, save/delete. */
@@ -1145,6 +1155,7 @@ private fun CollectionForm(
             onAddGame = viewModel::addGame,
             onSave = viewModel::save,
             onRefresh = viewModel::refreshEditor,
+            onRetryDelete = viewModel::delete,
         ),
     )
 }
@@ -1193,9 +1204,15 @@ fun CollectionFormContent(
             state.saveError?.let { error ->
                 item(key = "save-error") {
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        Text(error, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
-                            Text("Refresh editor")
+                        Text(stringResource(error), color = MaterialTheme.colorScheme.error)
+                        if (error == R.string.collection_delete_failed) {
+                            TextButton(onClick = actions.onRetryDelete, enabled = !state.saving) {
+                                Text(stringResource(R.string.collection_retry_delete))
+                            }
+                        } else {
+                            TextButton(onClick = actions.onRefresh, enabled = !state.saving) {
+                                Text("Refresh editor")
+                            }
                         }
                     }
                 }

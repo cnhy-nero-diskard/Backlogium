@@ -1,8 +1,14 @@
 package com.example.backlogium.work
 
+import com.example.backlogium.domain.OperationCounts
+import com.example.backlogium.domain.OperationPhase
+import com.example.backlogium.domain.OperationProgress
+import com.example.backlogium.domain.OperationStatus
+
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.room.withTransaction
+import androidx.work.Data
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -205,6 +211,7 @@ class SteamSyncWorker @AssistedInject constructor(
     private val achievementAdmissionScheduler: AchievementAdmissionWorkScheduler,
     private val achievementAdmissionDao: AchievementAdmissionDao,
     private val progressAlerts: com.example.backlogium.data.notifications.ProgressAlerts,
+    private val operationReports: OperationReportStore = OperationReportStore(appContext),
 ) : CoroutineWorker(appContext, params) {
 
     private data class DiffPreview(
@@ -219,12 +226,34 @@ class SteamSyncWorker @AssistedInject constructor(
         val finalizationOperationId: String?,
         val creditedIncreaseAppIds: Set<Long>,
         val baselineEstablishedAppIds: Set<Long>,
+        val achievementUpdated: Int,
     )
 
     private val trigger = inputData.getString(KEY_TRIGGER) ?: TRIGGER_PERIODIC
+    private val operationSource = if (trigger == TRIGGER_PERIODIC) OperationSource.PERIODIC else OperationSource.MANUAL
     private val workId = id.toString()
     private val operationId = if (trigger == TRIGGER_MANUAL) workId else UUID.randomUUID().toString()
     private var accountGeneration: Long? = null
+    private var executionId: String? = null
+    private var executionStartedAt: Long? = null
+    private var operationUpdated: Int? = null
+    private var admittedSteamId: String? = null
+
+    private val operationReporter = OperationReporter()
+    private var operationPhase = OperationPhase.PREPARING
+    private var operationCounts: OperationCounts? = null
+
+    private suspend fun report(phase: OperationPhase, counts: OperationCounts? = null) {
+        operationPhase = phase
+        operationCounts = counts
+        operationReporter.report(phase, counts) {
+            setProgress(operationData(
+                workId, accountGeneration ?: 0L, phase, counts,
+                executionId = executionId, startedAt = executionStartedAt,
+                attempt = runAttemptCount,
+            ))
+        }
+    }
 
     override suspend fun doWork(): Result {
         val admission = syncCoordinator.withLock {
@@ -238,6 +267,17 @@ class SteamSyncWorker @AssistedInject constructor(
             }
         } ?: return setupSkipped("An account change is still in progress. Retry when it finishes.")
         accountGeneration = admission.first
+        admittedSteamId = admission.second?.steamId
+        val execution = accountChangeMarker.withAccountState {
+            if (accountChangeMarker.pendingSteamId() != null || accountChangeMarker.generation() != admission.first ||
+                credentials.currentCredentials()?.steamId != admission.second?.steamId
+            ) null else operationReports.begin(
+                OperationChannel.STEAM, operationSource, workId, admission.first,
+                retry = runAttemptCount > 0, attempt = runAttemptCount,
+            )
+        } ?: return setupSkipped("The Steam account changed before the sync could start.")
+        executionId = execution.progress.id
+        executionStartedAt = execution.startedAt
         return doWorkUnlocked(admission.second)
     }
 
@@ -257,6 +297,7 @@ class SteamSyncWorker @AssistedInject constructor(
             val apiKey = creds.apiKey
             val steamId = creds.steamId
             workerSteamId = steamId
+            report(OperationPhase.PREPARING)
             val storedSteamId = profileDao.get()?.steamId?.takeIf { it.isNotBlank() }
             if (!canDiffAgainstAccount(storedSteamId, steamId)) {
                 recordErrorIfAccountActive(
@@ -304,6 +345,8 @@ class SteamSyncWorker @AssistedInject constructor(
                 }
                 achievementAdmissionScheduler.recoverPending()
                 examined = receipt.gameCount
+                operationCounts = receipt.achievementCounts()
+                operationUpdated = receipt.achievementUpdated
                 updated = receipt.gameCount
                 outcome = SyncOutcome.SUCCESS
                 return committedResult(receipt.operationId)
@@ -316,6 +359,7 @@ class SteamSyncWorker @AssistedInject constructor(
             // Presence first, before any library-scale work. This one request carries both the
             // running game and the profile header identity; best-effort, so a failure yields null
             // and mergePlayerIdentity below keeps the stored values.
+            report(OperationPhase.FETCHING_LIBRARY)
             val summary = runCatching {
                 steamApi.getPlayerSummaries(apiKey, steamId, scope = scope).response.players.firstOrNull()
             }.getOrNull()
@@ -379,12 +423,14 @@ class SteamSyncWorker @AssistedInject constructor(
                 steamApi.getSteamLevel(apiKey, steamId, scope).response.playerLevel
             }.getOrDefault(profileDao.get()?.steamLevel ?: 0)
 
-            if (!persistPoll(trustedGames, games.size, apiKey, steamId, steamLevel, summary, scope)) {
+            val committedPoll = persistPoll(trustedGames, games.size, apiKey, steamId, steamLevel, summary, scope)
+            if (committedPoll == null) {
                 outcome = SyncOutcome.SKIPPED_ACCOUNT_MISMATCH
                 return setupSkipped("The Steam account changed before the sync could finish.")
             }
             examined = games.size
             updated = games.size
+            operationUpdated = committedPoll.achievementUpdated
             outcome = SyncOutcome.SUCCESS
             committedResult(operationId)
         } catch (e: CancellationException) {
@@ -402,13 +448,22 @@ class SteamSyncWorker @AssistedInject constructor(
             // fails after a reset completed must not stamp its error onto the new account.
             recordErrorIfAccountActive(workerSteamId, e.message ?: "Sync failed")
             error = e.message ?: "Sync failed"
-            setProgress(workDataOf(KEY_POLL_RESULT to POLL_FAILED, KEY_POLL_OPERATION to operationId))
+            setProgress(Data.Builder().putAll(operationData(
+                workId, accountGeneration ?: 0L, operationPhase, operationCounts,
+                executionId = executionId, startedAt = executionStartedAt,
+                attempt = runAttemptCount,
+            ))
+                .putString(KEY_POLL_RESULT, POLL_FAILED).putString(KEY_POLL_OPERATION, operationId).build())
+            persistOperationReport(OperationStatus.RETRYING)
             Result.retry()
         } finally {
             // NonCancellable: once cancelled, a plain suspend call here would throw at its first
             // suspension point and never persist the record — the exact case the INCOMPLETE
             // outcome above exists to make visible.
             withContext(NonCancellable) {
+                if (outcome == SyncOutcome.INCOMPLETE) {
+                    runCatching { persistOperationReport(OperationStatus.RUNNING, interrupted = true) }
+                }
                 runCatching {
                     syncCoordinator.withLock {
                         if (isAccountActive(workerSteamId)) {
@@ -428,7 +483,7 @@ class SteamSyncWorker @AssistedInject constructor(
         steamLevel: Int,
         summary: com.example.backlogium.data.remote.dto.PlayerSummaryDto?,
         scope: SyncRunRecorder.RunScope,
-    ): Boolean {
+    ): RawCommitResult? {
         val now = time.nowMillis()
         val today = time.today()
         // Only games Steam actually reported a cumulative total for may enter the diff. An absent
@@ -490,7 +545,11 @@ class SteamSyncWorker @AssistedInject constructor(
             ownedGames = achievementScope,
             playtimeDeltaByAppId = provisionalDiff.playedDeltaByAppId,
             scope = scope,
+            onAttempts = { if (it.total > 0) report(OperationPhase.ACHIEVEMENTS, it) },
         )
+        operationCounts = operationCounts ?: OperationCounts()
+        val achievementCounts = operationCounts
+        report(OperationPhase.SAVING, achievementCounts)
         scope.recordTiers(
             hot = achievementFetch.selection.hot.size,
             warm = achievementFetch.selection.warm.size,
@@ -505,7 +564,7 @@ class SteamSyncWorker @AssistedInject constructor(
         // this critical section.
         return withContext(NonCancellable) {
             syncCoordinator.withLock {
-                if (!isAccountActive(steamId)) return@withLock false
+                if (!isAccountActive(steamId)) return@withLock null
 
                 // The startup pass precedes network acquisition, so an operation can become
                 // pending while this worker is fetching. Drain that journal immediately before
@@ -550,7 +609,7 @@ class SteamSyncWorker @AssistedInject constructor(
                             )
                         }
                     }
-                } ?: return@withLock false
+                } ?: return@withLock null
 
                 // The arrivals the commit itself stamped, carried out rather than queried again: a
                 // second read would have to guess which games now carrying `firstSeenAt` this poll
@@ -592,7 +651,7 @@ class SteamSyncWorker @AssistedInject constructor(
 
                 // Best-effort: a snapshot-write failure must never fail an otherwise-successful poll.
                 runCatching { backupRepository.get().writeAutoSnapshotIfDue() }
-                true
+                rawCommit
             }
         }
     }
@@ -603,6 +662,31 @@ class SteamSyncWorker @AssistedInject constructor(
             currentSteamId = credentials.currentCredentials()?.steamId,
             expectedSteamId = expectedSteamId,
         )
+
+    private suspend fun persistOperationReport(status: OperationStatus, interrupted: Boolean = false) {
+        val generation = accountGeneration ?: return
+        val id = executionId ?: return
+        val startedAt = executionStartedAt ?: return
+        syncCoordinator.withLock {
+            accountChangeMarker.withAccountState {
+                if (isAccountActive(admittedSteamId)) {
+                    val report = StoredOperationReport(
+                        workId, generation, startedAt,
+                        OperationProgress(id, status, operationPhase, operationCounts, operationUpdated),
+                        operationSource,
+                        attempt = runAttemptCount,
+                    )
+                    if (interrupted) {
+                        operationReports.saveInterrupted(OperationChannel.STEAM, report) {
+                            isAccountActive(admittedSteamId)
+                        }
+                    } else {
+                        operationReports.save(OperationChannel.STEAM, report)
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * Failure reporting outside the raw-commit transaction. The profile error column is
@@ -798,9 +882,23 @@ class SteamSyncWorker @AssistedInject constructor(
 
         // This is the only achievement write path for an inline poll, and it is deliberately
         // called while the same transaction still owns the raw commit.
-        achievementRepository.applyRefreshes(achievementFetch.refreshes)
+        val achievementUpdated = achievementRepository.applyRefreshesCountingChanges(achievementFetch.refreshes)
         database.libraryPollCommitDao().insert(
-            LibraryPollCommit(operationId, workId, steamId, now, observedGameCount),
+            LibraryPollCommit(
+                operationId = operationId,
+                workId = workId,
+                steamId = steamId,
+                committedAt = now,
+                gameCount = observedGameCount,
+                accountGeneration = accountGeneration,
+                executionId = executionId,
+                executionStartedAt = executionStartedAt,
+                achievementProcessed = operationCounts?.processed,
+                achievementTotal = operationCounts?.total,
+                achievementSkipped = operationCounts?.skipped,
+                achievementFailed = operationCounts?.failed,
+                achievementUpdated = achievementUpdated,
+            ),
         )
 
         return RawCommitResult(
@@ -811,6 +909,7 @@ class SteamSyncWorker @AssistedInject constructor(
                 .filterValues { it > 0 }
                 .keys,
             baselineEstablishedAppIds = committed.baselineEstablishedAppIds,
+            achievementUpdated = achievementUpdated,
         )
     }
 
@@ -866,15 +965,30 @@ class SteamSyncWorker @AssistedInject constructor(
         profileDao.updateLastSyncError(message)
     }
 
-    private fun setupSkipped(reason: String): Result =
-        Result.success(workDataOf(
-            KEY_SETUP_FAILURE to reason,
-            KEY_POLL_RESULT to POLL_NOT_PERFORMED,
-            KEY_POLL_OPERATION to operationId,
-        ))
+    private suspend fun setupSkipped(reason: String): Result {
+        persistOperationReport(OperationStatus.FAILED)
+        return Result.success(Data.Builder().putAll(operationData(
+            workId, accountGeneration ?: 0L, operationPhase, operationCounts,
+            failed = true, executionId = executionId, startedAt = executionStartedAt,
+            attempt = runAttemptCount,
+        )).putAll(workDataOf(
+                KEY_SETUP_FAILURE to reason,
+                KEY_POLL_RESULT to POLL_NOT_PERFORMED,
+                KEY_POLL_OPERATION to operationId,
+            )).build())
+    }
 
-    private fun committedResult(committedOperationId: String): Result =
-        Result.success(workDataOf(KEY_POLL_RESULT to POLL_COMMITTED, KEY_POLL_OPERATION to committedOperationId))
+    private suspend fun committedResult(committedOperationId: String): Result {
+        val partial = (operationCounts?.failed ?: 0) > 0
+        persistOperationReport(if (partial) OperationStatus.PARTIAL else OperationStatus.SUCCEEDED)
+        return Result.success(Data.Builder().putAll(operationData(
+            workId, accountGeneration ?: 0L, operationPhase, operationCounts,
+            updated = operationUpdated, executionId = executionId, startedAt = executionStartedAt,
+            attempt = runAttemptCount,
+            partial = partial,
+        )).putString(KEY_POLL_RESULT, POLL_COMMITTED)
+            .putString(KEY_POLL_OPERATION, committedOperationId).build())
+    }
 
     companion object {
         internal const val KEY_ACCOUNT_GENERATION = "account_generation"
@@ -910,3 +1024,12 @@ internal fun isSyncForActiveAccount(
     currentSteamId: String?,
     expectedSteamId: String?,
 ): Boolean = markerSteamId == null && currentSteamId == expectedSteamId
+
+private fun LibraryPollCommit.achievementCounts(): OperationCounts? = achievementTotal?.let { total ->
+    OperationCounts(
+        processed = achievementProcessed ?: 0,
+        total = total,
+        skipped = achievementSkipped ?: 0,
+        failed = achievementFailed ?: 0,
+    )
+}

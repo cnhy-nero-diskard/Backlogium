@@ -12,7 +12,7 @@ Show truthful progress without changing scheduling, post-play behavior, or the a
 
 ### Expose two operation views from existing execution
 
-Extend worker progress and terminal result mapping using operation and account identity. Publish initial phase, then counts based on the actual fixed worklist of each phase. Throttle frequent progress writes and flush the terminal result. Preserve existing poll receipts and derive operation cancellation and constraint status from observable states. A periodic job waiting for its next run should stay idle in the shell.
+Extend worker progress and terminal result mapping using operation and account identity. Publish initial phase, then counts based on the actual fixed worklist of each phase. Throttle frequent progress writes and flush the terminal result. Preserve existing poll receipts and derive operation cancellation and constraint status from observable states. Persist one-time and periodic reports independently; project matching WorkInfo state over each report and prefer live work over historical terminal summaries. A periodic job waiting for its next run should stay idle in the shell.
 
 ### Use a single connectivity observation
 

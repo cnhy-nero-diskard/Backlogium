@@ -2,6 +2,9 @@ package com.example.backlogium.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import com.example.backlogium.ui.components.OfflineStatus
+import com.example.backlogium.data.network.ConnectivityStatus
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -125,6 +128,8 @@ internal fun BacklogiumAppRoot(
     initialOpenUpdate: Boolean = false,
     openUpdateRequests: Flow<Unit> = emptyFlow(),
 ) {
+    val connectivity: ConnectivityViewModel = hiltViewModel()
+    val networkStatus by connectivity.status.collectAsStateWithLifecycle(initialValue = ConnectivityStatus.UNKNOWN)
     val updateViewModel: AppUpdateViewModel = hiltViewModel()
     val updateState by updateViewModel.uiState.collectAsStateWithLifecycle()
     var updateSheetVisible by remember { mutableStateOf(initialOpenUpdate) }
@@ -195,10 +200,13 @@ internal fun BacklogiumAppRoot(
             // pixels — the shell backdrop — so the boundary cannot draw a line whether or not the
             // in-game wash happens to be active.
             topBar = {
-                ProfileHeader(
-                    transparent = onHome || accentColor != null,
-                    onHome = onHome,
-                )
+                Column {
+                    ProfileHeader(
+                        transparent = onHome || accentColor != null,
+                        onHome = onHome,
+                    )
+                    OfflineStatus(networkStatus)
+                }
             },
             bottomBar = {
                 AppBottomNavigation(
