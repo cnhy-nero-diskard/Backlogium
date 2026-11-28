@@ -58,6 +58,13 @@ current version, rather than silently continuing to validate a stale target.
 - **THEN** CI selects the migration emulator job so Gradle compiles the complete
   instrumentation test APK, while the runner continues to execute only `MigrationTest`
 
+#### Scenario: Production API changes retain instrumentation compile coverage
+- **WHEN** a pull request changes production code or shared Gradle inputs selected
+  for the Android unit tests job, without changing an `app/src/androidTest/` source
+- **THEN** that job assembles the complete instrumentation APK with
+  `:app:assembleDebugAndroidTest` without starting an emulator, so incompatible
+  production API changes fail before merge
+
 #### Scenario: Verification runs on every change
 - **WHEN** a commit is pushed to `master`
 - **THEN** CI runs the migration suite automatically regardless of which paths changed

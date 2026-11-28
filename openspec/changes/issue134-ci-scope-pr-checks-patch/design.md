@@ -14,6 +14,8 @@ does not have to be up to date with `master` before merging.
 
 - Make the PR routing rules auditable in one place and preserve the full suite
   on `master`.
+- Preserve instrumentation-source compilation for production and shared build
+  changes without requiring those changes to start an emulator.
 - Keep existing job commands, reports, caches, and the pinned CI emulator options
   in place. Android remains one build boundary for test and release compilation.
 - UI test sharding, workflow dependency upgrades, and configuration-cache work
@@ -37,6 +39,11 @@ changed-file list. [GitHub required status check behavior](https://docs.github.c
 ### Route by build inputs and migration dependencies
 
 Matching rows combine. Unit tests include the existing release Kotlin compile.
+The Android unit tests job also runs `:app:assembleDebugAndroidTest`, which
+assembles the complete instrumentation APK without starting a device. Since that
+job is selected for app, gamification, and shared Gradle inputs, production API
+changes compile the existing instrumentation sources even when no
+`androidTest` file changes.
 
 | Input | Selected main CI jobs on PRs |
 | --- | --- |
@@ -60,6 +67,8 @@ The `app/src/androidTest/**` row is deliberately broader than migration-test
 inputs: `:app:connectedDebugAndroidTest` compiles the instrumentation test APK
 before its runner selects only `MigrationTest`. Thus an unrelated instrumentation
 source edit retains compile coverage without running every instrumented test.
+The device-free assembly in the Android unit tests job separately covers
+production-only API changes that can invalidate those instrumentation sources.
 
 Room paths include `BacklogiumDatabase.kt`, `Converters.kt`, `entity/**`,
 `di/DatabaseModule.kt`, `app/schemas/**`, and `MigrationTest.kt`. These concrete
@@ -101,8 +110,10 @@ repository-wide pass strict as well.
 - A missed dependency could defer a regression until the `master` sweep. Include
   direct schema and migration dependencies, including the named helper and DAO
   paths, and test the routing matrix with isolated paths, representative mixed
-  changes, deletions, and cross-domain moves. Instrumentation-only changes must
-  still compile the test APK through the migration job.
+  changes, deletions, and cross-domain moves. Verify that production-only app,
+  gamification, and shared Gradle changes select the Android unit tests job with
+  instrumentation APK assembly, while instrumentation-only changes retain
+  their existing migration-job coverage.
 - With the current non-strict required-status-check policy, advancing `master`
   can make a previously classified PR diff stale: newly introduced migration
   dependencies may not select the migration job. Enable up-to-date required

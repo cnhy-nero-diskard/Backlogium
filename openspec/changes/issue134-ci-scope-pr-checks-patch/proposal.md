@@ -13,6 +13,9 @@ full sweep on `master`.
 - Route the six existing CI jobs by the files a pull request changes. Keep the Android
   test and release compile, lint, screenshot verification, Room migration, script
   test, and Functions commands and coverage.
+- Compile the instrumentation APK in the device-free Android unit tests job so
+  production-only app, gamification, and shared Gradle changes also check the
+  instrumentation sources that depend on their APIs.
 - Run Room migration tests before merge when a PR can affect upgrade behavior.
   Rename the existing emulator job to reflect the suite it runs.
 - Require a stable CI result that accounts for both routing and the selected jobs.
