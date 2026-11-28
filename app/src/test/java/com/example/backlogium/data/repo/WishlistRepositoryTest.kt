@@ -9,6 +9,8 @@ import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
+import com.example.backlogium.ui.library.WishlistPriceGroup
+import com.example.backlogium.ui.library.groupWishlistByPrice
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -465,6 +467,35 @@ class WishlistRepositoryTest {
         )
     }
 
+    @Test fun aPriceMovesToTheRetainedSortGroupAfterTheInclusiveSixHourBoundary() = runTest {
+        val window = WishlistRepository.FRESHNESS_WINDOW_MILLIS
+        db.wishlistDao().upsertItems(listOf(item(appId = 1), item(appId = 2), item(appId = 3)))
+        db.wishlistDao().insertObservations(
+            listOf(
+                price(appId = 1, at = NOW).copy(finalMinorUnits = 300),
+                price(appId = 2, at = NOW + 1).copy(finalMinorUnits = 900),
+                price(appId = 3, at = NOW - 1).copy(finalMinorUnits = 200),
+            ),
+        )
+
+        val states = repository(time = VirtualTime(this, start = NOW + window)).wishlist
+            .filter { games -> games.size == 3 && games.all { it.price is WishlistPrice.Observed } }
+            .distinctUntilChanged()
+            .take(2)
+            .toList()
+
+        val current = WishlistPriceGroup("PHP", current = true)
+        val retained = WishlistPriceGroup("PHP", current = false)
+        val atBoundary = groupWishlistByPrice(states[0], descending = false)
+        assertEquals(listOf(1L, 2L), atBoundary.getValue(current).map { it.appId })
+        assertEquals(listOf(3L), atBoundary.getValue(retained).map { it.appId })
+        val afterBoundary = groupWishlistByPrice(states[1], descending = false)
+        assertEquals(listOf(2L), afterBoundary.getValue(current).map { it.appId })
+        assertEquals(listOf(3L, 1L), afterBoundary.getValue(retained).map { it.appId })
+        assertEquals(NOW, (afterBoundary.getValue(retained).last().price as WishlistPrice.Observed).observedAt)
+        assertEquals(1L, testScheduler.currentTime)
+    }
+
     @Test fun anUnresolvedPriceShapeRetainsThePreviousObservation() = runBlocking {
         val staleMembership = NOW - WishlistRepository.FRESHNESS_WINDOW_MILLIS - 1
         db.wishlistDao().upsertItems(listOf(item(appId = 1, lastSeenAt = staleMembership)))
@@ -587,8 +618,9 @@ class WishlistRepositoryTest {
 
     private class VirtualTime(
         private val scope: kotlinx.coroutines.test.TestScope,
+        private val start: Long = NOW,
     ) : TimeProvider {
-        override fun nowMillis(): Long = NOW + scope.testScheduler.currentTime
+        override fun nowMillis(): Long = start + scope.testScheduler.currentTime
         override fun zone(): ZoneId = ZoneId.of("UTC")
         override fun today(): LocalDate = LocalDate.parse("2026-08-30")
     }
