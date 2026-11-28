@@ -287,5 +287,3 @@ publication require separate authorization. Pair verification establishes byte a
 diff consistency, not human approval or live provenance. Global schema-v1
 `gatheredAt` can advance for changed rows while untouched/failed rows keep old
 values; it does not prove per-row freshness or full-library coverage.
-
-<!-- CI routing verification -->
