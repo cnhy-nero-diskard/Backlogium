@@ -503,6 +503,8 @@ class SettingsViewModel @Inject constructor(
         state.copy(achievementOperation = operation)
     }.combine(syncScheduler.genreEnrichmentStatus) { state, genreStatus ->
         state.copy(genreEnrichmentStatus = genreStatus)
+    }.combine(assetWorkState) { state, asset ->
+        state.copy(steamAssetStatus = asset.first, steamAssetProgress = asset.second)
     }.combine(profileRepository.historyImportReadiness) { state, readiness ->
         state.copy(historyReadiness = readiness)
     }.combine(profileRepository.reconciliationInProgress) { state, reconciling ->
