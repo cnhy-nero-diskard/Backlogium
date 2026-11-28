@@ -189,6 +189,121 @@ class DeadlineArchiveEvidenceTest {
     }
 
     @Test
+    fun reenteringDeadlineDoesNotResurrectMemberRemovedWhileBasic() = runBlocking {
+        val id = deadlineCollectionWithMember(40)
+        database.gameDao().upsert(sharedGame(41))
+        database.hltbDataDao().upsert(estimate(41, 80))
+        collections.addMember(id, 41)
+
+        updateMode(id, CollectionMode.BASIC)
+        val exitId = database.deadlineArchiveDao().revisions(id)
+            .last { it.appId == null && it.deadlineActive == false }.id
+        collections.removeMember(id, 41)
+        updateMode(id, CollectionMode.DEADLINE_GOAL)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ? AND id <= ?",
+            arrayOf(cutoff - 30_000, id, exitId),
+        )
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ? AND id > ?",
+            arrayOf(cutoff - 10_000, id, exitId),
+        )
+        time.now = cutoff + 1_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertTrue(result.membershipKnown)
+        assertEquals(listOf(40L), result.members.map { it.appId })
+        assertEquals(false, database.deadlineArchiveDao().revisions(id).last { it.appId == 41L }.present)
+    }
+
+    @Test
+    fun repeatedModeConversionsAndEmptyReentryUseTheLatestMembershipBaseline() = runBlocking {
+        val id = deadlineCollectionWithMember(50)
+        updateMode(id, CollectionMode.BASIC)
+        updateMode(id, CollectionMode.DEADLINE_GOAL)
+        updateMode(id, CollectionMode.BASIC)
+        collections.removeMember(id, 50)
+        updateMode(id, CollectionMode.DEADLINE_GOAL)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ?",
+            arrayOf(cutoff - 1, id),
+        )
+        time.now = cutoff + 1_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertTrue(result.membershipKnown)
+        assertTrue(result.members.isEmpty())
+        assertTrue(DeadlineEvidenceGap.EMPTY_MEMBERSHIP in result.gaps)
+    }
+
+    @Test
+    fun deadlineExitBeforeCutoffPreventsSameDateReentryAfterCutoffFromMatching() = runBlocking {
+        val id = deadlineCollectionWithMember(60)
+        updateMode(id, CollectionMode.BASIC)
+        val exitId = database.deadlineArchiveDao().revisions(id)
+            .last { it.appId == null && it.deadlineActive == false }.id
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ? AND id <= ?",
+            arrayOf(cutoff - 1_000, id, exitId),
+        )
+        updateMode(id, CollectionMode.DEADLINE_GOAL)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ? AND id > ?",
+            arrayOf(cutoff + 1_000, id, exitId),
+        )
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertNull(result.goalObservedAt)
+        assertFalse(result.membershipKnown)
+        assertTrue(result.members.isEmpty())
+        assertTrue(DeadlineEvidenceGap.MEMBERSHIP_HISTORY in result.gaps)
+        assertEquals(DeadlineOutcome.UNDETERMINED, result.outcome)
+    }
+
+    @Test
+    fun legacyGoalRevisionWithoutModeBoundaryCannotProveCutoffMembership() = runBlocking {
+        val id = deadlineCollectionWithMember(62)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ?, deadlineActive = NULL WHERE collectionId = ?",
+            arrayOf(cutoff - 1, id),
+        )
+        time.now = cutoff + 1_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertFalse(result.membershipKnown)
+        assertTrue(result.members.isEmpty())
+        assertTrue(DeadlineEvidenceGap.MEMBERSHIP_HISTORY in result.gaps)
+        assertEquals(DeadlineOutcome.UNDETERMINED, result.outcome)
+    }
+
+    @Test
+    fun modeChangeBatchCrossingCutoffMarksArchiveAmbiguous() = runBlocking {
+        val id = deadlineCollectionWithMember(61)
+        database.openHelper.writableDatabase.execSQL(
+            "UPDATE deadline_revisions SET effectiveAt = ? WHERE collectionId = ?",
+            arrayOf(cutoff - 20_000, id),
+        )
+        time.now = cutoff - 1
+        transaction.runDeadlineEvidence {
+            updateMode(id, CollectionMode.BASIC)
+            time.now = cutoff + 1
+        }
+        updateMode(id, CollectionMode.DEADLINE_GOAL)
+        time.now = cutoff + 2_000
+
+        val result = requireNotNull(archives.preview(id)).result
+
+        assertTrue(result.cutoffAmbiguous)
+        assertEquals(DeadlineOutcome.UNDETERMINED, result.outcome)
+        assertTrue(DeadlineEvidenceGap.CUTOFF_AMBIGUITY in result.gaps)
+    }
+
+    @Test
     fun datasetBackedEstimateUsesKeyedLookupAndUnchangedPublicationAddsNoRevision() = runBlocking {
         database.gameDao().upsert(sharedGame(31))
         val dataset = database.hltbDatasetDao()
@@ -242,6 +357,21 @@ class DeadlineArchiveEvidenceTest {
             collections.insertMember(CollectionMember(id, appId, 0))
             id
         }
+
+    private suspend fun updateMode(id: Long, mode: CollectionMode) {
+        val isDeadline = mode == CollectionMode.DEADLINE_GOAL
+        collections.updateDetails(
+            id,
+            if (isDeadline) "Deadline" else "Basic",
+            mode,
+            if (isDeadline) CollectionSort.COMPLETION_FRACTION else CollectionSort.NAME,
+            targetDate.takeIf { isDeadline },
+            null,
+            CollectionTimeBasis.MAIN_STORY,
+            null,
+            "UTC".takeIf { isDeadline },
+        )
+    }
 
     private suspend fun session(appId: Long, start: Long, end: Long, minutes: Int) {
         database.sessionDao().insert(Session(

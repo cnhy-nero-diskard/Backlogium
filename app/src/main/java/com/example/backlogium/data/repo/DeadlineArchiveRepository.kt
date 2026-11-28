@@ -81,14 +81,20 @@ class DeadlineArchiveRepository @Inject constructor(
         val revisions = dao.revisions(id)
         val beforeCutoff = revisions.filter { it.effectiveAt < cutoff }
         val goal = beforeCutoff.lastOrNull { it.appId == null }
-        val applicableGoal = goal?.takeIf { it.targetDate == date && it.zone == zone }
+        // A missing mode marker is legacy uncertainty, not evidence that the deadline remained active.
+        val deadlineActive = goal?.deadlineActive == true
+        val applicableGoal = goal?.takeIf {
+            deadlineActive && it.targetDate == date && it.zone == zone
+        }
         val basis = applicableGoal?.basis?.let(CollectionTimeBasis::valueOf) ?: active.timeBasis
         val cutoffAmbiguous = dao.hasAmbiguousBatch(id, cutoff)
-        val members = beforeCutoff.filter { it.appId != null }
-            .associateBy { it.appId }
-            .values.filter { it.present == true }
-            .sortedBy { it.appId }
-            .map { memberEvidence(it, basis, cutoff, now) }
+        val members = if (deadlineActive) {
+            beforeCutoff.filter { it.appId != null }
+                .associateBy { it.appId }
+                .values.filter { it.present == true }
+                .sortedBy { it.appId }
+                .map { memberEvidence(it, basis, cutoff, now) }
+        } else emptyList()
         val result = DeadlineArchive(
             identity = active.deadlineIdentity(),
             name = applicableGoal?.name ?: active.name,
@@ -98,7 +104,7 @@ class DeadlineArchiveRepository @Inject constructor(
             cutoff = cutoff,
             finalizedAt = now,
             goalObservedAt = applicableGoal?.effectiveAt,
-            membershipKnown = goal != null,
+            membershipKnown = deadlineActive,
             members = members,
             cutoffAmbiguous = cutoffAmbiguous,
         )

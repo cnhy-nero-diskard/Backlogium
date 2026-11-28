@@ -35,6 +35,8 @@ data class DeadlineRevision(
     val batchId: String? = null,
     val batchStartedAt: Long? = null,
     val batchCompletedAt: Long? = null,
+    // Null marks legacy mode history that cannot prove deadline activity at the cutoff.
+    val deadlineActive: Boolean? = null,
 )
 
 @Entity(tableName = "deadline_revision_batch")

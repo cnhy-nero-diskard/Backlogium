@@ -111,6 +111,7 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_53_54,
         BacklogiumDatabase.MIGRATION_54_55,
         BacklogiumDatabase.MIGRATION_55_56,
+        BacklogiumDatabase.MIGRATION_56_57,
     )
 
     @Test
@@ -145,6 +146,66 @@ class MigrationTest {
                     assertTrue(cursor.isNull(3))
                     assertTrue(cursor.isNull(4))
                     assertFalse(cursor.moveToNext())
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun v56ToV57RecordsCurrentModeAndCompleteActiveMembershipBaseline() {
+        val name = "deadline-mode-migration-${System.nanoTime()}"
+        try {
+            migrationTestHelper.createDatabase(name, 56).use { db ->
+                db.execSQL(
+                    "INSERT INTO collections " +
+                        "(id,name,mode,sort,targetDate,timeBasis,createdAt,displayOrder,deadlineZone,originId) " +
+                        "VALUES (7,'Deadline','DEADLINE_GOAL','COMPLETION_FRACTION','2027-01-03'," +
+                        "'MAIN_STORY',1,0,'UTC',NULL),(8,'Basic','BASIC','NAME',NULL,'COMPLETIONIST',1,1,NULL,NULL)",
+                )
+                db.execSQL("INSERT INTO collection_members VALUES (7,42,0,0)")
+                db.execSQL(
+                    "INSERT INTO deadline_revisions " +
+                        "(collectionId,effectiveAt,appId,name,targetDate,zone,basis,present) VALUES " +
+                        "(7,1,NULL,'Deadline','2027-01-03','UTC','MAIN_STORY',NULL)," +
+                        "(7,1,42,'Current',NULL,NULL,NULL,1),(7,1,99,'Removed',NULL,NULL,NULL,1)," +
+                        "(8,1,NULL,'Basic',NULL,NULL,'COMPLETIONIST',NULL)",
+                )
+            }
+
+            migrationTestHelper.runMigrationsAndValidate(
+                name, 57, true, BacklogiumDatabase.MIGRATION_56_57,
+            ).use { db ->
+                db.query(
+                    "SELECT deadlineActive FROM deadline_revisions " +
+                        "WHERE collectionId = 7 AND appId IS NULL ORDER BY id DESC LIMIT 1",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+                db.query(
+                    "SELECT deadlineActive FROM deadline_revisions " +
+                        "WHERE collectionId = 7 AND appId IS NULL AND effectiveAt = 1",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertTrue(cursor.isNull(0))
+                }
+                db.query(
+                    "SELECT deadlineActive FROM deadline_revisions " +
+                        "WHERE collectionId = 8 AND appId IS NULL ORDER BY id DESC LIMIT 1",
+                ).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                for ((appId, present) in listOf(42L to 1, 99L to 0)) {
+                    db.query(
+                        "SELECT present FROM deadline_revisions WHERE collectionId = 7 AND appId = $appId " +
+                            "ORDER BY id DESC LIMIT 1",
+                    ).use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals(present, cursor.getInt(0))
+                    }
                 }
             }
         } finally {
@@ -2159,6 +2220,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_53_54,
                 BacklogiumDatabase.MIGRATION_54_55,
                 BacklogiumDatabase.MIGRATION_55_56,
+                BacklogiumDatabase.MIGRATION_56_57,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())
