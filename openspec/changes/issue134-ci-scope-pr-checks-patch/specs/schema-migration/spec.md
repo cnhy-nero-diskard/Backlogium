@@ -53,6 +53,11 @@ current version, rather than silently continuing to validate a stale target.
   paths
 - **THEN** CI skips the Room migration emulator job
 
+#### Scenario: Instrumentation sources retain compile coverage
+- **WHEN** a pull request changes an unrelated source under `app/src/androidTest/`
+- **THEN** CI selects the migration emulator job so Gradle compiles the complete
+  instrumentation test APK, while the runner continues to execute only `MigrationTest`
+
 #### Scenario: Verification runs on every change
 - **WHEN** a commit is pushed to `master`
 - **THEN** CI runs the migration suite automatically regardless of which paths changed
