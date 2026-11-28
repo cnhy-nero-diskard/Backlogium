@@ -58,5 +58,3 @@ class CollectionMembershipRepository @Inject constructor(
         }
     }
 }
-
-// CI routing verification

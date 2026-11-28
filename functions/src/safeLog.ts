@@ -326,3 +326,5 @@ export function warn(message: string, payload?: SafeLogPayload): void {
 export function error(message: string, payload?: SafeLogPayload): void {
   emit(logger.error, message, payload);
 }
+
+// CI routing verification
