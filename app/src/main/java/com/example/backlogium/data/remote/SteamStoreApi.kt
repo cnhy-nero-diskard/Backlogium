@@ -1,8 +1,8 @@
 package com.example.backlogium.data.remote
 
 import com.example.backlogium.data.remote.dto.StoreAppDetails
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
+import kotlinx.serialization.json.JsonObject
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Path
@@ -37,7 +37,7 @@ interface SteamStoreApi {
         @Query("appids") appIds: String,
         @Query("cc") countryCode: String?,
         @Query("filters") filters: String = PRICE_FILTER,
-    ): Response<Map<String, StorePriceEnvelope>>
+    ): Response<JsonObject>
 
     /**
      * All-language review counts for one app, with **no API key and no SteamID** — the summary is

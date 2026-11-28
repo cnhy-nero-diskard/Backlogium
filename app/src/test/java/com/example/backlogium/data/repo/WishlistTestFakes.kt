@@ -14,9 +14,15 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
+import com.example.backlogium.di.NetworkModule
+import kotlinx.serialization.json.JsonObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
 
 /**
@@ -56,7 +62,7 @@ internal class FakeWishlistApi(
 
 /** A [SteamStoreApi] double for the price path, recording every chunk it was asked for. */
 internal class FakePriceApi(
-    private val prices: suspend (String, String?) -> Response<Map<String, StorePriceEnvelope>>,
+    private val prices: suspend (String, String?) -> Response<JsonObject>,
 ) : SteamStoreApi {
     val requests = mutableListOf<Pair<String, String?>>()
 
@@ -67,7 +73,7 @@ internal class FakePriceApi(
         appIds: String,
         countryCode: String?,
         filters: String,
-    ): Response<Map<String, StorePriceEnvelope>> {
+    ): Response<JsonObject> {
         requests += appIds to countryCode
         return prices(appIds, countryCode)
     }
@@ -87,3 +93,18 @@ internal class FakeCredentials(private val steamId: String?) : CredentialsProvid
     override suspend fun currentCredentials(): CredentialsState.Configured? =
         steamId?.let { CredentialsState.Configured(apiKey = "key", steamId = it) }
 }
+
+internal fun storePriceFixtureApi(body: (Request) -> String): SteamStoreApi =
+    NetworkModule.provideSteamStoreApi(
+        NetworkModule.provideJson(),
+        OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            okhttp3.Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(body(request).toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build(),
+    )

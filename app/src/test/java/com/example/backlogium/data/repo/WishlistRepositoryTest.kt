@@ -6,7 +6,6 @@ import com.example.backlogium.data.local.entity.Game
 import com.example.backlogium.data.local.entity.WishlistItem
 import com.example.backlogium.data.local.entity.WishlistPriceObservation
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,6 +17,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
@@ -51,7 +51,7 @@ class WishlistRepositoryTest {
     private fun repository(
         steamId: String? = "76561197979911851",
         api: FakeWishlistApi = FakeWishlistApi(),
-        priceApi: FakePriceApi = FakePriceApi { _, _ -> Response.success(emptyMap()) },
+        priceApi: FakePriceApi = FakePriceApi { _, _ -> Response.success(JsonObject(emptyMap())) },
         time: TimeProvider = clock,
     ) = WishlistRepository(
         wishlistDao = db.wishlistDao(),
@@ -474,7 +474,7 @@ class WishlistRepositoryTest {
 
     private fun storeItemsJson(body: String) = JSON.decodeFromString<StoreItemsResponse>(body)
 
-    private fun pricesJson(body: String) = JSON.decodeFromString<Map<String, StorePriceEnvelope>>(body)
+    private fun pricesJson(body: String) = JSON.decodeFromString<JsonObject>(body)
 
     /** A priced entry for each id in a chunk, so a whole request can be answered generically. */
     private fun pricedChunk(idCsv: String) =

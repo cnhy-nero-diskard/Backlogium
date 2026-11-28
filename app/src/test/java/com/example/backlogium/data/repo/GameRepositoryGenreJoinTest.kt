@@ -21,12 +21,12 @@ import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -188,7 +188,7 @@ class GameRepositoryGenreJoinTest {
             appIds: String,
             countryCode: String?,
             filters: String,
-        ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+        ): Response<JsonObject> = error("prices are not part of this test")
 
         /** Review summaries are a separate chain; this double must never be asked for one. */
         override suspend fun appReviews(

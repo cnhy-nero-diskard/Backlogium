@@ -2,24 +2,22 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
 
 /**
- * Every fixture below is a verbatim body recorded from
- * `store.steampowered.com/api/appdetails?...&filters=price_overview`, decoded with the same
- * [Json] configuration [com.example.backlogium.di.NetworkModule] installs. The point is the
- * decode: the `data: []` an app with no price returns is the shape that would throw if this path
- * reused the genre DTO, and it fails the whole batch when it throws, not just its own entry.
+ * Captured and synthetic appdetails bodies exercise the production Retrofit decoder and price mapping.
  */
 class SteamStorePriceDataSourceTest {
 
@@ -74,10 +72,10 @@ class SteamStorePriceDataSourceTest {
         }
     }
 
-    @Test fun unexpectedDataShape_failsTheChunk_andLeavesItsAppsUnresolved() = runBlocking {
-        val batch = source(UNEXPECTED_DATA).pricesFor(listOf(440), "PH")
+    @Test fun unexpectedDataShape_leavesOnlyThatAppUnresolved() = runBlocking {
+        val batch = source(UNEXPECTED_DATA).pricesFor(listOf(440, 2), "PH")
 
-        assertTrue(batch.prices.isEmpty())
+        assertEquals(setOf(2L), batch.prices.keys)
         assertEquals(setOf(440L), batch.unresolved)
     }
 
@@ -94,6 +92,57 @@ class SteamStorePriceDataSourceTest {
         // `success: false` says nothing about whether a price exists, so it must not be recorded
         // as "no price" alongside the free game that genuinely has none.
         assertEquals(setOf(11L), batch.unresolved)
+    }
+
+    @Test fun badFinalFields_doNotDiscardFormattedPricesOrTheirBatchNeighbors() = runBlocking {
+        val invalidFinals = listOf(null, "null", "{}", "[]", "true", "\"900\"", "-1", "9.5", "9.0", "9e2", "9223372036854775808")
+        val entries = invalidFinals.mapIndexed { index, token ->
+            (index + 1L) to priceEntry("""{"currency":" usd ","final_formatted":"  Display price  "${token?.let { ""","final":$it""" }.orEmpty()}}""")
+        }.toMap() + (20L to PRICED_ENTRY)
+
+        val batch = source(batchJson(entries)).pricesFor(entries.keys, null)
+
+        assertEquals(entries.keys, batch.prices.keys)
+        assertTrue(batch.unresolved.isEmpty())
+        for (id in entries.keys - 20L) {
+            val amount = batch.prices.getValue(id) as StorePrice.Amount
+            assertEquals("USD", amount.currency)
+            assertEquals("  Display price  ", amount.formatted)
+            assertNull(amount.finalMinorUnits)
+            assertFalse(amount.explicitZero)
+        }
+        assertEquals(100L, (batch.prices.getValue(20L) as StorePrice.Amount).finalMinorUnits)
+    }
+
+    @Test fun currencyRequiresARecognizedCode_andZeroRequiresDisplayEvidence() = runBlocking {
+        val invalidCurrencies = listOf(null, "null", "[]", "840", "\"\"", "\"   \"", "\"US\"", "\"ZZZ\"", "\"U1D\"")
+        val entries = invalidCurrencies.mapIndexed { index, token ->
+            (index + 1L) to priceEntry("""{"final":1,"final_formatted":"Display price"${token?.let { ""","currency":$it""" }.orEmpty()}}""")
+        }.toMap() + mapOf(
+            20L to priceEntry("""{"currency":"  pHp ","final":0,"final_formatted":"P0.00"}"""),
+            21L to priceEntry("""{"currency":"PHP","final":9223372036854775807,"final_formatted":"Maximum"}"""),
+            22L to priceEntry("""{"currency":"PHP","final":0}"""),
+            23L to priceEntry("""{"currency":"PHP","final":0,"final_formatted":null}"""),
+            24L to priceEntry("""{"currency":"PHP","final":0,"final_formatted":""}"""),
+            25L to priceEntry("""{"currency":"PHP","final":0,"final_formatted":"  "}"""),
+            26L to """{"success":true,"data":[]}""",
+            27L to priceEntry("[]"),
+        )
+
+        val batch = source(batchJson(entries)).pricesFor(entries.keys, null)
+
+        for (id in 1L..invalidCurrencies.size.toLong()) {
+            val amount = batch.prices.getValue(id) as StorePrice.Amount
+            assertEquals(1L, amount.finalMinorUnits)
+            assertNull(amount.currency)
+        }
+        val zero = batch.prices.getValue(20L) as StorePrice.Amount
+        assertEquals("PHP", zero.currency)
+        assertEquals(0L, zero.finalMinorUnits)
+        assertTrue(zero.explicitZero)
+        assertEquals(Long.MAX_VALUE, (batch.prices.getValue(21L) as StorePrice.Amount).finalMinorUnits)
+        assertEquals(StorePrice.None, batch.prices.getValue(26L))
+        assertEquals(setOf(22L, 23L, 24L, 25L, 27L), batch.unresolved)
     }
 
     @Test fun malformedResponse_leavesEveryAppUnresolved() = runBlocking {
@@ -118,7 +167,7 @@ class SteamStorePriceDataSourceTest {
         val appIds = (1L..101L).toList()
         val firstChunk = appIds.take(100)
         val api = FakeStoreApi(bodyPerRequest = listOf(
-            json.decodeFromString<Map<String, StorePriceEnvelope>>(
+            json.decodeFromString<JsonObject>(
                 firstChunk.joinToString(",", "{", "}") { """"$it":$PRICED_ENTRY""" },
             ),
             null,
@@ -132,20 +181,26 @@ class SteamStorePriceDataSourceTest {
     }
 
     @Test fun anUnknownRegion_isOmittedRatherThanDefaulted() = runBlocking {
-        val api = FakeStoreApi(bodyPerRequest = listOf(emptyMap()))
+        val api = FakeStoreApi(bodyPerRequest = listOf(JsonObject(emptyMap())))
 
         SteamStorePriceDataSource(api).pricesFor(listOf(440), null)
 
         assertEquals(listOf<String?>(null), api.requestedCountryCodes)
     }
 
+    private fun priceEntry(overview: String) =
+        """{"success":true,"data":{"price_overview":$overview}}"""
+
+    private fun batchJson(entries: Map<Long, String>) =
+        entries.entries.joinToString(",", "{", "}") { (id, entry) -> """"$id":$entry""" }
+
     private fun source(fixture: String) = SteamStorePriceDataSource(
-        FakeStoreApi(bodyPerRequest = listOf(runCatching { json.decodeFromString<Map<String, StorePriceEnvelope>>(fixture) }.getOrNull())),
+        storePriceFixtureApi { fixture },
     )
 
     private class FakeStoreApi(
-        private val bodyPerRequest: List<Map<String, StorePriceEnvelope>?> = emptyList(),
-        private val errorResponse: Response<Map<String, StorePriceEnvelope>>? = null,
+        private val bodyPerRequest: List<JsonObject?> = emptyList(),
+        private val errorResponse: Response<JsonObject>? = null,
         private val failure: Throwable? = null,
     ) : SteamStoreApi {
         val requestedIdCsv = mutableListOf<String>()
@@ -158,7 +213,7 @@ class SteamStorePriceDataSourceTest {
             appIds: String,
             countryCode: String?,
             filters: String,
-        ): Response<Map<String, StorePriceEnvelope>> {
+        ): Response<JsonObject> {
             requestedIdCsv += appIds
             requestedCountryCodes += countryCode
             failure?.let { throw it }
@@ -191,13 +246,13 @@ class SteamStorePriceDataSourceTest {
 
         const val EMPTY_OBJECT_DATA = """{"440":{"success":true,"data":{}}}"""
 
-        const val UNEXPECTED_DATA = """{"440":{"success":true,"data":"changed"}}"""
-
         const val MIXED = """{"440":{"success":true,"data":[]},"292030":{"success":true,"data":{"price_overview":{"currency":"PHP","initial":209900,"final":209900,"discount_percent":0,"initial_formatted":"","final_formatted":"P2,099.00"}}},"11":{"success":false}}"""
 
         /** Truncated mid-document, the shape a withdrawn or rewritten endpoint would produce. */
         const val MALFORMED = """{"440":{"success":true,"data":{"price_overview":"""
 
         const val PRICED_ENTRY = """{"success":true,"data":{"price_overview":{"currency":"PHP","initial":100,"final":100,"discount_percent":0,"initial_formatted":"","final_formatted":"P1.00"}}}"""
+
+        const val UNEXPECTED_DATA = """{"440":{"success":true,"data":"changed"},"2":$PRICED_ENTRY}"""
     }
 }

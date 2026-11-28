@@ -2,12 +2,12 @@ package com.example.backlogium.data.repo
 
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.StoreReviewSummaryDto
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
@@ -205,7 +205,7 @@ class SteamStoreReviewDataSourceTest {
             appIds: String,
             countryCode: String?,
             filters: String,
-        ): Response<Map<String, StorePriceEnvelope>> = error("the review path must not price anything")
+        ): Response<JsonObject> = error("the review path must not price anything")
 
         override suspend fun appReviews(
             appId: Long,

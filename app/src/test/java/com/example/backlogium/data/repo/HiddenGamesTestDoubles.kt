@@ -21,7 +21,6 @@ import com.example.backlogium.data.remote.dto.ResolveVanityResponse
 import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.FakeGameDao
@@ -29,6 +28,7 @@ import com.example.backlogium.domain.FakeHiddenGameDao
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.serialization.json.JsonObject
 import retrofit2.Response
 import java.time.LocalDate
 import java.time.ZoneId
@@ -86,7 +86,7 @@ internal object OfflineStoreApi : SteamStoreApi {
         appIds: String,
         countryCode: String?,
         filters: String,
-    ): Response<Map<String, StorePriceEnvelope>> = error("exclusion must not reach the Steam Store")
+    ): Response<JsonObject> = error("exclusion must not reach the Steam Store")
 
     /** Review summaries are a separate chain; this double must never be asked for one. */
     override suspend fun appReviews(

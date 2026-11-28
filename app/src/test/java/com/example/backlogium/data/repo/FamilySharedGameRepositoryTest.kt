@@ -1,6 +1,7 @@
 package com.example.backlogium.data.repo
 
 import com.example.backlogium.test.SettingsDataStoreRule
+import kotlinx.serialization.json.JsonObject
 import org.junit.Rule
 
 import androidx.room.Room
@@ -52,7 +53,6 @@ import com.example.backlogium.data.remote.dto.SteamLevelResponse
 import com.example.backlogium.data.remote.dto.StoreAppData
 import com.example.backlogium.data.remote.dto.StoreAppDetails
 import com.example.backlogium.data.remote.dto.StoreItemsResponse
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.WishlistResponse
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.DerivedStateWriteCoordinator
@@ -868,7 +868,7 @@ class FamilySharedGameRepositoryTest {
             appIds: String,
             countryCode: String?,
             filters: String,
-        ): Response<Map<String, StorePriceEnvelope>> = error("prices are not part of this test")
+        ): Response<JsonObject> = error("prices are not part of this test")
 
         /** Review summaries are a separate chain; this double must never be asked for one. */
         override suspend fun appReviews(

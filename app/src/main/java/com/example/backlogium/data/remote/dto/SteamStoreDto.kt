@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 /**
  * One app's entry in an **unfiltered** `appdetails` response, where `data` is always an object.
  *
- * Not shared with the price path, which has [StorePriceEnvelope] of its own: a price-filtered
+ * The price path decodes its entries separately: a price-filtered
  * request answers `"data": []` for an app with no price, and that array cannot deserialize into
  * [StoreAppData]. Widening this type to tolerate it would add a branch the genre and
  * family-shared-admission callers can never reach, in exchange for coupling two request shapes

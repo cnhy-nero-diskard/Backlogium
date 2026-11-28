@@ -9,13 +9,13 @@ import com.example.backlogium.data.local.entity.HiddenGame
 import com.example.backlogium.data.local.entity.SteamReviewCache
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StoreAppDetails
-import com.example.backlogium.data.remote.dto.StorePriceEnvelope
 import com.example.backlogium.data.remote.dto.StoreReviewSummaryDto
 import com.example.backlogium.data.remote.dto.StoreReviewsResponse
 import com.example.backlogium.domain.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
@@ -378,7 +378,7 @@ class SteamReviewRepositoryTest {
             appIds: String,
             countryCode: String?,
             filters: String,
-        ): Response<Map<String, StorePriceEnvelope>> = error("the review path must not price anything")
+        ): Response<JsonObject> = error("the review path must not price anything")
     }
 
     private class FakeTime(var now: Long) : TimeProvider {

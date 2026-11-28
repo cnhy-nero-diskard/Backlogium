@@ -3,6 +3,9 @@ package com.example.backlogium.data.repo
 import com.example.backlogium.data.remote.SteamStoreApi
 import com.example.backlogium.data.remote.dto.StorePriceOverviewDto
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import retrofit2.HttpException
 import java.io.IOException
 import javax.inject.Inject
@@ -17,13 +20,15 @@ sealed interface StorePrice {
      * present only while [discountPercent] is non-zero.
      */
     data class Amount(
-        val currency: String,
-        val finalMinorUnits: Long,
-        val initialMinorUnits: Long,
+        val currency: String?,
+        val finalMinorUnits: Long?,
+        val initialMinorUnits: Long?,
         val discountPercent: Int,
         val formatted: String,
         val listFormatted: String?,
-    ) : StorePrice
+    ) : StorePrice {
+        val explicitZero: Boolean get() = finalMinorUnits == 0L
+    }
 
     /**
      * Steam answered `data: []` — this app has no price. Free-to-play, unreleased, and
@@ -76,21 +81,8 @@ class SteamStorePriceDataSource @Inject constructor(
                 continue
             }
             for (appId in chunk) {
-                val envelope = body[appId.toString()]
-                // A missing entry, or `success = false`, is Steam declining to describe the id —
-                // not an answer about whether it has a price.
-                if (envelope == null || !envelope.success) {
-                    unresolved += appId
-                    continue
-                }
-                val data = envelope.data
-                val overview = data?.priceOverview
-                when {
-                    data?.isExplicitEmptyArray == true -> prices[appId] = StorePrice.None
-                    overview == null -> unresolved += appId
-                    overview.finalFormatted.isBlank() -> unresolved += appId
-                    else -> prices[appId] = overview.toAmount()
-                }
+                val price = decodeEntry(body[appId.toString()] as? JsonObject)
+                if (price == null) unresolved += appId else prices[appId] = price
             }
         }
 
@@ -100,7 +92,7 @@ class SteamStorePriceDataSource @Inject constructor(
     private suspend fun requestChunk(
         chunk: List<Long>,
         countryCode: String?,
-    ): Map<String, com.example.backlogium.data.remote.dto.StorePriceEnvelope>? = try {
+    ): JsonObject? = try {
         val response = api.appDetailsPrices(chunk.joinToString(","), countryCode)
         if (response.isSuccessful) response.body() else null
     } catch (_: IOException) {
@@ -125,6 +117,13 @@ class SteamStorePriceDataSource @Inject constructor(
     }
 }
 
+private fun decodeEntry(entry: JsonObject?): StorePrice? {
+    if (entry?.get("success") != JsonPrimitive(true)) return null
+    val data = entry["data"]
+    if (data is JsonArray && data.isEmpty()) return StorePrice.None
+    return StorePriceOverviewDto.decode((data as? JsonObject)?.get("price_overview"))?.toAmount()
+}
+
 private fun StorePriceOverviewDto.toAmount() = StorePrice.Amount(
     currency = currency,
     finalMinorUnits = finalMinorUnits,
@@ -132,5 +131,5 @@ private fun StorePriceOverviewDto.toAmount() = StorePrice.Amount(
     discountPercent = discountPercent,
     formatted = finalFormatted,
     // Empty at full price, so it is carried only when there is actually a discount to strike out.
-    listFormatted = initialFormatted.takeIf { discountPercent > 0 && it.isNotBlank() },
+    listFormatted = initialFormatted?.takeIf { discountPercent > 0 && it.isNotBlank() },
 )
