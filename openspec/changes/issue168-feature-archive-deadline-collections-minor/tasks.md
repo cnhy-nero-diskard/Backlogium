@@ -2,9 +2,9 @@
 
 ## 1. Deadline evidence and state transition
 
-- [ ] 1.1 Persist the zone, timestamped membership and hidden-visibility revisions, and supported deadline evidence for goal, estimates and play, with migration coverage for legacy active collections.
-- [ ] 1.2 Derive estimated met, estimated not met, and undetermined from cutoff evidence. Verify date and zone boundaries, incomplete history, empty membership (including legacy/restored collections), all-unknown and mixed known/unknown estimates, two cutoff members with one shortfall followed by hiding/removal before finalization, hidden-at-cutoff versus hidden-after-cutoff, unhide after archive, and post-cutoff changes.
-- [ ] 1.3 Persist one immutable archive atomically with removal from active queries. Verify stale preview, concurrent edits, repeat finalization, account reset and frozen outcomes.
+- [x] 1.1 Persist the zone, timestamped membership and hidden-visibility revisions, and supported deadline evidence for goal, estimates and play, with migration coverage for legacy active collections.
+- [x] 1.2 Derive estimated met, estimated not met, and undetermined from cutoff evidence. Verify date and zone boundaries, incomplete history, empty membership (including legacy/restored collections), all-unknown and mixed known/unknown estimates, two cutoff members with one shortfall followed by hiding/removal before finalization, hidden-at-cutoff versus hidden-after-cutoff, unhide after archive, and post-cutoff changes.
+- [x] 1.3 Persist one immutable archive atomically with removal from active queries. Verify stale preview, concurrent edits, repeat finalization, account reset and frozen outcomes.
 
 ## 2. Archive experience and backup
 

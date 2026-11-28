@@ -131,6 +131,7 @@ class CollectionRepository @Inject constructor(
                 accent = accent,
                 timeBasis = timeBasis,
                 createdAt = time.nowMillis(),
+                deadlineZone = time.zone().id.takeIf { mode == CollectionMode.DEADLINE_GOAL },
                 description = description,
                 displayOrder = collectionDao.getAll().maxOfOrNull { it.displayOrder }?.plus(1) ?: 0,
             ),
@@ -145,16 +146,17 @@ class CollectionRepository @Inject constructor(
         accent: CollectionAccent?,
         timeBasis: CollectionTimeBasis,
         description: String?,
-    ) = collectionDao.updateDetails(
-        id,
-        name,
-        mode,
-        sort.resolveForMode(mode),
-        targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
-        accent,
-        timeBasis,
-        description,
-    )
+    ) = transaction.run {
+        val current = collectionDao.getById(id) ?: return@run
+        val zone = if (mode == CollectionMode.DEADLINE_GOAL) {
+            current.deadlineZone?.takeIf { current.targetDate == targetDate } ?: time.zone().id
+        } else null
+        collectionDao.updateDetails(
+            id, name, mode, sort.resolveForMode(mode),
+            targetDate.takeIf { mode == CollectionMode.DEADLINE_GOAL },
+            accent, timeBasis, description, zone,
+        )
+    }
 
     /** Commit the buffered collection fields and membership reconciliation as one unit. */
     suspend fun save(draft: CollectionSaveDraft): Long = transaction.run {

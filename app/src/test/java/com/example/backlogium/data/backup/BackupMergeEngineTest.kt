@@ -1619,6 +1619,8 @@ private class FakeCollectionDao(
 
     override suspend fun getById(id: Long): Collection? = store[id]
 
+    override fun observeById(id: Long): Flow<Collection?> = flowOf(store[id])
+
     override suspend fun insert(collection: Collection): Long {
         val id = collection.id.takeIf { it != 0L } ?: ((store.keys.maxOrNull() ?: 0L) + 1)
         store[id] = collection.copy(id = id)
@@ -1648,6 +1650,7 @@ private class FakeCollectionDao(
         accent: com.example.backlogium.domain.CollectionAccent?,
         timeBasis: com.example.backlogium.domain.CollectionTimeBasis,
         description: String?,
+        deadlineZone: String?,
     ) {
         store[id]?.let {
             store[id] = it.copy(
@@ -1658,6 +1661,7 @@ private class FakeCollectionDao(
                 accent = accent,
                 timeBasis = timeBasis,
                 description = description,
+                deadlineZone = deadlineZone,
             )
         }
     }

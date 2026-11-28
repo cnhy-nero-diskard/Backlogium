@@ -88,7 +88,7 @@ interface HltbDataDao {
     ): Int
 }
 
-private const val HLTB_DATA_WITH_DATASET_QUERY =
+internal const val HLTB_DATA_WITH_DATASET_QUERY =
     "SELECT appId, hltbId, mainStoryMinutes, mainExtraMinutes, completionistMinutes, " +
         "allStylesMinutes, fetchedAt, matchStatus, candidatesJson, origin FROM hltb_data " +
         "UNION ALL " +

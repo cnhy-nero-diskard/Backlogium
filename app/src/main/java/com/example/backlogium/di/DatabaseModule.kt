@@ -41,6 +41,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): BacklogiumDatabase =
         Room.databaseBuilder(context, BacklogiumDatabase::class.java, BacklogiumDatabase.NAME)
+            .addCallback(com.example.backlogium.data.local.DeadlineEvidenceSchema)
             .addMigrations(
                 BacklogiumDatabase.MIGRATION_1_2,
                 BacklogiumDatabase.MIGRATION_2_3,
@@ -95,11 +96,15 @@ object DatabaseModule {
                 BacklogiumDatabase.MIGRATION_51_52,
                 BacklogiumDatabase.MIGRATION_52_53,
                 BacklogiumDatabase.MIGRATION_53_54,
+                BacklogiumDatabase.MIGRATION_54_55,
             )
             // Never silently replace a user's database when a branch has an unexpected schema
             // version. A real version bump must ship and register its migration; otherwise the
             // mismatch should surface so the app can use its explicit backup/restore path.
             .build()
+
+    @Provides
+    fun provideDeadlineArchiveDao(db: BacklogiumDatabase) = db.deadlineArchiveDao()
 
     @Provides
     fun provideLibraryPollCommitDao(db: BacklogiumDatabase) = db.libraryPollCommitDao()

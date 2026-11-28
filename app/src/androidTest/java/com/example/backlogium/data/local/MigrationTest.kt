@@ -109,7 +109,56 @@ class MigrationTest {
         BacklogiumDatabase.MIGRATION_51_52,
         BacklogiumDatabase.MIGRATION_52_53,
         BacklogiumDatabase.MIGRATION_53_54,
+        BacklogiumDatabase.MIGRATION_54_55,
     )
+
+    @Test
+    fun v54ToV55StartsDeadlineEvidenceWithoutBackdatingLegacyMembers() {
+        val name = "deadline-evidence-migration"
+        val startedAt = System.currentTimeMillis()
+        try {
+            migrationTestHelper.createDatabase(name, 54).use { db ->
+                db.execSQL("""
+                    INSERT INTO collections (id,name,mode,sort,targetDate,timeBasis,createdAt,displayOrder)
+                    VALUES (7,'Deadline','DEADLINE_GOAL','NAME','2027-01-03','MAIN_STORY',100,0),
+                           (8,'Empty','DEADLINE_GOAL','NAME','2027-01-03','MAIN_STORY',100,1)
+                """.trimIndent())
+                db.execSQL("INSERT INTO collection_members VALUES (7,42,0,0)")
+                db.execSQL("INSERT INTO hidden_games VALUES (42,200,0)")
+            }
+            migrationTestHelper.runMigrationsAndValidate(
+                name, 55, true, BacklogiumDatabase.MIGRATION_54_55,
+            ).use { db ->
+                db.query("SELECT deadlineZone, createdAt FROM collections WHERE id = 7").use {
+                    assertTrue(it.moveToFirst())
+                    assertEquals(java.time.ZoneId.systemDefault().id, it.getString(0))
+                    assertEquals(100L, it.getLong(1))
+                }
+                db.query("SELECT effectiveAt, hidden, present FROM deadline_revisions WHERE appId = 42").use {
+                    assertTrue(it.moveToFirst())
+                    assertTrue(it.getLong(0) >= startedAt)
+                    assertEquals(1, it.getInt(1))
+                    assertEquals(1, it.getInt(2))
+                }
+                db.query("SELECT appId FROM deadline_revisions WHERE collectionId = 8").use {
+                    assertTrue(it.moveToFirst())
+                    assertTrue(it.isNull(0))
+                    assertFalse(it.moveToNext())
+                }
+                db.execSQL("DELETE FROM hidden_games WHERE appId = 42")
+                db.execSQL("DELETE FROM collection_members WHERE appId = 42")
+                db.query("SELECT hidden, present FROM deadline_revisions WHERE appId = 42 ORDER BY id").use {
+                    assertTrue(it.moveToPosition(1))
+                    assertEquals(0, it.getInt(0))
+                    assertEquals(1, it.getInt(1))
+                    assertTrue(it.moveToNext())
+                    assertEquals(0, it.getInt(1))
+                }
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
+    }
 
     /** The complete registered chain from the original raw v1 tables through the current schema. */
     private val allMigrationsFromV1 = arrayOf<Migration>(
@@ -2068,6 +2117,7 @@ class MigrationTest {
                 BacklogiumDatabase.MIGRATION_51_52,
                 BacklogiumDatabase.MIGRATION_52_53,
                 BacklogiumDatabase.MIGRATION_53_54,
+                BacklogiumDatabase.MIGRATION_54_55,
             ).use { db ->
                 db.query("SELECT name FROM games WHERE appId = 10").use {
                     assertTrue(it.moveToFirst())
