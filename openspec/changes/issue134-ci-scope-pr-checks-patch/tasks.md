@@ -14,5 +14,5 @@
 
 ## 3. Verify the rollout on GitHub
 
-- [ ] 3.1 Check representative hosted PR runs for docs or OpenSpec, Android, Functions, and migration changes. Verify that each selects the expected jobs, that the required release-note check still reports, and that the independent visual-baseline and HLTB workflows still trigger on their existing events.
-- [ ] 3.2 After the routing change lands, inspect a `master` push run for all six jobs and verify the required contexts still resolve on a PR. Validate this OpenSpec change with `openspec validate issue134-ci-scope-pr-checks-patch --strict`.
+- [x] 3.1 Check representative hosted PR runs for docs or OpenSpec, Android, Functions, and migration changes. Verify that each selects the expected jobs, that the required release-note check still reports, and that the independent visual-baseline and HLTB workflows still trigger on their existing events.
+- [x] 3.2 After the routing change lands, inspect a `master` push run for all six jobs and verify the required contexts still resolve on a PR. Validate this OpenSpec change with `openspec validate issue134-ci-scope-pr-checks-patch --strict`.
