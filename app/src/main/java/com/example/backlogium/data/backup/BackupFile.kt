@@ -1,5 +1,6 @@
 package com.example.backlogium.data.backup
 
+import com.example.backlogium.domain.DeadlineArchive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.EncodeDefault
 
@@ -17,7 +18,7 @@ import kotlinx.serialization.EncodeDefault
  */
 @Serializable
 data class BackupFile(
-    /** Legacy default decodes omitted v1 versions; the export mapper explicitly writes v3. */
+    /** Legacy default decodes omitted v1 versions; the export mapper explicitly writes the applicable version. */
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val formatVersion: Int = 1,
     val exportedAt: String,
@@ -52,9 +53,11 @@ data class BackupFile(
     val recovery: BackupRecovery? = null,
     /** Prospective per-game completion observations; absent from older backups. */
     val achievementCompletions: List<BackupAchievementCompletion> = emptyList(),
+    /** Present in version 4, including when only active collection identity or zone is new. */
+    val deadlineArchives: List<DeadlineArchive>? = null,
 ) {
     companion object {
-        const val CURRENT_FORMAT_VERSION = 3
+        const val CURRENT_FORMAT_VERSION = 4
     }
 }
 
@@ -247,6 +250,8 @@ data class BackupCollection(
     val timeBasis: String = "COMPLETIONIST",
     val description: String? = null,
     val displayOrder: Int? = null,
+    val originId: Long? = null,
+    val deadlineZone: String? = null,
 )
 
 /**

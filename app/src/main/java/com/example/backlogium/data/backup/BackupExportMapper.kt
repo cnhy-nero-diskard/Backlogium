@@ -3,6 +3,9 @@ package com.example.backlogium.data.backup
 import com.example.backlogium.data.local.SettingsDataStore
 import com.example.backlogium.data.local.dao.AchievementDao
 import com.example.backlogium.data.local.dao.CollectionDao
+import com.example.backlogium.data.local.dao.DeadlineArchiveDao
+import com.example.backlogium.data.repo.toDomain
+import com.example.backlogium.domain.DeadlineArchive
 import com.example.backlogium.data.local.dao.DailyProgressDao
 import com.example.backlogium.data.local.dao.GameDao
 import com.example.backlogium.data.local.dao.GamePreferenceDao
@@ -48,6 +51,7 @@ private data class ExportSnapshot(
     val profile: PlayerProfile,
     val collections: List<Collection>,
     val collectionMembers: List<CollectionMember>,
+    val deadlineArchives: List<DeadlineArchive>,
     val hiddenGames: List<HiddenGame>,
     val gamePreferences: List<GamePreference>,
     /** The active account's recovery graph, read in the same transaction as everything else. */
@@ -95,6 +99,7 @@ class BackupExportMapper @Inject constructor(
     private val time: TimeProvider,
     private val transaction: DatabaseTransactionScope = PassThroughTransactionScope,
     private val gamePreferenceDao: GamePreferenceDao,
+    private val deadlineArchiveDao: DeadlineArchiveDao? = null,
 ) {
     suspend fun buildExport(): BackupFile {
         val config = settings.ruleConfigFlow.first()
@@ -126,6 +131,7 @@ class BackupExportMapper @Inject constructor(
                 profile = profile,
                 collections = collectionDao.getAll(),
                 collectionMembers = collectionDao.getAllMembers(),
+                deadlineArchives = deadlineArchiveDao?.archives().orEmpty().map { it.toDomain() },
                 hiddenGames = hiddenGameDao.getAll(),
                 gamePreferences = gamePreferenceDao.getAll(),
                 recovery = recoveryStore.read(account),
@@ -135,8 +141,11 @@ class BackupExportMapper @Inject constructor(
 
         val steamId64 = snapshot.steamId64
 
+        val collectionExtension = snapshot.deadlineArchives.isNotEmpty() ||
+            collections.any { it.deadlineZone != null || it.originId != null }
         return BackupFile(
-            formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
+            formatVersion = if (collectionExtension) BackupFile.CURRENT_FORMAT_VERSION else 3,
+            deadlineArchives = snapshot.deadlineArchives.takeIf { collectionExtension },
             exportedAt = time.nowMillis().toIso8601(),
             identity = BackupIdentity(steamId64 = steamId64),
             ruleConfig = config.toBackup(),
@@ -339,6 +348,8 @@ private fun Collection.toBackup() = BackupCollection(
     timeBasis = timeBasis.name,
     description = description,
     displayOrder = displayOrder,
+    originId = originId,
+    deadlineZone = deadlineZone,
 )
 
 private fun HiddenGame.toBackup() = BackupHiddenGame(

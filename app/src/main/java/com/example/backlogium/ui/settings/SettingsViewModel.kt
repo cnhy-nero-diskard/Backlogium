@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.backlogium.R
+import com.example.backlogium.data.backup.BackupDeadlineConflict
 import com.example.backlogium.data.backup.BackupFile
 import com.example.backlogium.data.backup.BackupRepository
 import com.example.backlogium.data.backup.BackupValidationProblem
@@ -1676,6 +1677,10 @@ class SettingsViewModel @Inject constructor(
                 op()
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (conflict: BackupDeadlineConflict) {
+                backupMessage.value = SettingsText(
+                    R.string.settings_backup_deadline_conflict, args = listOf(conflict.collectionName),
+                )
             } catch (_: Exception) {
                 backupMessage.value = SettingsText(R.string.settings_backup_operation_failed)
             } finally {

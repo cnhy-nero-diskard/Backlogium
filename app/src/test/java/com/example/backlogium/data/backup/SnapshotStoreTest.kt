@@ -44,6 +44,7 @@ class SnapshotStoreTest {
     fun write_streamsAReadableBackupSnapshot() {
         val backup = BackupFile(
             formatVersion = BackupFile.CURRENT_FORMAT_VERSION,
+            deadlineArchives = emptyList(),
             exportedAt = "2026-10-22T00:00:00Z",
             identity = BackupIdentity("76561198000000000"),
             ruleConfig = BackupRuleConfig(1, 100, 30, "ANY_GAME", 2, 5, 10, 20, 40, 80),
