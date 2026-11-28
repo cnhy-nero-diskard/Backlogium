@@ -6,8 +6,31 @@ on:
   pull_request:
 
 jobs:
+  route:
+    name: Route pull request checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      routing: ${{ steps.route.outputs.routing }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify the complete pull request diff
+        id: route
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_routing.py
+
   test:
     name: Android unit tests
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs.test)) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +57,9 @@ jobs:
       - name: Compile release Kotlin
         run: ./gradlew :app:compileReleaseKotlin
 
+      - name: Assemble the instrumentation APK
+        run: ./gradlew :app:assembleDebugAndroidTest
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -45,6 +71,10 @@ jobs:
 
   visual-regression:
     name: Compose screenshot verification
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs['visual-regression'])) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +129,10 @@ jobs:
 
   lint:
     name: Android lint
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs.lint)) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,7 +153,11 @@ jobs:
   # system image, architecture, and device profile are pinned so migration
   # coverage does not silently drift with the hosted runner image.
   instrumented:
-    name: Android instrumented tests
+    name: Room migration tests
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs.instrumented)) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,6 +203,10 @@ jobs:
   # of their own.
   scripts:
     name: Release-note tooling tests
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs.scripts)) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -183,6 +225,10 @@ jobs:
   # share nothing and should fail independently.
   functions:
     name: Cloud functions typecheck
+    needs: route
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' ||
+      (needs.route.result == 'success' && fromJSON(needs.route.outputs.routing).jobs.functions)) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -207,16 +253,73 @@ jobs:
         run: npm test
         working-directory: functions
 
+  openspec:
+    name: OpenSpec validation
+    needs: route
+    if: >-
+      ${{ github.event_name == 'pull_request' && needs.route.result == 'success' &&
+      fromJSON(needs.route.outputs.routing).jobs.openspec }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned OpenSpec CLI
+        run: npm install --global @fission-ai/openspec@1.16.0
+
+      - name: Validate specs and touched changes
+        env:
+          ROUTING: ${{ needs.route.outputs.routing }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          # Legacy strict findings remain, so only touched active changes use strict mode.
+          checks = [["--all", "--no-interactive"]]
+          checks.extend(["--strict", "--", change] for change in json.loads(os.environ["ROUTING"])["changes"])
+          results = [subprocess.run(["openspec", "validate", *args]).returncode for args in checks]
+          sys.exit(any(results))
+          PY
+
   result:
     name: CI result
     if: ${{ always() }}
-    needs: [test, visual-regression, lint, instrumented, scripts, functions]
+    needs: [route, test, visual-regression, lint, instrumented, scripts, functions, openspec]
     runs-on: ubuntu-latest
     steps:
       - name: Check required job outcomes
         env:
+          EVENT: ${{ github.event_name }}
           NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
-          jq -e 'length == 6 and all(.[]; .result == "success")' <<< "$NEEDS"
+          report=$(jq -ce --arg event "$EVENT" '
+            . as $needs
+            | (keys - ["route"]) as $jobs
+            | (if $event == "push" and .route.result == "skipped" then
+                 [$jobs[] | {key: ., value: (. != "openspec")}] | from_entries
+               elif $event == "pull_request" and .route.result == "success" then
+                 (.route.outputs.routing | fromjson)
+                 | if type == "object" and keys == ["changes", "jobs"]
+                      and (.jobs | type == "object" and keys == $jobs and all(.[]; type == "boolean"))
+                      and (.changes | type == "array" and all(.[]; type == "string" and length > 0))
+                      and (.jobs.openspec or .changes == [])
+                   then .jobs else error("Invalid pull request routing outputs") end
+               else error("Unexpected routing result: " + (.route.result // "missing"))
+               end) as $selected
+            | [$jobs[] as $job | {
+                job: $job,
+                actual: $needs[$job].result,
+                expected: (if $selected[$job] then "success" else "skipped" end)
+              }]
+          ' <<< "$NEEDS")
+          jq -r '.[] | "\(.job): \(.actual) (expected \(.expected))"' <<< "$report"
+          jq -e 'all(.[]; .actual == .expected)' <<< "$report"
